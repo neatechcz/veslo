@@ -582,13 +582,15 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
     const id = workspaceId.trim();
     if (!id) return false;
 
-    // Opening a draft is persisted asynchronously.  For the already-active
-    // workspace, detach the old session before that storage work begins so a
-    // prompt typed immediately after the plus click cannot be submitted into
-    // the previous conversation.
-    if (deps.workspace.activeWorkspaceId().trim() === id) {
-      deps.clearDisplayedSession?.();
-    }
+    // Opening a draft and (for another project) its workspace activation are
+    // both asynchronous. Detach the old session before either starts: a late
+    // transcript or lifecycle projection from the previous workspace must not
+    // reselect that session while the new pending draft is being established.
+    deps.clearDisplayedSession?.();
+    // Clear the route in the same synchronous ownership handoff. Otherwise
+    // the old /session/:id remains routable while workspace activation awaits,
+    // and the route-resume effect can select that old session again.
+    deps.setView("session");
 
     return await openPendingDraftWithWorkspaceActivation({
       activeWorkspaceId: deps.workspace.activeWorkspaceId(),

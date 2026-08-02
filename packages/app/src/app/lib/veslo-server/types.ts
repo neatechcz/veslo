@@ -1696,6 +1696,14 @@ export type VesloConversationRunTerminalization = {
   deadlineAt: number | null;
 };
 
+export type VesloConversationRunTerminalHandoff = {
+  state: "pending" | "unresolved";
+  reasonCode: string;
+  attempts: number;
+  requestedAt: number | null;
+  decidedAt: number | null;
+};
+
 export type VesloConversationRunStatusResult = {
   ok: boolean;
   workspaceId: string;
@@ -1711,6 +1719,7 @@ export type VesloConversationRunStatusResult = {
   retrySince?: number | null;
   noProgressSeconds?: number | null;
   terminalization?: VesloConversationRunTerminalization | null;
+  terminalHandoff?: VesloConversationRunTerminalHandoff | null;
 };
 
 export type VesloConversationRunDeliveryAppReport =

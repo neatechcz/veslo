@@ -425,17 +425,17 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /const currentWorkspaceStoreRef = \(\) => lateWorkspaceStore\.current\(\);[\s\S]*const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*workspaces: \(\) => currentWorkspaceStoreRef\(\)\?\.workspaces\(\) \?\? \[\],[\s\S]*\}\);[\s\S]*lateWorkspaceStore\.bind\(workspaceStore\);/,
+    /const currentWorkspaceStoreRef = \(\) => lateWorkspaceStore\.current\(\);[\s\S]*const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) =>\s*currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*workspaces: \(\) => currentWorkspaceStoreRef\(\)\?\.workspaces\(\) \?\? \[\],[\s\S]*\}\);[\s\S]*lateWorkspaceStore\.bind\(workspaceStore\);/,
     "app should wire selected session browsing through the workspace session selection controller",
   );
   assert.match(
     appSource,
-    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeScopedSession =[\s\S]*scopeWorkspaceId === activeWorkspaceId;[\s\S]*return !\(activeScopedSession && isLiveTranscriptReadAllowedForWorkspace\(scopeWorkspaceId\)\);[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(activeWorkspaceId\);[\s\S]*\},/s,
+    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeScopedSession =[\s\S]*scopeWorkspaceId === activeWorkspaceId;[\s\S]*return !\(\s*activeScopedSession\s*&&\s*isLiveTranscriptReadAllowedForWorkspace\(scopeWorkspaceId\)\s*\);[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(activeWorkspaceId\);[\s\S]*\},/s,
     "session store should keep foreign scoped sidebar selections on DB browsing while allowing active live-scoped sessions to read directly",
   );
   assert.match(
     appSource,
-    /loadOfflineTranscript: async \(sessionId, limit, readContext\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const transcriptWorkspaceId = transcriptScope\?\.workspaceId \?\? workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const workspaceRoot = transcriptScope\?\.workspaceRoot \|\| workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const transcriptDirectory = transcriptScope\?\.directory \|\| workspaceRoot;[\s\S]*getTranscriptFromVesloReadApi\([\s\S]*transcriptWorkspaceId,[\s\S]*sessionId,[\s\S]*limit,[\s\S]*transcriptDirectory \|\| undefined,/s,
+    /loadOfflineTranscript: async \(sessionId, limit, readContext\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const transcriptWorkspaceId =[\s\S]*transcriptScope\?\.workspaceId \?\?\s*workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const workspaceRoot =[\s\S]*transcriptScope\?\.workspaceRoot \|\|\s*workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const transcriptDirectory = transcriptScope\?\.directory \|\| workspaceRoot;[\s\S]*getTranscriptFromVesloReadApi\([\s\S]*transcriptWorkspaceId,[\s\S]*sessionId,[\s\S]*limit,[\s\S]*transcriptDirectory \|\| undefined,/s,
     "offline transcript snapshots should read through Veslo using the clicked session's workspace and directory scope",
   );
 });
@@ -443,12 +443,12 @@ test("app routes selected session browsing through DB scope", () => {
 test("app activates the authoritative send target at send time while browse scope remains read-only", () => {
   assert.match(
     sendPromptSource,
-    /const selectedSessionScopeForSend = selectedSessionCandidate[\s\S]*resolveSelectedSessionBrowseScope\(selectedSessionCandidate\)[\s\S]*const selectedSessionBelongsToActiveWorkspace =[\s\S]*selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;[\s\S]*const selectedRealSessionId =[\s\S]*isPendingSessionInstanceKey\(selectedSessionCandidate\) \|\| !selectedSessionBelongsToActiveWorkspace[\s\S]*\? null[\s\S]*: selectedSessionCandidate;/s,
+    /const selectedSessionScopeForSend = selectedSessionCandidate[\s\S]*resolveSelectedSessionBrowseScope\(selectedSessionCandidate\)[\s\S]*const selectedSessionBelongsToActiveWorkspace =[\s\S]*selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;[\s\S]*const selectedRealSessionId =[\s\S]*isPendingSessionInstanceKey\(selectedSessionCandidate\) \|\|\s*!selectedSessionBelongsToActiveWorkspace[\s\S]*\? null[\s\S]*: selectedSessionCandidate;/s,
     "implicit sends should ignore a selected session whose browse scope belongs to another workspace",
   );
   assert.match(
     sendPromptSource,
-    /const explicitTargetSessionId = deps\.isPendingSessionInstanceKey\(options\.targetSessionId\)[\s\S]*let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;[\s\S]*selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId,[\s\S]*\),/s,
+    /const explicitTargetSessionId = deps\.isPendingSessionInstanceKey\(\s*options\.targetSessionId,\s*\)[\s\S]*let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;[\s\S]*selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate\s*&&\s*!selectedSessionBelongsToActiveWorkspace\s*&&\s*!explicitTargetSessionId,\s*\),/s,
     "send trace should expose when a stale selected session was ignored, but not when it was passed as the explicit send target",
   );
   assert.match(
@@ -458,7 +458,7 @@ test("app activates the authoritative send target at send time while browse scop
   );
   assert.match(
     sendPromptSource,
-    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId, sendTargetWorkspace\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return sessionSubmitBlockedResult\(\{[\s\S]*code: "workspace_scope_unavailable",[\s\S]*\}\);[\s\S]*const shouldUseServerSubmitBeforeFrontendSkillResolution = Boolean\(/s,
+    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID\s*&&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(\s*scopedSessionID,\s*sendTraceId,\s*sendTargetWorkspace,\s*\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return sessionSubmitBlockedResult\(\{[\s\S]*code: "workspace_scope_unavailable",[\s\S]*\}\);[\s\S]*const shouldUseServerSubmitBeforeFrontendSkillResolution = Boolean\(/s,
     "scoped workspace activation should run during send before workspace-sensitive prompt routing",
   );
 });
@@ -466,7 +466,7 @@ test("app activates the authoritative send target at send time while browse scop
 test("app retries unavailable scoped history by activating the owning workspace", () => {
   assert.match(
     appSource,
-    /const retryUnavailableHistory = async \(sessionId: string\) => \{[\s\S]*const scope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const workspaceId = scope\?\.workspaceId\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(scope\) setSessionBrowseScope\(scope\);[\s\S]*await handleActivateWorkspace\(workspaceId, \{ origin: "session-history:retry-unavailable" \}\);[\s\S]*await selectSession\(sessionId\);[\s\S]*\};/s,
+    /const retryUnavailableHistory = async \(sessionId: string\) => \{[\s\S]*const scope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const workspaceId =[\s\S]*scope\?\.workspaceId\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(scope\) setSessionBrowseScope\(scope\);[\s\S]*await handleActivateWorkspace\(workspaceId, \{[\s\S]*origin: "session-history:retry-unavailable",[\s\S]*\}\);[\s\S]*await selectSession\(sessionId\);[\s\S]*\};/s,
     "retrying unavailable history should preserve the selected browse scope, explicitly activate the owning workspace, and re-run selection",
   );
 });
@@ -474,7 +474,7 @@ test("app retries unavailable scoped history by activating the owning workspace"
 test("workspace snapshot effect preserves scoped browse session during send-time activation", () => {
   assert.match(
     appSource,
-    /createWorkspaceSessionSnapshots\(\{[\s\S]*selectedSessionId,[\s\S]*resolveSelectedSessionBrowseScope,[\s\S]*saveWorkspaceSnapshot: \(workspaceId\) => sessionStore\.saveWorkspaceSnapshot\(workspaceId\),[\s\S]*loadWorkspaceSnapshot: \(workspaceId\) => sessionStore\.loadWorkspaceSnapshot\(workspaceId\),[\s\S]*\}\);/,
+    /createWorkspaceSessionSnapshots\(\{[\s\S]*selectedSessionId,[\s\S]*resolveSelectedSessionBrowseScope,[\s\S]*saveWorkspaceSnapshot: \(workspaceId\) =>[\s\S]*sessionStore\.saveWorkspaceSnapshot\(workspaceId\),[\s\S]*loadWorkspaceSnapshot: \(workspaceId\) =>[\s\S]*sessionStore\.loadWorkspaceSnapshot\(workspaceId\),[\s\S]*\}\);/,
     "app should wire workspace snapshot save/load through the workspace session snapshots controller",
   );
 
@@ -978,7 +978,7 @@ test("fresh New session surfaces cleanup failure instead of silently assuming ro
 test("Choose folder cleanup removes the old private workspace directory", () => {
   assert.match(
     appSource,
-    /const chooseFolderForCurrentSession = sessionFolderMoveController\.chooseFolderForCurrentSession;/,
+    /const chooseFolderForCurrentSession =\s*sessionFolderMoveController\.chooseFolderForCurrentSession;/,
     "Choose folder flow should be wired from the session folder move controller",
   );
   assert.match(

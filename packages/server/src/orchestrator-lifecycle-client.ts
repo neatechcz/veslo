@@ -7,6 +7,14 @@ export type LifecycleRunWaitReason =
   | "session_idle"
   | "engine_unreachable"
   | "none";
+export type LifecycleRunUnavailableReason =
+  | "no_current_engine"
+  | "session_status_http"
+  | "session_messages_missing"
+  | "session_messages_http"
+  | "request_timeout"
+  | "request_transport_error";
+export type LifecycleRunSessionStatusObservation = "busy" | "retry" | "explicit_idle" | "absent" | "unknown";
 
 export const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER = "X-Veslo-Orchestrator-Token";
 
@@ -35,6 +43,9 @@ export type LifecycleRunStatusResult = {
   lastUsefulProgressAt?: number | null;
   retrySince?: number | null;
   noProgressSeconds?: number | null;
+  unavailableReason?: LifecycleRunUnavailableReason | null;
+  unavailableHttpStatus?: number | null;
+  sessionStatusObserved?: LifecycleRunSessionStatusObservation | null;
 };
 
 export const ORCHESTRATOR_LIFECYCLE_REQUEST_TIMEOUT_MS = 5_000;
@@ -61,6 +72,17 @@ const LIFECYCLE_RUN_STATUSES = new Set<LifecycleRunStatus>([
   "completed",
   "failed",
   "aborted",
+]);
+const UNAVAILABLE_REASONS = new Set<LifecycleRunUnavailableReason>([
+  "no_current_engine",
+  "session_status_http",
+  "session_messages_missing",
+  "session_messages_http",
+  "request_timeout",
+  "request_transport_error",
+]);
+const SESSION_STATUS_OBSERVATIONS = new Set<LifecycleRunSessionStatusObservation>([
+  "busy", "retry", "explicit_idle", "absent", "unknown",
 ]);
 
 const optionalNumber = (value: unknown) =>
@@ -130,6 +152,12 @@ export type OrchestratorLifecycleClient = {
    * OpenCode session stayed busy after a successful abort acknowledgement.
    */
   recoverProviderStartTimeout(workspaceId: string, runId: string): Promise<LifecycleRunStatusResult | null>;
+  /**
+   * Releases a stale terminal owner only when the orchestrator proves that no
+   * current engine exists. Unlike provider-start recovery, this never
+   * suspends a running engine.
+   */
+  recoverTerminalRuntimeHandoff(workspaceId: string, runId: string): Promise<LifecycleRunStatusResult | null>;
   status(
     workspaceId: string,
     conversationId: string,
@@ -210,9 +238,10 @@ export function createOrchestratorLifecycleClient(options: {
     });
     if (response.status === 409) {
       const payload = await readJsonSafely(response) as { activeRunId?: unknown } | null;
-      throw new RunAlreadyActiveError(
-        typeof payload?.activeRunId === "string" ? payload.activeRunId : "",
-      );
+      if (path.endsWith("/runs/register") && typeof payload?.activeRunId === "string") {
+        throw new RunAlreadyActiveError(payload.activeRunId);
+      }
+      throw new OrchestratorLifecycleRequestError(path, response.status, payload);
     }
     if (!response.ok) {
       throw new OrchestratorLifecycleRequestError(path, response.status, await readJsonSafely(response));
@@ -268,11 +297,26 @@ export function createOrchestratorLifecycleClient(options: {
     const lastUsefulProgressAt = optionalNumber(record.lastUsefulProgressAt);
     const retrySince = optionalNumber(record.retrySince);
     const noProgressSeconds = optionalNumber(record.noProgressSeconds);
+    const unavailableReason = typeof record.unavailableReason === "string" &&
+      UNAVAILABLE_REASONS.has(record.unavailableReason as LifecycleRunUnavailableReason)
+      ? record.unavailableReason as LifecycleRunUnavailableReason
+      : null;
+    const unavailableHttpStatus = optionalNumber(record.unavailableHttpStatus);
+    const sessionStatusObserved = typeof record.sessionStatusObserved === "string" &&
+      SESSION_STATUS_OBSERVATIONS.has(record.sessionStatusObserved as LifecycleRunSessionStatusObservation)
+      ? record.sessionStatusObserved as LifecycleRunSessionStatusObservation
+      : null;
     if (activityKind) result.activityKind = activityKind;
     if (waitReason) result.waitReason = waitReason;
     if (lastUsefulProgressAt !== null) result.lastUsefulProgressAt = lastUsefulProgressAt;
     if (retrySince !== null) result.retrySince = retrySince;
     if (noProgressSeconds !== null) result.noProgressSeconds = noProgressSeconds;
+    if (unavailableReason) result.unavailableReason = unavailableReason;
+    else if (record.unavailableReason === null) result.unavailableReason = null;
+    if (unavailableHttpStatus !== null) result.unavailableHttpStatus = unavailableHttpStatus;
+    else if (record.unavailableHttpStatus === null) result.unavailableHttpStatus = null;
+    if (sessionStatusObserved) result.sessionStatusObserved = sessionStatusObserved;
+    else if (record.sessionStatusObserved === null) result.sessionStatusObserved = null;
     return result;
   };
 
@@ -346,6 +390,11 @@ export function createOrchestratorLifecycleClient(options: {
 
     async recoverProviderStartTimeout(workspaceId, runId) {
       const path = `/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}/recover-provider-start-timeout`;
+      return parseLifecycleRunPayload(path, await post(path, {}));
+    },
+
+    async recoverTerminalRuntimeHandoff(workspaceId, runId) {
+      const path = `/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}/recover-terminal-runtime-handoff`;
       return parseLifecycleRunPayload(path, await post(path, {}));
     },
 

@@ -388,8 +388,7 @@ export function deriveRunActivityFromSessionMessages(
   };
 }
 
-function mergeRetryStatusWithMessages(messages: RunProbeResult): RunProbeResult {
-  if ("unreachable" in messages) return messages;
+function mergeRetryStatusWithMessages(messages: Exclude<RunProbeResult, { unreachable: true }>): Exclude<RunProbeResult, { unreachable: true }> {
   if (!messages.active) return messages;
   if (messages.activityKind === "local_tool" || messages.activityKind === "assistant_output") {
     return messages;
@@ -401,11 +400,32 @@ function mergeRetryStatusWithMessages(messages: RunProbeResult): RunProbeResult 
   };
 }
 
+function unavailableFromRequestError(error: unknown): Extract<RunProbeResult, { unreachable: true }> {
+  const name = error instanceof Error ? error.name : "";
+  return name === "AbortError" || name === "TimeoutError"
+    ? { unreachable: true, unavailableReason: "request_timeout" }
+    : { unreachable: true, unavailableReason: "request_transport_error" };
+}
+
 function sessionExplicitlyIdleIsObserved(payload: unknown, engineSessionId: string): boolean {
   if (!isRecord(payload)) return false;
   if (!Object.prototype.hasOwnProperty.call(payload, engineSessionId)) return false;
   const status = payload[engineSessionId];
   return isRecord(status) && readString(status.type) === "idle";
+}
+
+function sessionStatusObservation(
+  payload: unknown,
+  engineSessionId: string,
+): "busy" | "retry" | "explicit_idle" | "absent" | "unknown" {
+  if (!isRecord(payload) || !Object.prototype.hasOwnProperty.call(payload, engineSessionId)) {
+    return "absent";
+  }
+  const status = payload[engineSessionId];
+  if (!isRecord(status)) return "unknown";
+  const type = readString(status.type);
+  if (type === "busy" || type === "retry") return type;
+  return type === "idle" ? "explicit_idle" : "unknown";
 }
 
 function sessionInactiveIsObserved(payload: unknown, engineSessionId: string): boolean {
@@ -499,19 +519,25 @@ export function createRunActivityProbe<Engine>(deps: {
 
   return async (record) => {
     const engine = deps.getEngine(record.workspaceId);
-    if (!engine) return { unreachable: true };
+    if (!engine) return { unreachable: true, unavailableReason: "no_current_engine" };
 
     try {
       const status = await fetchJson(engine, record, "/session/status");
       let statusActivity: RunProbeResult | null = null;
       let sessionInactiveObserved = false;
       let sessionExplicitlyIdle = false;
+      let sessionStatusObserved: "busy" | "retry" | "explicit_idle" | "absent" | "unknown" | null = null;
       if (status.ok) {
         statusActivity = deriveRunActivityFromSessionStatus(status.payload, record.engineSessionId);
         sessionInactiveObserved = sessionInactiveIsObserved(status.payload, record.engineSessionId);
         sessionExplicitlyIdle = sessionExplicitlyIdleIsObserved(status.payload, record.engineSessionId);
+        sessionStatusObserved = sessionStatusObservation(status.payload, record.engineSessionId);
       } else if (status.status !== 404) {
-        return { unreachable: true };
+        return {
+          unreachable: true,
+          unavailableReason: "session_status_http",
+          unavailableHttpStatus: status.status,
+        };
       }
 
       const messages = await fetchJson(
@@ -519,8 +545,20 @@ export function createRunActivityProbe<Engine>(deps: {
         record,
         `/session/${encodeURIComponent(record.engineSessionId)}/message`,
       );
-      if (messages.status === 404) return { unreachable: true };
-      if (!messages.ok) return { unreachable: true };
+      if (messages.status === 404) {
+        return {
+          unreachable: true,
+          unavailableReason: "session_messages_missing",
+          unavailableHttpStatus: messages.status,
+        };
+      }
+      if (!messages.ok) {
+        return {
+          unreachable: true,
+          unavailableReason: "session_messages_http",
+          unavailableHttpStatus: messages.status,
+        };
+      }
       const messageActivity = deriveRunActivityFromSessionMessages(messages.payload, {
         expectedUserMessageId: expectedUserMessageIdForRecord(record),
         abortRequested: record.abortRequested === true,
@@ -528,16 +566,20 @@ export function createRunActivityProbe<Engine>(deps: {
         sessionExplicitlyIdle,
       });
       if ("unreachable" in messageActivity) return messageActivity;
+      const withSessionStatusEvidence = (activity: Exclude<RunProbeResult, { unreachable: true }>): RunProbeResult => ({
+        ...activity,
+        sessionStatusObserved,
+      });
       if (
         !messageActivity.active &&
         !terminalEvidenceIsPostAdmission(messages.payload, record)
       ) {
-        return {
+        return withSessionStatusEvidence({
           active: true,
           activityKind: "unknown",
           waitReason: "assistant_message_open",
           progressSignature: `pre-admission:${messageActivity.progressSignature ?? "terminal"}`,
-        };
+        });
       }
       if (statusActivity && !("unreachable" in statusActivity)) {
         // A terminal assistant message can arrive just before OpenCode has
@@ -548,17 +590,17 @@ export function createRunActivityProbe<Engine>(deps: {
           !messageActivity.active &&
           statusActivity.waitReason === "assistant_message_open"
         ) {
-          return statusActivity;
+          return withSessionStatusEvidence(statusActivity);
         }
-        if (!messageActivity.active) return messageActivity;
+        if (!messageActivity.active) return withSessionStatusEvidence(messageActivity);
         if (statusActivity.activityKind === "model_retry") {
-          return mergeRetryStatusWithMessages(messageActivity);
+          return withSessionStatusEvidence(mergeRetryStatusWithMessages(messageActivity));
         }
-        return messageActivity;
+        return withSessionStatusEvidence(messageActivity);
       }
-      return messageActivity;
-    } catch {
-      return { unreachable: true };
+      return withSessionStatusEvidence(messageActivity);
+    } catch (error) {
+      return unavailableFromRequestError(error);
     }
   };
 }

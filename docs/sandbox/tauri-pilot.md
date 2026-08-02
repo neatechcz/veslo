@@ -1,9 +1,10 @@
-# Veslo Tauri Pilot Workflow
+# Legacy Veslo Tauri Pilot Workflow
 
-This document is for debugging the Veslo desktop app with Tauri Pilot. It is
-project-specific and focuses on actions that move runtime/UI bugs forward:
-sending messages, switching workspaces, collecting logs, and proving whether a
-bug is UI state, workspace routing, sidecar/runtime, or backend behavior.
+> **Archived.** Do not use this workflow. Veslo desktop debugging and E2E
+> validation use WebDriverIO; see `docs/dev/testing-playbook.md`.
+
+This document is historical context for older artifacts only. Its commands must
+not be run or extended.
 
 ## Start And Attach
 

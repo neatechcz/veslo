@@ -7,6 +7,7 @@ import { assertMutationAuthorized, parseWorkspaceRoundtripArguments } from "./wo
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(__dirname, "./workspace-roundtrip.mjs"), "utf8");
+const scenarioSource = readFileSync(resolve(__dirname, "./scenarios/workspace-roundtrip.mjs"), "utf8");
 const composerSource = readFileSync(resolve(__dirname, "./scenario-kit/composer.mjs"), "utf8");
 const selectorsSource = readFileSync(resolve(__dirname, "./scenario-kit/selectors.mjs"), "utf8");
 const waitsSource = readFileSync(resolve(__dirname, "./scenario-kit/waits.mjs"), "utf8");
@@ -44,6 +45,10 @@ test("workspace roundtrip is opt-in and sends through visible UI controls", () =
   assert.throws(() => assertMutationAuthorized({}), /WEBDRIVER_ALLOW_MUTATION=1/);
   assert.doesNotThrow(() => assertMutationAuthorized({ WEBDRIVER_ALLOW_MUTATION: "1" }));
   assert.match(source, /runLiveScenario/);
+  assert.match(scenarioSource, /requireDistinctConversation: true/);
+  assert.match(scenarioSource, /workspace\.second\.settle/);
+  assert.match(scenarioSource, /workspace\.second\.output/);
+  assert.match(scenarioSource, /waitForVisibleAssistantOutput/);
   assert.match(workspaceSource, /data-project-key/);
   assert.match(selectorsSource, /session-composer-input/);
   assert.match(selectorsSource, /session-composer-send-button/);
@@ -53,11 +58,17 @@ test("workspace roundtrip is opt-in and sends through visible UI controls", () =
   assert.match(workspaceSource, /projectNewSession/);
   assert.match(workspaceSource, /composerSessionQueueKey/);
   assert.match(workspaceSource, /visibleComposerSessionQueueKey/);
-  assert.match(workspaceSource, /newConversation\.moveTo\(\)/);
+  assert.match(workspaceSource, /visibleComposerTargetHeading/);
+  assert.match(workspaceSource, /clickVisibleProjectNewSession/);
+  assert.match(workspaceSource, /clickVisibleProjectCollapseToggle/);
+  assert.match(workspaceSource, /opacity-transitioning control/);
   assert.match(workspaceSource, /getClientRects\(\)\.length > 0/);
-  assert.match(workspaceSource, /footer composer intentionally omits this/);
   assert.match(workspaceSource, /requireDistinctConversation = false/);
-  assert.match(workspaceSource, /nextSessionQueueKey !== previousSessionQueueKey/);
+  assert.match(workspaceSource, /nextSessionQueueKey === previousSessionQueueKey/);
+  assert.match(workspaceSource, /Pending-draft composer did not become ready/);
+  assert.match(waitsSource, /workspace list is ready/);
+  assert.match(waitsSource, /timeout = 30_000/);
+  assert.match(waitsSource, /first desktop sidebar render/);
   assert.match(source, /runLiveScenario/);
   assert.doesNotMatch(source, /fetch\([^)]*conversation/i);
   assert.doesNotMatch(source, /spawn\(/);

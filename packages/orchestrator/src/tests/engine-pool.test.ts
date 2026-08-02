@@ -458,6 +458,53 @@ describe("EnginePool", () => {
     }
   });
 
+  test("persists one immutable generation through spawn and intentional stop", async () => {
+    const events: Array<{ kind: string; ownerId: string; pid?: number; reason?: string }> = [];
+    const h = harness({
+      generationLifecycle: {
+        beforeSpawn: (seed) => { events.push({ kind: "creating", ownerId: seed.engineOwnerId }); },
+        afterSpawn: (engine) => { events.push({ kind: "live", ownerId: engine.engineOwnerId, pid: engine.pid }); },
+        beforeStop: (engine, reason) => { events.push({ kind: "stopping", ownerId: engine.engineOwnerId, pid: engine.pid, reason }); },
+        afterExit: (engine, reason) => { events.push({ kind: "exited", ownerId: engine.engineOwnerId, pid: engine.pid, reason }); },
+      },
+    });
+    try {
+      const engine = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      await h.pool.suspend("a", "test_stop");
+
+      expect(events.slice(0, 3)).toEqual([
+        { kind: "creating", ownerId: engine.engineOwnerId },
+        { kind: "live", ownerId: engine.engineOwnerId, pid: engine.pid },
+        { kind: "stopping", ownerId: engine.engineOwnerId, pid: engine.pid, reason: "test_stop" },
+      ]);
+      const exits = events.filter((event) => event.kind === "exited");
+      expect(exits).toHaveLength(1);
+      expect(exits[0]).toMatchObject({ ownerId: engine.engineOwnerId, pid: engine.pid });
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("does not expose an engine when durable generation activation fails", async () => {
+    let stopped = 0;
+    const h = harness({
+      generationLifecycle: {
+        afterSpawn: async () => { throw new Error("generation sqlite unavailable"); },
+      },
+      stopChild: async (child) => {
+        stopped += 1;
+        await stopChild(child);
+      },
+    });
+    try {
+      await expect(h.pool.ensure({ id: "a", path: "/tmp/a" })).rejects.toThrow("generation sqlite unavailable");
+      expect(h.pool.get("a")).toBeUndefined();
+      expect(stopped).toBe(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   test("an invalid replacement view leaves the healthy engine running", async () => {
     const h = harness({
       isProcessAlive: () => true,

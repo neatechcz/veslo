@@ -31,6 +31,7 @@ import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } f
 import type { SerializedEngineState } from "./engine-pool.js";
 import { atomicWriteJson, cleanupStaleTmpFiles, createDebouncedPersister } from "./persistence.js";
 import { EnginePool, type EngineProcess } from "./engine-pool.js";
+import { createEngineGenerationAuthority } from "./engine-generation-authority.js";
 import { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
 import {
   readPublishedSharedSkillViewRevision,
@@ -4525,6 +4526,11 @@ async function runRouterDaemon(args: ParsedArgs) {
   const runStore = createRunStore({
     dbPath: join(dataDir, "conversations", "runs.sqlite"),
   });
+  const engineGenerationAuthority = createEngineGenerationAuthority({
+    dbPath: join(dataDir, "conversations", "runs.sqlite"),
+    orchestratorInstanceId: randomUUID(),
+    orchestratorStartedAt: Date.now(),
+  });
   let runRegistryForEngineCleanup: ReturnType<typeof createRunRegistry> | null = null;
 
   const emptyRunEngineOwner = (): RunEngineOwner => ({
@@ -4904,15 +4910,36 @@ async function runRouterDaemon(args: ParsedArgs) {
         const client = createOpencodeClient({ baseUrl, headers: authHeaders });
         await waitForOpencodeHealthy(client, 2000, 250, undefined, { baseUrl }, { baseUrl, headers: authHeaders });
       },
+      generationLifecycle: {
+        beforeSpawn: (seed) => {
+          engineGenerationAuthority.registerCreating(seed);
+        },
+        afterSpawn: async (engine) => {
+          await engineGenerationAuthority.activate({
+            workspaceId: engine.workspaceId,
+            engineSlotId: engine.workspaceId,
+            engineOwnerId: engine.engineOwnerId,
+            engineStartedAt: engine.spawnedAt,
+            enginePid: engine.pid,
+            engineBaseUrl: engine.baseUrl,
+          });
+        },
+        beforeStop: (engine, reason) => {
+          engineGenerationAuthority.beginStop(runEngineOwnerFromEngine(engine), reason);
+        },
+        afterExit: (engine, reason) => {
+          engineGenerationAuthority.confirmExit(runEngineOwnerFromEngine(engine), reason);
+        },
+      },
       // F2Ú5 — state transition events. Log + trigger debounced persist.
-      onEngineChange: (workspaceId, event) => {
+      onEngineChange: (workspaceId, event, engine) => {
         logger.info("engine event", { workspaceId, event }, "engine-pool");
         if (event === "crashed" || event === "permanently-failed") {
           cleanupRunsForLostEngine({
             source: "engine-pool",
             workspaceId,
             event,
-            owner: runEngineOwnerFromEngine(pool.get(workspaceId)),
+            owner: runEngineOwnerFromEngine(engine),
           });
         }
         persistEngines();
@@ -4994,6 +5021,27 @@ async function runRouterDaemon(args: ParsedArgs) {
           workspaceId: sharedEngineMode,
           mode: sharedEngineMode,
           deps: {
+            generationLifecycle: {
+              beforeSpawn: (seed) => {
+                engineGenerationAuthority.registerCreating(seed);
+              },
+              afterSpawn: async (engine) => {
+                await engineGenerationAuthority.activate({
+                  workspaceId: engine.workspaceId,
+                  engineSlotId: engine.workspaceId,
+                  engineOwnerId: engine.engineOwnerId,
+                  engineStartedAt: engine.spawnedAt,
+                  enginePid: engine.pid,
+                  engineBaseUrl: engine.baseUrl,
+                });
+              },
+              beforeStop: (engine, reason) => {
+                engineGenerationAuthority.beginStop(runEngineOwnerFromEngine(engine), reason);
+              },
+              afterExit: (engine, reason) => {
+                engineGenerationAuthority.confirmExit(runEngineOwnerFromEngine(engine), reason);
+              },
+            },
             prepareRuntime: async () => {
               const sharedWorkdir = await ensureWorkspace(join(dataDir, "shared-opencode-runtime"));
               const sharedConfigDir = join(dataDir, "opencode-config", sharedEngineMode);
@@ -5597,6 +5645,9 @@ async function runRouterDaemon(args: ParsedArgs) {
         stale?: boolean;
         noProgressSeconds?: number | null;
         runtimeReadyForSuccessor?: boolean | null;
+        unavailableReason?: string | null;
+        unavailableHttpStatus?: number | null;
+        sessionStatusObserved?: "busy" | "retry" | "explicit_idle" | "absent" | "unknown" | null;
       } = {},
     ) => {
       const { lastProgressSignature: _lastProgressSignature, ...publicRecord } = record;
@@ -6193,7 +6244,8 @@ async function runRouterDaemon(args: ParsedArgs) {
             send(200, lifecycleRunPayload(record));
             return;
           }
-          if (parts[4] === "recover-provider-start-timeout") {
+          if (parts[4] === "recover-provider-start-timeout" || parts[4] === "recover-terminal-runtime-handoff") {
+            const terminalHandoffRecovery = parts[4] === "recover-terminal-runtime-handoff";
             const reconciled = await runRegistry.get(workspace.id, runId);
             if (!reconciled) {
               send(404, { error: "run not found" });
@@ -6209,9 +6261,13 @@ async function runRouterDaemon(args: ParsedArgs) {
             if (
               !isTerminalRunStatus(record.status) ||
               reconciled.runtimeReadyForSuccessor === true ||
-              !exactOwnerIsAttached
+              !exactOwnerIsAttached ||
+              (terminalHandoffRecovery && (
+                reconciled.stale !== true ||
+                reconciled.unavailableReason !== "no_current_engine"
+              ))
             ) {
-              send(409, { error: "provider_start_recovery_not_needed" });
+              send(409, { error: terminalHandoffRecovery ? "terminal_handoff_recovery_not_needed" : "provider_start_recovery_not_needed" });
               return;
             }
             const recordOwner: RunEngineOwner = {
@@ -6231,17 +6287,43 @@ async function runRouterDaemon(args: ParsedArgs) {
               });
               return;
             }
-            const currentOwner = runEngineOwnerFromEngine(pool.get(workspace.id));
+            const currentEngine = usesSharedOpenCodeEngine(engineTopology.mode)
+              ? sharedOpenCodeEngine?.getRunning() ?? null
+              : pool.get(workspace.id);
+            const sharedEngineStarting = usesSharedOpenCodeEngine(engineTopology.mode) &&
+              sharedOpenCodeEngine?.snapshot().pending === true;
+            const currentOwner = runEngineOwnerFromEngine(currentEngine);
+            if (terminalHandoffRecovery && (currentOwner.engineOwnerId || sharedEngineStarting)) {
+              send(409, { error: "terminal_handoff_recovery_runtime_active" });
+              return;
+            }
+            let terminalHandoffEvidenceId: string | null = null;
+            if (terminalHandoffRecovery) {
+              const evidence = await engineGenerationAuthority.resolveOwnerEvidence({
+                owner: recordOwner,
+                currentPoolEntry: Boolean(currentEngine) || sharedEngineStarting,
+              });
+              if (evidence.kind !== "lost_proven") {
+                send(409, {
+                  error: evidence.kind === "live_or_ambiguous"
+                    ? "terminal_handoff_recovery_owner_live_or_ambiguous"
+                    : "terminal_handoff_recovery_owner_unknown",
+                  reason: evidence.reason,
+                });
+                return;
+              }
+              terminalHandoffEvidenceId = evidence.evidenceId;
+            }
             const ownerMatchesCurrentEngine =
               currentOwner.engineOwnerId === recordOwner.engineOwnerId &&
               currentOwner.enginePid === recordOwner.enginePid &&
               currentOwner.engineStartedAt === recordOwner.engineStartedAt &&
               currentOwner.engineBaseUrl === recordOwner.engineBaseUrl;
-            if (currentOwner.engineOwnerId && !ownerMatchesCurrentEngine) {
+            if (!terminalHandoffRecovery && currentOwner.engineOwnerId && !ownerMatchesCurrentEngine) {
               send(409, { error: "provider_start_recovery_owner_changed" });
               return;
             }
-            if (ownerMatchesCurrentEngine) {
+            if (!terminalHandoffRecovery && ownerMatchesCurrentEngine) {
               await pool.suspend(workspace.id, "provider-start-timeout-recovery");
             }
             const recovered = runRegistry.markTerminalRunEngineLost({
@@ -6253,13 +6335,19 @@ async function runRouterDaemon(args: ParsedArgs) {
               send(409, { error: "provider_start_recovery_transition_rejected" });
               return;
             }
-            traceRuntime("orchestrator:run-lifecycle:provider-start-timeout-recovered", {
-              workspaceId: workspace.id,
-              runId,
-              engineOwnerId: recordOwner.engineOwnerId,
-              enginePid: recordOwner.enginePid,
-              engineWasRunning: ownerMatchesCurrentEngine,
-            });
+            traceRuntime(
+              terminalHandoffRecovery
+                ? "orchestrator:run-lifecycle:terminal-runtime-handoff-recovered"
+                : "orchestrator:run-lifecycle:provider-start-timeout-recovered",
+              {
+                workspaceId: workspace.id,
+                runId,
+                engineOwnerId: recordOwner.engineOwnerId,
+                enginePid: recordOwner.enginePid,
+                engineWasRunning: ownerMatchesCurrentEngine,
+                terminalHandoffEvidenceId,
+              },
+            );
             send(200, lifecycleRunPayload(recovered, { runtimeReadyForSuccessor: true }));
             return;
           }
@@ -6303,6 +6391,9 @@ async function runRouterDaemon(args: ParsedArgs) {
             stale: active.stale,
             noProgressSeconds: active.noProgressSeconds,
             runtimeReadyForSuccessor: active.runtimeReadyForSuccessor,
+            unavailableReason: active.unavailableReason,
+            unavailableHttpStatus: active.unavailableHttpStatus,
+            sessionStatusObserved: active.sessionStatusObserved,
           }));
           return;
         }
@@ -6331,6 +6422,9 @@ async function runRouterDaemon(args: ParsedArgs) {
           stale: reconciled.stale,
           noProgressSeconds: reconciled.noProgressSeconds,
           runtimeReadyForSuccessor: reconciled.runtimeReadyForSuccessor,
+          unavailableReason: reconciled.unavailableReason,
+          unavailableHttpStatus: reconciled.unavailableHttpStatus,
+          sessionStatusObserved: reconciled.sessionStatusObserved,
         }));
         return;
       }

@@ -552,6 +552,7 @@ export type SessionViewProps = {
   historyUnavailableRetrying: boolean;
   retryUnavailableHistory: (sessionId: string) => Promise<void> | void;
   retryAcceptedRunForSession: (sessionId: string, workspaceId?: string | null) => number;
+  retryTerminalHandoffForSession: (sessionId: string, workspaceId?: string | null) => number;
   retryTerminalTranscriptRecoveryForSession: (sessionId: string, workspaceId?: string | null) => number;
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
@@ -1156,6 +1157,26 @@ export default function SessionView(props: SessionViewProps) {
       current[key] ? current : { ...current, [key]: true },
     );
   };
+  // Directory pending-draft keys are intentionally stable so a draft can be
+  // restored after a restart. A completed first send must not, however, make
+  // the next explicitly opened draft for that same directory inherit the old
+  // entry-dismissal state.
+  createEffect(
+    on(
+      () => props.activePendingDraftKey,
+      (pendingDraftKey, previousPendingDraftKey) => {
+        const nextKey = pendingDraftKey?.trim() ?? "";
+        const previousKey = previousPendingDraftKey?.trim() ?? "";
+        if (!nextKey || nextKey === previousKey) return;
+        const sessionKey = pendingSessionQueueKey();
+        setComposerEntryDismissedBySessionKey((current) => {
+          if (!current[sessionKey]) return current;
+          const { [sessionKey]: _dismissed, ...next } = current;
+          return next;
+        });
+      },
+    ),
+  );
   const tempRuntimeUiSurface = (): TempRuntimeUiRenderSurface =>
     showWorkspaceSetupEmptyState() ? "workspace-initial" : "conversation";
   const sessionUiDiagnosticEnabled = () => props.developerMode || sessionUiMutationTraceEnabled();
@@ -1301,6 +1322,32 @@ export default function SessionView(props: SessionViewProps) {
       const { [base]: _removedPendingKey, ...rest } = current;
       return rest;
     });
+  };
+  const clearPendingQueueHandoffsForWorkspace = (workspaceId: string) => {
+    const targetWorkspaceId = workspaceId.trim();
+    if (!targetWorkspaceId) return;
+    let clearedCount = 0;
+    setPendingQueueKeyAwaitingSessionIdByBaseKey((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([baseKey]) => {
+          const belongsToTarget =
+            resolveWorkspaceIdForQueueKey(
+              { activeWorkspaceId: props.activeWorkspaceId },
+              baseKey,
+            ) === targetWorkspaceId;
+          if (belongsToTarget) clearedCount += 1;
+          return !belongsToTarget;
+        }),
+      );
+      return clearedCount ? next : current;
+    });
+    if (clearedCount) {
+      recordSendTrace("pending-draft:clear-materialized-handoffs", {
+        workspaceId: targetWorkspaceId,
+        clearedCount,
+        reason: "open-fresh-pending-draft",
+      });
+    }
   };
   const [pendingSubmittedDraftBySessionKey, setPendingSubmittedDraftBySessionKey] =
     createSignal<PendingSubmittedDraftBySessionKey>({});
@@ -2317,6 +2364,9 @@ export default function SessionView(props: SessionViewProps) {
     const diagnostic = activeRunDiagnostic();
     if (diagnostic?.terminalization?.state === "pending") {
       return tr("session.run_terminalization_pending");
+    }
+    if (diagnostic?.terminalHandoff?.state === "pending") {
+      return tr("session.run_terminal_handoff_pending");
     }
     if (diagnostic?.recoveryState === "exhausted") {
       return tr("session.run_observation_exhausted");
@@ -3719,12 +3769,18 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openPendingDirectoryDraftFromList = (workspaceId: string) => {
-    const pendingBaseKey = pendingSessionQueueKey();
-    const pendingKey = pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey] ?? null;
-    if (pendingKey) {
-      clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
-    }
+    // The stable directory pending-draft key is absent after its first send,
+    // so the current key temporarily becomes `pending-workspace`. Clear the
+    // target workspace's old materialization mapping before that stable key is
+    // activated again; otherwise the next draft is routed to the old session.
+    clearPendingQueueHandoffsForWorkspace(workspaceId);
     props.openPendingDirectoryDraftInWorkspace(workspaceId);
+  };
+  const retryTerminalHandoffRecovery = () => {
+    const sessionId = props.selectedSessionId?.trim() ?? "";
+    const workspaceId = activeRunDiagnostic()?.workspaceId ?? null;
+    if (!sessionId) return;
+    props.retryTerminalHandoffForSession(sessionId, workspaceId);
   };
 
   createEffect(
@@ -4461,6 +4517,8 @@ export default function SessionView(props: SessionViewProps) {
                           ? tr("session.run_observation_exhausted")
                           : recoveryNotice() === "transcript-unavailable"
                             ? tr("session.run_transcript_unavailable")
+                            : recoveryNotice() === "terminal-handoff-unresolved"
+                              ? tr("session.run_terminal_handoff_unresolved")
                             : runDiagnosticLabel() || thinkingStatus() || runLabel()}
                       </span>
                       <Show when={recoveryNotice()}>
@@ -4470,6 +4528,8 @@ export default function SessionView(props: SessionViewProps) {
                           onClick={() => {
                             if (recoveryNotice() === "connection-unavailable") {
                               retryAcceptedRunRecovery();
+                            } else if (recoveryNotice() === "terminal-handoff-unresolved") {
+                              retryTerminalHandoffRecovery();
                             } else {
                               retryTerminalTranscriptRecovery();
                             }

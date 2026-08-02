@@ -435,6 +435,28 @@ describe("conversation run queue store", () => {
       directory: "C:/repo",
       opencodeSessionId: "sess-a",
     })).toEqual(expect.objectContaining({ providerStartAbortPending: true }));
+    expect(first.markWorkspaceRunTerminalHandoffPending({
+      workspaceId: "ws-a",
+      runId: "run-a",
+      reason: "no_current_engine",
+      fingerprint: "handoff-a",
+      attempts: 1,
+      requestedAt: 2_100,
+    })).toEqual(expect.objectContaining({
+      state: "terminal_handoff_pending",
+      terminalHandoffFingerprint: "handoff-a",
+    }));
+    expect(first.markWorkspaceRunTerminalHandoffUnresolved({
+      workspaceId: "ws-a",
+      runId: "run-a",
+      reason: "generation_not_found",
+      fingerprint: "handoff-a",
+      attempts: 1,
+      decidedAt: 2_200,
+    })).toEqual(expect.objectContaining({
+      state: "terminal_handoff_unresolved",
+      terminalHandoffReason: "generation_not_found",
+    }));
 
     const restarted = createConversationRunQueueStore({ dataDir, now: () => 3_000 });
     expect(restarted.listWorkspaceRunReservations()).toEqual([
@@ -442,10 +464,15 @@ describe("conversation run queue store", () => {
         workspaceId: "ws-a",
         conversationId: "conv-a",
         runId: "run-a",
-        state: "active",
+        state: "terminal_handoff_unresolved",
         providerStartAbortPending: true,
         providerStartAbortDirectory: "C:/repo",
         providerStartAbortOpenCodeSessionId: "sess-a",
+        terminalHandoffReason: "generation_not_found",
+        terminalHandoffFingerprint: "handoff-a",
+        terminalHandoffAttempts: 1,
+        terminalHandoffRequestedAt: 2_100,
+        terminalHandoffDecidedAt: 2_200,
       }),
     ]);
     expect(restarted.releaseWorkspaceRun("ws-a", "run-a")).toBe(true);

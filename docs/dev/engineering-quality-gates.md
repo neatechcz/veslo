@@ -23,7 +23,7 @@ pnpm check
 5. Import, cycle, route, and Veslo-header audits (`check:architecture`)
 
 The command deliberately does not launch a desktop runtime and does not run the
-full Tauri Pilot suite. A failed subcommand is itself the reproduction command;
+full WebDriverIO desktop suite. A failed subcommand is itself the reproduction command;
 do not replace it with an `--if-present`, `continue-on-error`, or auto-fix
 wrapper.
 
@@ -56,7 +56,7 @@ This headless scenario uses only a loopback deterministic provider. It validates
 real HTTP submit and queue routes, ten distinct lifecycle identities on one
 workspace owner generation, abort isolation, authenticated engine-loss
 notification, server terminalization, replacement generation, and recovery
-through the replacement. It does not use Tauri Pilot or the UI. The test
+through the replacement. It does not use a desktop driver or the UI. The test
 intentionally runs its ephemeral OpenCode child with `VESLO_DISABLE_SANDBOX=1`;
 this is not a claim that production sandbox isolation has been verified.
 
@@ -75,7 +75,7 @@ IDs. The second records a fingerprinted Gate A/B/C capability result: directory
 isolation with prompt execution, Veslo effective-view policy closure, and
 explicit per-directory disposal. A passing upstream disposal observation alone
 does not enable shared topology; the Veslo admission/epoch and desktop gates
-remain required. These commands do not use Tauri Pilot.
+remain required. These commands do not use a desktop driver.
 
 ## Required Headless Service Gate
 
@@ -110,18 +110,11 @@ rerun and disposal behavior for the highest-risk lifecycle owners.
 ## Required Desktop Recovery Lane
 
 For local-host lifecycle, sidecar, desktop startup, or Tauri recovery changes,
-first follow the desktop process preflight in
-`docs/dev/testing-playbook.md`, then run:
-
-```bash
-pnpm check:desktop-recovery
-```
-
-This builds the debug E2E desktop binary and runs only the focused VSLO-235
-child-exit scenario against a fresh isolated profile. It proves the sequence
-ready, owned child exit reported as `exited/child_exited`, automatic replacement
-with a new child PID, and healthy host. It is intentionally separate from
-`pnpm check` because it launches the real desktop application.
+first follow the desktop process preflight in `docs/dev/testing-playbook.md`.
+The existing `pnpm check:desktop-recovery` command is legacy Pilot tooling and
+is not a supported gate. Add and run a focused owned WebDriverIO scenario
+before claiming desktop recovery coverage; until then, the headless service and
+workspace-engine gates are the required regression proof.
 
 ## CI Contract
 
@@ -132,7 +125,7 @@ requests for `main` and `dev`:
 - `Quality / Unit` — explicit unit/contract suite
 - `Quality / Services (Windows)` — headless service-runtime proof on Windows
 - `Quality / Rust` — Windows Rust checks
-- `Quality / Desktop recovery` — Windows focused Tauri recovery proof
+- `Quality / Desktop recovery` — legacy lane; replace with WebDriverIO recovery proof before treating it as required
 - `Quality / Gate` — aggregate that fails unless every previous job succeeds
 
 The workflow uses the same repository commands as local verification, frozen

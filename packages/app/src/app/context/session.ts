@@ -223,6 +223,9 @@ export function createSessionStore(options: {
   recoverAcceptedConversationRunStatus?: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
+  retryTerminalHandoff?: (
+    scope: SessionLifecycleRecoveryScope,
+  ) => Promise<SessionLifecycleRecoveryStatus | null>;
   recoverAcceptedConversationTranscript?: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<VesloSessionTranscriptSnapshot | null>;
@@ -1038,6 +1041,7 @@ export function createSessionStore(options: {
           readConversationRunStatus: options.readConversationRunStatus,
           recoverAcceptedConversationRunStatus:
             options.recoverAcceptedConversationRunStatus,
+          retryTerminalHandoff: options.retryTerminalHandoff,
           recoverAcceptedConversationTranscript:
             options.recoverAcceptedConversationTranscript,
           isConversationRunActive: (scope) =>
@@ -1111,10 +1115,25 @@ export function createSessionStore(options: {
                 "failed",
               );
             }
-            const active = conversationRunOwnership.observeStatus(
+            let active = conversationRunOwnership.observeStatus(
               scope,
               status,
             );
+            if (
+              status &&
+              ["completed", "failed", "aborted"].includes(status.status) &&
+              !active
+            ) {
+              const promotedTerminal = conversationRunOwnership.promoteObservedTerminalRun(scope);
+              if (promotedTerminal) {
+                // The exact queued run completed between lifecycle polls. Its
+                // assistant text belongs before the next queued turn, so make
+                // that delayed projection visible before terminal recovery
+                // closes this short-lived ownership handoff.
+                for (const commit of promotedTerminal.commits) commit();
+                active = true;
+              }
+            }
             if (
               status &&
               ["completed", "failed", "aborted"].includes(status.status) &&
@@ -1584,6 +1603,8 @@ export function createSessionStore(options: {
     },
     retryAcceptedRunForSession:
       lifecycleRecoveryController?.retryAcceptedRunForSession ?? (() => 0),
+    retryTerminalHandoffForSession:
+      lifecycleRecoveryController?.retryTerminalHandoffForSession ?? (() => 0),
     retryTerminalTranscriptRecoveryForSession:
       lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession ??
       (() => 0),

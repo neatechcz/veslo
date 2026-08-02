@@ -688,6 +688,7 @@ function serializeConversationRunQueueStatus(
 function serializeQueuedRunLifecycleStatus(
   item: ConversationRunQueueItem,
   terminalization: Record<string, unknown> | null = null,
+  terminalHandoff: Record<string, unknown> | null = null,
 ): Record<string, unknown> {
   const terminalFailure = item.state === "failed";
   const submittedWithoutLifecycle = item.state === "submitted";
@@ -705,6 +706,7 @@ function serializeQueuedRunLifecycleStatus(
     queueItemId: item.queueItemId,
     queueState: item.state,
     terminalization,
+    terminalHandoff,
   };
 }
 
@@ -718,6 +720,22 @@ function serializeTerminalizationPending(
     attempts: reservation.terminalizationAttempts,
     nextAttemptAt: reservation.terminalizationNextAttemptAt,
     deadlineAt: reservation.terminalizationDeadlineAt,
+  };
+}
+
+function serializeTerminalHandoff(
+  reservation: ConversationWorkspaceRunReservation | undefined,
+): Record<string, unknown> | null {
+  if (
+    reservation?.state !== "terminal_handoff_pending" &&
+    reservation?.state !== "terminal_handoff_unresolved"
+  ) return null;
+  return {
+    state: reservation.state === "terminal_handoff_unresolved" ? "unresolved" : "pending",
+    reasonCode: reservation.terminalHandoffReason ?? "unknown",
+    attempts: reservation.terminalHandoffAttempts,
+    requestedAt: reservation.terminalHandoffRequestedAt,
+    decidedAt: reservation.terminalHandoffDecidedAt,
   };
 }
 
@@ -1498,6 +1516,44 @@ export function registerConversationSessionRoutes(
     });
   });
 
+  addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/runs/:runId/retry-terminal-handoff", "client", async (ctx) => {
+    ensureWritable(ctx.config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
+    const conversationId = (ctx.params.conversationId ?? "").trim();
+    const runId = (ctx.params.runId ?? "").trim();
+    if (!conversationId || !runId) {
+      throw new ApiError(400, "invalid_payload", "conversationId and runId are required");
+    }
+    const body = await readJsonBody(ctx.request);
+    const target = await resolveConversationExecutionTarget({
+      workspace,
+      sessionOrConversationId: conversationId,
+      requestedDirectory: optionalBodyString(body, "directory"),
+      missingDirectoryMessage: "Conversation runtime handoff directory is required",
+    });
+    const requested = await conversationRunLifecycleController.retryTerminalRuntimeHandoff({
+      workspace,
+      conversationId: target.conversationId,
+      runId,
+      directory: target.directory,
+      opencodeSessionId: target.opencodeSessionId,
+      reason: "terminal-runtime-handoff-explicit-retry",
+      delayMs: 0,
+      attempt: 0,
+    });
+    if (!requested) {
+      throw new ApiError(409, "terminal_handoff_not_unresolved", "Run is not awaiting terminal runtime handoff verification");
+    }
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      status: "requested",
+    }, 202);
+  });
+
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/runs/:runId", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
@@ -1514,13 +1570,13 @@ export function registerConversationSessionRoutes(
       conversationId,
       runId,
     };
-    const terminalization = serializeTerminalizationPending(
-      conversationRunQueueStore.listWorkspaceRunReservations().find((reservation) =>
-        reservation.workspaceId === workspace.id &&
-        reservation.conversationId === conversationId &&
-        reservation.runId === runId
-      ),
+    const reservation = conversationRunQueueStore.listWorkspaceRunReservations().find((candidate) =>
+      candidate.workspaceId === workspace.id &&
+      candidate.conversationId === conversationId &&
+      candidate.runId === runId
     );
+    const terminalization = serializeTerminalizationPending(reservation);
+    const terminalHandoff = serializeTerminalHandoff(reservation);
     recordSendWorkflowTrace("server", "server:conversation-run-status:start", statusTrace);
     let status;
     try {
@@ -1550,7 +1606,7 @@ export function registerConversationSessionRoutes(
           ...statusTrace,
           outcome: "queued",
         });
-        return jsonResponse(serializeQueuedRunLifecycleStatus(queued, terminalization));
+        return jsonResponse(serializeQueuedRunLifecycleStatus(queued, terminalization, terminalHandoff));
       }
       recordSendWorkflowTrace("server", "server:conversation-run-status:error", {
         ...statusTrace,
@@ -1579,6 +1635,7 @@ export function registerConversationSessionRoutes(
       retrySince: status.retrySince ?? null,
       noProgressSeconds: status.noProgressSeconds ?? null,
       terminalization,
+      terminalHandoff,
     });
   });
 

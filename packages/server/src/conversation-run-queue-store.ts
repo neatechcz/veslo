@@ -79,12 +79,17 @@ export type ConversationWorkspaceRunReservation = {
   workspaceId: string;
   conversationId: string;
   runId: string;
-  state: "starting" | "active" | "terminalization_pending";
+  state: "starting" | "active" | "terminalization_pending" | "terminal_handoff_pending" | "terminal_handoff_unresolved";
   terminalizationReason: string | null;
   terminalizationAttempts: number;
   terminalizationLastError: string | null;
   terminalizationNextAttemptAt: number | null;
   terminalizationDeadlineAt: number | null;
+  terminalHandoffReason: string | null;
+  terminalHandoffFingerprint: string | null;
+  terminalHandoffAttempts: number;
+  terminalHandoffRequestedAt: number | null;
+  terminalHandoffDecidedAt: number | null;
   engineSlotId: string | null;
   engineOwnerId: string | null;
   directoryInstanceEpoch: number | null;
@@ -178,6 +183,27 @@ export type ConversationRunQueueStore = {
     nextAttemptAt: number;
     deadlineAt: number;
   }): ConversationWorkspaceRunReservation | null;
+  markWorkspaceRunTerminalHandoffPending(input: {
+    workspaceId: string;
+    runId: string;
+    reason: string;
+    fingerprint: string;
+    attempts: number;
+    requestedAt?: number;
+  }): ConversationWorkspaceRunReservation | null;
+  markWorkspaceRunTerminalHandoffUnresolved(input: {
+    workspaceId: string;
+    runId: string;
+    reason: string;
+    fingerprint: string;
+    attempts: number;
+    decidedAt?: number;
+  }): ConversationWorkspaceRunReservation | null;
+  /** Explicit user intent may reopen one durable degraded handoff for a fresh, fenced evidence read. */
+  reopenWorkspaceRunTerminalHandoff(
+    workspaceId: string,
+    runId: string,
+  ): ConversationWorkspaceRunReservation | null;
   markWorkspaceRunProviderStartAbortPending(input: {
     workspaceId: string;
     runId: string;
@@ -253,6 +279,11 @@ type WorkspaceRunReservationRow = {
   terminalization_last_error: string | null;
   terminalization_next_attempt_at: number | null;
   terminalization_deadline_at: number | null;
+  terminal_handoff_reason: string | null;
+  terminal_handoff_fingerprint: string | null;
+  terminal_handoff_attempts: number | null;
+  terminal_handoff_requested_at: number | null;
+  terminal_handoff_decided_at: number | null;
   provider_start_abort_pending: number | null;
   provider_start_abort_directory: string | null;
   provider_start_abort_opencode_session_id: string | null;
@@ -360,6 +391,11 @@ function createDatabase(dbPath: string): Database {
       skill_view_revision TEXT,
       authorization_revision TEXT,
       opencode_config_digest TEXT,
+      terminal_handoff_reason TEXT,
+      terminal_handoff_fingerprint TEXT,
+      terminal_handoff_attempts INTEGER,
+      terminal_handoff_requested_at INTEGER,
+      terminal_handoff_decided_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (workspace_id, run_id)
@@ -411,6 +447,11 @@ function ensureQueueSchema(db: Database): void {
   addReservationColumn("skill_view_revision", "TEXT");
   addReservationColumn("authorization_revision", "TEXT");
   addReservationColumn("opencode_config_digest", "TEXT");
+  addReservationColumn("terminal_handoff_reason", "TEXT");
+  addReservationColumn("terminal_handoff_fingerprint", "TEXT");
+  addReservationColumn("terminal_handoff_attempts", "INTEGER");
+  addReservationColumn("terminal_handoff_requested_at", "INTEGER");
+  addReservationColumn("terminal_handoff_decided_at", "INTEGER");
   addReservationColumn("terminalization_reason", "TEXT");
   addReservationColumn("terminalization_attempts", "INTEGER");
   addReservationColumn("terminalization_last_error", "TEXT");
@@ -529,8 +570,9 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
     workspaceId: row.workspace_id,
     conversationId: row.conversation_id,
     runId: row.run_id,
-    state: row.state === "terminalization_pending"
-      ? "terminalization_pending"
+    state: row.state === "terminalization_pending" || row.state === "terminal_handoff_pending" ||
+        row.state === "terminal_handoff_unresolved"
+      ? row.state
       : row.state === "active" ? "active" : "starting",
     terminalizationReason: row.terminalization_reason?.trim() || null,
     terminalizationAttempts: Number.isSafeInteger(row.terminalization_attempts)
@@ -542,6 +584,17 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
       : null,
     terminalizationDeadlineAt: typeof row.terminalization_deadline_at === "number"
       ? row.terminalization_deadline_at
+      : null,
+    terminalHandoffReason: row.terminal_handoff_reason?.trim() || null,
+    terminalHandoffFingerprint: row.terminal_handoff_fingerprint?.trim() || null,
+    terminalHandoffAttempts: Number.isSafeInteger(row.terminal_handoff_attempts)
+      ? Math.max(0, Number(row.terminal_handoff_attempts))
+      : 0,
+    terminalHandoffRequestedAt: typeof row.terminal_handoff_requested_at === "number"
+      ? row.terminal_handoff_requested_at
+      : null,
+    terminalHandoffDecidedAt: typeof row.terminal_handoff_decided_at === "number"
+      ? row.terminal_handoff_decided_at
       : null,
     providerStartAbortPending: row.provider_start_abort_pending === 1,
     providerStartAbortDirectory: row.provider_start_abort_directory?.trim() || null,
@@ -937,7 +990,7 @@ export function createConversationRunQueueStore(options?: {
            WHERE workspace_id = ?1
              AND conversation_id = ?2
              AND run_id <> ?3
-             AND state IN ('starting', 'active', 'terminalization_pending')
+             AND state IN ('starting', 'active', 'terminalization_pending', 'terminal_handoff_pending', 'terminal_handoff_unresolved')
            ORDER BY created_at ASC, run_id ASC
            LIMIT 1`,
         ).get(row.workspace_id, row.conversation_id, row.reserved_run_id);
@@ -1001,7 +1054,7 @@ export function createConversationRunQueueStore(options?: {
            WHERE workspace_id = ?1
              AND conversation_id = ?2
              AND run_id <> ?3
-             AND state IN ('starting', 'active', 'terminalization_pending')
+             AND state IN ('starting', 'active', 'terminalization_pending', 'terminal_handoff_pending', 'terminal_handoff_unresolved')
            ORDER BY created_at ASC, run_id ASC
            LIMIT 1`,
         ).get(workspaceId, conversationId, runId);
@@ -1138,6 +1191,97 @@ export function createConversationRunQueueStore(options?: {
           `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
         ).get(normalizeText(input.workspaceId), normalizeText(input.runId));
+        return row ? reservationRowToItem(row) : null;
+      });
+    },
+
+    markWorkspaceRunTerminalHandoffPending(input) {
+      return withDb((db) => {
+        const timestamp = now();
+        const requestedAt = Number.isFinite(input.requestedAt)
+          ? Math.max(0, Math.floor(input.requestedAt!))
+          : timestamp;
+        const result = db.query(
+          `UPDATE conversation_workspace_run_reservation
+           SET state = 'terminal_handoff_pending',
+               terminal_handoff_reason = ?3,
+               terminal_handoff_fingerprint = ?4,
+               terminal_handoff_attempts = ?5,
+               terminal_handoff_requested_at = ?6,
+               terminal_handoff_decided_at = NULL,
+               updated_at = ?7
+           WHERE workspace_id = ?1 AND run_id = ?2`,
+        ).run(
+          normalizeText(input.workspaceId),
+          normalizeText(input.runId),
+          normalizeText(input.reason),
+          normalizeText(input.fingerprint),
+          Math.max(1, Math.floor(input.attempts)),
+          requestedAt,
+          timestamp,
+        );
+        if (result.changes !== 1) return null;
+        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
+          `SELECT * FROM conversation_workspace_run_reservation
+           WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
+        ).get(normalizeText(input.workspaceId), normalizeText(input.runId));
+        return row ? reservationRowToItem(row) : null;
+      });
+    },
+
+    markWorkspaceRunTerminalHandoffUnresolved(input) {
+      return withDb((db) => {
+        const timestamp = now();
+        const decidedAt = Number.isFinite(input.decidedAt)
+          ? Math.max(0, Math.floor(input.decidedAt!))
+          : timestamp;
+        const result = db.query(
+          `UPDATE conversation_workspace_run_reservation
+           SET state = 'terminal_handoff_unresolved',
+               terminal_handoff_reason = ?3,
+               terminal_handoff_fingerprint = ?4,
+               terminal_handoff_attempts = ?5,
+               terminal_handoff_decided_at = ?6,
+               updated_at = ?7
+           WHERE workspace_id = ?1 AND run_id = ?2`,
+        ).run(
+          normalizeText(input.workspaceId),
+          normalizeText(input.runId),
+          normalizeText(input.reason),
+          normalizeText(input.fingerprint),
+          Math.max(0, Math.floor(input.attempts)),
+          decidedAt,
+          timestamp,
+        );
+        if (result.changes !== 1) return null;
+        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
+          `SELECT * FROM conversation_workspace_run_reservation
+           WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
+        ).get(normalizeText(input.workspaceId), normalizeText(input.runId));
+        return row ? reservationRowToItem(row) : null;
+      });
+    },
+
+    reopenWorkspaceRunTerminalHandoff(workspaceId, runId) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_workspace_run_reservation
+           SET state = 'active',
+               updated_at = ?3
+           WHERE workspace_id = ?1
+             AND run_id = ?2
+             AND state = 'terminal_handoff_unresolved'`,
+        ).run(
+          normalizeText(workspaceId),
+          normalizeText(runId),
+          timestamp,
+        );
+        if (result.changes !== 1) return null;
+        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
+          `SELECT * FROM conversation_workspace_run_reservation
+           WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
+        ).get(normalizeText(workspaceId), normalizeText(runId));
         return row ? reservationRowToItem(row) : null;
       });
     },

@@ -91,8 +91,8 @@ pnpm test:webdriver:live -- <runtime-info.json>
 ```
 
 The client attaches only and closes its WebDriver session when finished; it
-does not stop or alter the app. This is not an automated E2E lane and does not
-replace the Tauri Pilot suite. The embedded endpoint is only for a trusted
+does not stop or alter the app. WebDriverIO is the supported desktop E2E and
+live-diagnostic driver. The embedded endpoint is only for a trusted
 local development account: it binds to `127.0.0.1`, but W3C WebDriver itself
 does not authenticate other processes running as the same OS user.
 
@@ -120,6 +120,27 @@ The script finds each workspace through the rendered sidebar, clicks its New
 conversation control, types through the visible composer, clicks the visible
 send button, and closes only its WebDriver session. It does not call a Veslo
 conversation API directly or infer a workspace from the current selection.
+
+### Controlled live same-conversation queue diagnostic
+
+Use this mutating diagnostic for ordered sends in one new conversation. It
+submits the second message after the first run is visibly active; an optional
+third message is submitted in the same active window. The scenario waits for
+one visible assistant output per submitted message, so it catches a queue item
+that remains stuck after an earlier item completes.
+
+```powershell
+$env:WEBDRIVER_ALLOW_MUTATION = "1"
+pnpm test:webdriver:same-conversation-queue-roundtrip -- <runtime-info.json> `
+  --workspace "Disposable workspace" `
+  --first-message "Reply with exactly: first" `
+  --second-message "Reply with exactly: second" `
+  --third-message "Reply with exactly: third"
+```
+
+All messages are explicit, single-line inputs. Omit `--third-message` for the
+two-message version; the command never chooses a workspace or prompt by
+itself.
 
 ### Controlled live workspace-skill sidebar diagnostic
 
@@ -198,9 +219,9 @@ under `.tmp/webdriver-scenarios/`. It includes a minimal runtime identity,
 scenario result or error, automatic initial/final UI snapshots, named measured
 steps, and renderer console logs observed during that scenario. It never
 captures cookies, page source, screenshots, or the transcript. Secret-like
-values are redacted; the standard W3C `browser` log endpoint is collected only
-when the native endpoint supports it, otherwise its availability error is kept
-as diagnostic context without failing the scenario.
+values are redacted. Console capture is injected into the trusted local page;
+the scenario deliberately does not call the optional W3C `browser` log endpoint
+because the loopback native endpoint does not implement it reliably.
 
 Scenarios should use `step(name, operation)` around each meaningful UI action
 and `snapshot(label)` at state transitions. This produces comparable cold/warm
@@ -210,8 +231,8 @@ ad-hoc polling to a scenario.
 
 New scenarios must use the runner and declare `mutations: true` for any action
 that persists state. They then require `WEBDRIVER_ALLOW_MUTATION=1`; read-only
-scenarios do not. These are dev-profile diagnostic tools, not replacements for
-the Tauri Pilot E2E suite.
+scenarios do not. Mutating scenarios are the supported desktop E2E lane when
+their explicit workspace and prompt inputs describe the behavior under test.
 
 ### Read-only sidebar flicker diagnostic
 

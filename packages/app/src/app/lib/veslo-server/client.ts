@@ -558,6 +558,7 @@ export function createVesloServerClient(options: {
     submitConversation: conversations.submit,
     abortConversation: conversations.abort,
     getConversationRunStatus: conversations.getRunStatus,
+    retryTerminalHandoff: conversations.retryTerminalHandoff,
     reportConversationRunDelivery: conversations.reportRunDelivery,
     listConversationQueue: conversations.listQueue,
     getConversationQueueItem: conversations.getQueueItem,

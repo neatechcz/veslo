@@ -17,6 +17,10 @@ export const selectors = {
   sessionCapabilitiesSkillsContent: '#session-capabilities-skills-content',
   sessionCenterPane: '[data-testid="session-center-pane"]',
   assistantMessage: '[data-message-role="assistant"]',
+  // A terminal run failure is rendered inside the transcript as an assistant
+  // message, so counting visible assistant rows alone would incorrectly treat
+  // it as a successful response.
+  assistantMessageError: '[data-message-role="assistant"] [role="alert"]',
   projectHeading: 'button[data-project-collapse-toggle] span.truncate, button span.truncate',
   projectNewSession: '[data-testid="sidebar-project-new-session"]',
 };

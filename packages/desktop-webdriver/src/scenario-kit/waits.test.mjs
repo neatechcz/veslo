@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   confirmImplicitSkillCommand,
+  waitForNoVisibleAssistantError,
   waitForSubmittedRunToSettle,
 } from "./waits.mjs";
 
@@ -52,4 +53,30 @@ test("submitted-run settle waits for a delayed run indicator before accepting te
 
   await waitForSubmittedRunToSettle(browser, "workspace", 30_000);
   assert.deepEqual(conditions, []);
+});
+
+test("new assistant transcript alerts fail a queue scenario instead of counting as output", async () => {
+  const browser = {
+    execute: async () => [{ messageId: "new", text: "The provider request did not start." }],
+    waitUntil: async (predicate) => {
+      assert.equal(await predicate(), false);
+      throw new Error("alert remained visible");
+    },
+  };
+
+  await assert.rejects(
+    () => waitForNoVisibleAssistantError(browser, [{ messageId: "old", text: "old failure" }], 10),
+    /Visible assistant error: The provider request did not start/,
+  );
+});
+
+test("existing transcript alerts do not fail a new queue scenario", async () => {
+  const browser = {
+    execute: async () => [{ messageId: "old", text: "old failure" }],
+    waitUntil: async (predicate) => {
+      assert.equal(await predicate(), true);
+    },
+  };
+
+  await waitForNoVisibleAssistantError(browser, [{ messageId: "old", text: "old failure" }], 10);
 });

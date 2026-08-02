@@ -6,7 +6,49 @@ function normalize(value) {
   return String(value ?? "").trim();
 }
 
-async function projectSelectorForWorkspace(browser, workspaceLabel) {
+async function clickVisibleProjectNewSession(browser, projectSelector, projectKey) {
+  return browser.execute((selector, expectedProjectKey, buttonSelector) => {
+    const project = document.querySelector(selector);
+    const button = project?.querySelector(buttonSelector);
+    const style = button ? window.getComputedStyle(button) : null;
+    if (
+      !button ||
+      project?.getAttribute("data-project-key") !== expectedProjectKey ||
+      button.getClientRects().length === 0 ||
+      style?.display === "none" ||
+      style?.visibility === "hidden"
+    ) return false;
+    // The desktop native WebDriver implementation can report a successful
+    // click on an opacity-transitioning control without delivering the
+    // control's click handler. Keep this test scoped to the visible UI
+    // control, then invoke its normal DOM click once and prove the resulting
+    // conversation ownership below.
+    button.click();
+    return true;
+  }, projectSelector, projectKey, selectors.projectNewSession);
+}
+
+async function clickVisibleProjectCollapseToggle(browser, projectSelector, projectKey) {
+  return browser.execute((selector, expectedProjectKey) => {
+    const project = document.querySelector(selector);
+    const button = project?.querySelector('button[data-project-collapse-toggle]');
+    const style = button ? window.getComputedStyle(button) : null;
+    if (
+      !button ||
+      project?.getAttribute("data-project-key") !== expectedProjectKey ||
+      button.getClientRects().length === 0 ||
+      style?.display === "none" ||
+      style?.visibility === "hidden"
+    ) return false;
+    // Native WebDriver may acknowledge a transition-time click without
+    // delivering it. Invoke the same visible DOM control and verify aria state
+    // below; no hidden state or transport API is touched here.
+    button.click();
+    return true;
+  }, projectSelector, projectKey);
+}
+
+async function projectTargetForWorkspace(browser, workspaceLabel) {
   await waitForWorkspaceVisible(browser, workspaceLabel);
   const result = await browser.execute((label) => {
     const matches = Array.from(document.querySelectorAll("[data-project-key]"))
@@ -25,7 +67,10 @@ async function projectSelectorForWorkspace(browser, workspaceLabel) {
     fail(`Workspace label is not an unambiguous visible project heading: ${workspaceLabel}.`);
   }
   const escapedKey = await browser.execute((key) => CSS.escape(key), result.key);
-  return `[data-project-key="${escapedKey}"]`;
+  return {
+    projectKey: result.key,
+    projectSelector: `[data-project-key="${escapedKey}"]`,
+  };
 }
 
 async function visibleComposerSessionQueueKey(browser) {
@@ -38,76 +83,50 @@ async function visibleComposerSessionQueueKey(browser) {
   }, selectors.composerInput, selectors.composerSessionQueueKey);
 }
 
+async function visibleComposerTargetHeading(browser) {
+  return browser.execute((selector) => {
+    const heading = Array.from(document.querySelectorAll(selector)).find((element) => {
+      const style = window.getComputedStyle(element);
+      return element.getClientRects().length > 0 && style.display !== "none" && style.visibility !== "hidden";
+    });
+    return heading?.textContent?.trim() ?? null;
+  }, selectors.composerTargetHeading);
+}
+
 export async function selectWorkspaceForNewConversation(
   browser,
   workspaceLabel,
   { requireDistinctConversation = false } = {},
 ) {
-  const project = await browser.$(await projectSelectorForWorkspace(browser, workspaceLabel));
+  const { projectKey, projectSelector } = await projectTargetForWorkspace(browser, workspaceLabel);
+  const project = await browser.$(projectSelector);
   await project.waitForExist({ timeout: 10_000 });
   await waitForComposerReady(browser);
   const previousSessionQueueKey = await visibleComposerSessionQueueKey(browser);
-  const projectKey = await project.getAttribute("data-project-key");
-  await project.moveTo();
-  let newConversation = null;
+  if (!await clickVisibleProjectNewSession(browser, projectSelector, projectKey)) {
+    fail(`New conversation control became unavailable for ${workspaceLabel}.`);
+  }
   await browser.waitUntil(async () => {
-    const candidates = await browser.$$(selectors.projectNewSession);
-    for (const candidate of candidates) {
-      const candidateProjectKey = await browser.execute(
-        (element) => element.closest("[data-project-key]")?.getAttribute("data-project-key") ?? null,
-        candidate,
-      );
-      const rendered = await browser.execute((element) => {
-        const style = window.getComputedStyle(element);
-        return element.getClientRects().length > 0 && style.display !== "none" && style.visibility !== "hidden";
-      }, candidate);
-      if (candidateProjectKey === projectKey && rendered) {
-        newConversation = candidate;
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 10_000, timeoutMsg: `New conversation control did not become visible for ${workspaceLabel}.` });
-  if (!newConversation) {
-    fail(`New conversation control is unavailable for ${workspaceLabel}.`);
-  }
-  // This contextual control intentionally fades in with the project hover
-  // state.  WebDriver can report it as not enabled while it is still a normal
-  // button with no disabled attribute, so assert rendered presence and use
-  // the same hover-then-click interaction a user performs.
-  await newConversation.moveTo();
-  await newConversation.click();
-  if (requireDistinctConversation) {
-    await browser.waitUntil(async () => {
-      const nextSessionQueueKey = await visibleComposerSessionQueueKey(browser);
-      return Boolean(nextSessionQueueKey && nextSessionQueueKey !== previousSessionQueueKey);
-    }, {
-      timeout: 15_000,
-      timeoutMsg: `New conversation did not receive a distinct conversation ownership state for ${workspaceLabel}.`,
-    });
-  }
-
-  await browser.waitUntil(() => browser.execute((selector, label) => {
-    const visibleHeading = Array.from(document.querySelectorAll(selector)).find((element) => {
-      const style = window.getComputedStyle(element);
-      return element.getClientRects().length > 0 && style.display !== "none" && style.visibility !== "hidden";
-    });
-    // Once a conversation exists the footer composer intentionally omits this
-    // heading. The exact project button was already resolved and clicked.
-    return !visibleHeading || visibleHeading.textContent?.includes(label);
-  }, selectors.composerTargetHeading, workspaceLabel), {
+    const nextSessionQueueKey = await visibleComposerSessionQueueKey(browser);
+    if (!nextSessionQueueKey) return false;
+    if (requireDistinctConversation && nextSessionQueueKey === previousSessionQueueKey) return false;
+    return (await visibleComposerTargetHeading(browser))?.includes(workspaceLabel) === true;
+  }, {
     timeout: 15_000,
-    timeoutMsg: `Composer did not switch to ${workspaceLabel}.`,
+    timeoutMsg: `Pending-draft composer did not become ready for ${workspaceLabel}.`,
   });
 }
 
 export async function setWorkspaceConversationListExpanded(browser, workspaceLabel, expanded) {
-  const project = await browser.$(await projectSelectorForWorkspace(browser, workspaceLabel));
+  const { projectKey, projectSelector } = await projectTargetForWorkspace(browser, workspaceLabel);
+  const project = await browser.$(projectSelector);
   const toggle = await project.$('button[data-project-collapse-toggle]');
   await toggle.waitForDisplayed({ timeout: 10_000 });
   const isExpanded = () => toggle.getAttribute("aria-expanded").then((value) => value === "true");
   if (await isExpanded() === expanded) return;
-  await toggle.click();
+  if (!await clickVisibleProjectCollapseToggle(browser, projectSelector, projectKey)) {
+    fail(`Workspace conversation toggle became unavailable: ${workspaceLabel}.`);
+  }
   await browser.waitUntil(isExpanded, {
     timeout: 10_000,
     timeoutMsg: `Workspace conversation list did not become ${expanded ? "expanded" : "collapsed"}: ${workspaceLabel}.`,

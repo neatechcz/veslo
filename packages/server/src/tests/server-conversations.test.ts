@@ -1640,7 +1640,6 @@ describe("conversation routes", () => {
     expect(upstreamRequests).toEqual([
       "/session",
       "/session/sess-submit-created-failed/prompt_async",
-      "/session/sess-submit-created-failed/prompt_async",
     ]);
   });
 
@@ -2733,6 +2732,12 @@ describe("conversation routes", () => {
             stale: false,
           });
         }
+        if (
+          request.method === "GET" &&
+          /^\/workspace\/ws_1\/conversations\/[^/]+\/runs\/[^/]+$/.test(url.pathname)
+        ) {
+          return Response.json({ error: "run not found" }, { status: 404 });
+        }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
           const body = await request.json().catch(() => null) as Record<string, unknown> | null;
           registerRequests.push(typeof body?.runId === "string" ? body.runId : "");
@@ -3807,6 +3812,10 @@ describe("conversation routes", () => {
             runId: "run-active",
             status: lifecycleStatus,
             stale: false,
+            // The server may hand off a queued successor only after the
+            // lifecycle owner explicitly confirms that terminal state is safe
+            // for the runtime, not merely after it sees a terminal label.
+            runtimeReadyForSuccessor: lifecycleStatus === "completed",
           });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
@@ -4228,7 +4237,11 @@ describe("conversation routes", () => {
           const record = runId === "latest" ? records.get(latestRunId) : records.get(runId);
           if (!record) return Response.json({ error: "run not found" }, { status: 404 });
           runStatusRequests.push(runId);
-          return Response.json({ ok: true, ...record });
+          return Response.json({
+            ok: true,
+            ...record,
+            runtimeReadyForSuccessor: record.status === "completed",
+          });
         }
         return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
       },
@@ -4390,7 +4403,12 @@ describe("conversation routes", () => {
             }
             record.status = "completed";
           }
-          return Response.json({ ok: true, ...record, stale: false });
+          return Response.json({
+            ok: true,
+            ...record,
+            stale: false,
+            runtimeReadyForSuccessor: record.status === "completed",
+          });
         }
         return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
       },
@@ -5122,6 +5140,7 @@ describe("conversation routes", () => {
   });
 
   test("conversation runs delegate lifecycle to orchestrator before engine submit", async () => {
+    setEnvVarForTest("VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_INITIAL_DELAY_MS", "10");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-lifecycle-workspace-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
@@ -5225,13 +5244,15 @@ describe("conversation routes", () => {
         }
         if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/aborted`) {
           events.push("orchestrator-mark-aborted");
+          lifecycleStatus = "aborted";
           return Response.json({ ok: true, runId: runIdFromRegister, status: "aborted", abortRequested: true });
         }
         if (
           request.method === "GET" &&
           (
             url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/latest` ||
-            url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/active`
+            url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/active` ||
+            url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/${encodeURIComponent(runIdFromRegister)}`
           )
         ) {
           events.push(url.pathname.endsWith("/runs/active") ? "orchestrator-active" : "orchestrator-status");
@@ -5245,6 +5266,7 @@ describe("conversation routes", () => {
             runId: runIdFromRegister,
             status: lifecycleStatus,
             stale: false,
+            runtimeReadyForSuccessor: ["completed", "failed", "aborted"].includes(lifecycleStatus),
             clientMessageId: "msg-lifecycle",
             error: lifecycleError,
             activityKind: "model_retry",
@@ -5456,6 +5478,7 @@ describe("conversation routes", () => {
     expect(events).toContain("orchestrator-active");
     activeRunAvailable = false;
 
+    const statusEventsBeforeAbort = events.filter((event) => event === "orchestrator-status").length;
     const abortResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/abort`,
       {
@@ -5473,6 +5496,10 @@ describe("conversation routes", () => {
     expect(abortResponse.status).toBe(200);
     expect(events.indexOf("orchestrator-abort-requested")).toBeLessThan(events.indexOf("engine-abort"));
     expect(events.indexOf("engine-abort")).toBeLessThan(events.indexOf("orchestrator-mark-aborted"));
+    await waitForCondition(
+      () => events.filter((event) => event === "orchestrator-status").length > statusEventsBeforeAbort,
+      { timeoutMs: 1_000, message: "expected abort reconciliation to observe exact terminal runtime readiness" },
+    );
 
     submitShouldFail = true;
     const failedRunResponse = await fetch(
@@ -5492,6 +5519,11 @@ describe("conversation routes", () => {
     );
     expect(failedRunResponse.status).toBe(502);
     expect(events.indexOf("engine-submit-failed")).toBeLessThan(events.indexOf("orchestrator-mark-failed"));
+    const statusEventsBeforeFailedRunRelease = events.filter((event) => event === "orchestrator-status").length;
+    await waitForCondition(
+      () => events.filter((event) => event === "orchestrator-status").length > statusEventsBeforeFailedRunRelease,
+      { timeoutMs: 1_000, message: "expected failed run to release only after terminal runtime readiness" },
+    );
 
     registerShouldConflict = true;
     const engineRequestsBeforeConflict = engineRequests.length;
@@ -5525,7 +5557,7 @@ describe("conversation routes", () => {
   });
 
   test("managed prompt provider-start watchdog records diagnostics without failing accepted runs", async () => {
-    setEnvVarForTest("VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS", "25");
+    setEnvVarForTest("VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS", "500");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-gateway-start-watch-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
@@ -5938,7 +5970,10 @@ describe("conversation routes", () => {
     expect(firstRun.status).toBe(200);
     expect(secondRun.status).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 180));
-    expect(failedRequests).toEqual([]);
+    // The placeholder was intentionally rejected as ambiguous, so neither
+    // accepted run can observe a provider request. Both must terminalize
+    // rather than retaining a durable reservation indefinitely.
+    expect(failedRequests).toHaveLength(2);
   });
 
   test("managed prompt provider-start watchdog matches placeholder session ids by workspace header", async () => {
@@ -6429,7 +6464,10 @@ describe("conversation routes", () => {
     const staleRun = await staleRunPromise;
     expect(staleRun.status).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 550));
-    expect(failedRequests.some((entry) => entry.workspaceId === "ws_stale")).toBe(false);
+    // The target request proves that its explicit OpenCode session wins over a
+    // stale workspace header. The stale run has no provider start evidence and
+    // must therefore terminalize instead of holding its queue forever.
+    expect(failedRequests.some((entry) => entry.workspaceId === "ws_stale")).toBe(true);
   });
 
   test("E2E lifecycle terminalization fault control is guarded and arms a bounded count", async () => {

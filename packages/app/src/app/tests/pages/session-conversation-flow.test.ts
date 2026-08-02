@@ -3366,6 +3366,62 @@ test("send prompt action distinguishes explicit send-now from normal sends", () 
   assert.deepEqual(resolveSendPromptAction({ ...base, sendNow: false }), { kind: "send-normal" });
 });
 
+test("pending handoff survives the generic-to-directory draft key transition", () => {
+  const genericContext = queueContext();
+  const genericPendingKey = resolvePendingSessionQueueKey(genericContext);
+  const handoffKey = createUiConversationKey({
+    workspaceId: "workspace-active",
+    kind: "pending-session",
+    id: "handoff-1",
+  });
+  const directoryContext = queueContext({
+    activePendingDraftKey: "directory-draft-1",
+    activePendingDraftMeta: { kind: "directory", workspaceId: "workspace-active" },
+  });
+
+  assert.equal(
+    resolveCurrentSessionQueueKey({
+      ...directoryContext,
+      pendingQueueKeyAwaitingSessionIdByBaseKey: { [genericPendingKey]: handoffKey },
+    }),
+    handoffKey,
+    "a pending first-send handoff should retain ownership when the stored draft becomes active",
+  );
+  assert.equal(
+    resolveCurrentSessionQueueKey({
+      ...directoryContext,
+      pendingQueueKeyAwaitingSessionIdByBaseKey: {
+        [genericPendingKey]: createUiConversationKey({
+          workspaceId: "workspace-active",
+          kind: "session",
+          id: "completed-session",
+        }),
+      },
+    }),
+    resolvePendingSessionQueueKey(directoryContext),
+    "a completed session handoff must not capture a newly opened draft",
+  );
+  assert.equal(
+    resolveCurrentSessionQueueKey({
+      ...directoryContext,
+      pendingQueueKeyAwaitingSessionIdByBaseKey: {
+        [genericPendingKey]: handoffKey,
+        [createUiConversationKey({
+          workspaceId: "workspace-active",
+          kind: "pending-draft",
+          id: "other-draft",
+        })]: createUiConversationKey({
+          workspaceId: "workspace-active",
+          kind: "pending-session",
+          id: "handoff-2",
+        }),
+      },
+    }),
+    resolvePendingSessionQueueKey(directoryContext),
+    "ambiguous pending handoffs must not be guessed",
+  );
+});
+
 test("queue drain start skips blank, in-flight, paused, and empty queues", () => {
   const item = { id: "queued-1" };
 

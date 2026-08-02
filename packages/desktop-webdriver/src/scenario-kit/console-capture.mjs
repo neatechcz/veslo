@@ -31,12 +31,14 @@ export async function beginConsoleCapture(browser) {
 
 export async function collectDevConsoleLogs(browser) {
   const captured = await browser.execute(() => window.__vesloWebDriverConsoleCapture?.entries ?? []);
-  let protocol = [];
-  let protocolError = null;
-  try {
-    protocol = await browser.getLogs("browser");
-  } catch (error) {
-    protocolError = error instanceof Error ? error.message : String(error);
-  }
-  return sanitizeScenarioArtifactValue({ captured, protocol, protocolError });
+  // Veslo's loopback WebDriver endpoint does not implement the optional W3C
+  // browser-log command reliably. Calling it in teardown can leave a completed
+  // scenario waiting forever and prevent its diagnostic artifact from being
+  // written. The injected capture above is owned by this runner and the
+  // runtime NDJSON trace remains the canonical diagnostic record.
+  return sanitizeScenarioArtifactValue({
+    captured,
+    protocol: [],
+    protocolUnavailable: "loopback-webdriver-browser-logs-unsupported",
+  });
 }

@@ -10,11 +10,13 @@ export type SessionRunPresentation = {
   diagnosticKind:
     | "model-retry"
     | "terminalization-pending"
+    | "terminal-handoff-pending"
+    | "terminal-handoff-unresolved"
     | "lifecycle-observation-exhausted"
     | "connection-unavailable"
     | "transcript-unavailable"
     | null;
-  recoveryNotice?: "connection-unavailable" | "transcript-unavailable" | null;
+  recoveryNotice?: "connection-unavailable" | "transcript-unavailable" | "terminal-handoff-unresolved" | null;
   composerMode?: "streaming" | "recovery-blocked" | "idle";
 };
 
@@ -31,6 +33,13 @@ export type SessionRunLifecycleEvidence = {
     attempts: number;
     nextAttemptAt: number | null;
     deadlineAt: number | null;
+  } | null;
+  terminalHandoff?: {
+    state: "pending" | "unresolved";
+    reasonCode: string;
+    attempts: number;
+    requestedAt: number | null;
+    decidedAt: number | null;
   } | null;
 };
 
@@ -131,6 +140,27 @@ export function deriveSessionRunPresentation(input: SessionRunPresentationInput)
       abortable: false,
       source: "lifecycle",
       diagnosticKind: "terminalization-pending",
+      composerMode: "recovery-blocked",
+    };
+  }
+  if (lifecycle?.terminalHandoff?.state === "pending") {
+    return {
+      phase: "thinking",
+      showIndicator: true,
+      abortable: false,
+      source: "lifecycle",
+      diagnosticKind: "terminal-handoff-pending",
+      composerMode: "recovery-blocked",
+    };
+  }
+  if (lifecycle?.terminalHandoff?.state === "unresolved") {
+    return {
+      phase: "error",
+      showIndicator: true,
+      abortable: false,
+      source: "lifecycle",
+      diagnosticKind: "terminal-handoff-unresolved",
+      recoveryNotice: "terminal-handoff-unresolved",
       composerMode: "recovery-blocked",
     };
   }

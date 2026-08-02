@@ -145,11 +145,14 @@ test("pending draft controller ignores old private drafts and opens the global d
   });
 });
 
-test("same-workspace new conversation detaches the old session before pending-draft storage settles", async () => {
+test("cross-workspace new conversation detaches the old session before activation and pending-draft storage settle", async () => {
   await createRoot(async (dispose) => {
     try {
       let releaseList: ((value: PendingSessionDraftSummary[]) => void) | null = null;
       let clearDisplayedSessionCalls = 0;
+      let activeWorkspaceId = "workspace-a";
+      const activatedWorkspaces: string[] = [];
+      const views: string[] = [];
       const controller = createPendingSessionDraftController({
         isTauriRuntime: () => true,
         createSessionAndOpen: async () => {
@@ -163,10 +166,17 @@ test("same-workspace new conversation detaches the old session before pending-dr
         pendingSessionDraftsPut: async (input) => summaryFromDraft({ ...input, id: input.id }),
         pendingSessionDraftsDelete: async () => true,
         workspace: {
-          activeWorkspaceId: () => "workspace-a",
-          activeWorkspaceDisplay: () => ({ id: "workspace-a", directory: "C:/workspace-a", path: "C:/workspace-a" }),
-          workspaces: () => [{ id: "workspace-a", directory: "C:/workspace-a", path: "C:/workspace-a" }],
-          activateWorkspace: async () => true,
+          activeWorkspaceId: () => activeWorkspaceId,
+          activeWorkspaceDisplay: () => ({ id: activeWorkspaceId, directory: `C:/${activeWorkspaceId}`, path: `C:/${activeWorkspaceId}` }),
+          workspaces: () => [
+            { id: "workspace-a", directory: "C:/workspace-a", path: "C:/workspace-a" },
+            { id: "workspace-b", directory: "C:/workspace-b", path: "C:/workspace-b" },
+          ],
+          activateWorkspace: async (workspaceId) => {
+            activatedWorkspaces.push(workspaceId);
+            activeWorkspaceId = workspaceId;
+            return true;
+          },
           createScratchWorkspace: async () => null,
           forgetWorkspace: async () => true,
           pickWorkspaceFolder: async () => null,
@@ -177,7 +187,9 @@ test("same-workspace new conversation detaches the old session before pending-dr
         clearDisplayedSession: () => {
           clearDisplayedSessionCalls += 1;
         },
-        setView: () => undefined,
+        setView: (view) => {
+          views.push(view);
+        },
         setError: () => undefined,
         reportError: (error) => {
           throw error instanceof Error ? error : new Error(String(error));
@@ -186,12 +198,14 @@ test("same-workspace new conversation detaches the old session before pending-dr
         addOpencodeCacheHint: (message) => message,
       });
 
-      const opened = controller.openPendingDirectoryDraftInWorkspace("workspace-a");
-      assert.equal(clearDisplayedSessionCalls, 1, "the previous conversation must be detached before async storage");
+      const opened = controller.openPendingDirectoryDraftInWorkspace("workspace-b");
+      assert.equal(clearDisplayedSessionCalls, 1, "the previous conversation must be detached before async activation");
+      assert.deepEqual(views, ["session"], "the old session route must be cleared before async activation");
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.ok(releaseList, "pending-draft storage should begin after the synchronous detach");
       (releaseList as (value: PendingSessionDraftSummary[]) => void)([]);
       assert.equal(await opened, true);
+      assert.deepEqual(activatedWorkspaces, ["workspace-b"]);
     } finally {
       dispose();
     }

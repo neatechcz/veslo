@@ -76,6 +76,14 @@ message and let the runtime attach the workspace and create the conversation in
 the background. Workspace activation must not be a UI-blocking precondition for
 the send action.
 
+The app may keep a short-lived local handoff from an unpublished draft key to
+the real session created for its first send. That handoff exists only to retain
+the visible draft while the server materializes the conversation; it is not a
+conversation owner. Opening an explicit fresh draft clears stale handoffs for
+that workspace before the stable draft key is reused. The old server-owned run
+and its reservation remain untouched, while the new intent must be submitted
+without a previous conversation id.
+
 For an existing local conversation, a missing live OpenCode binding before the
 server HTTP submit triggers at most one engine-only reachability recovery. That
 recovery uses the snapshotted workspace and the original client-message id, but
@@ -132,6 +140,22 @@ delivery rule, while UI-effect incident and benchmark records enter the shared
 workflow sink instead of opening their own native IPC lane. Both queues flush
 on renderer teardown. Correlate app events by `traceId` and
 stable workspace identifiers; never recover a path from diagnostics.
+
+For same-conversation ordering, the server is the lifecycle owner and records
+compact queue-decision evidence in the same trace stream. `queued` records
+durable admission and queue position; `queue-drain-active-deferred`,
+`queue-drain-terminal-handoff-deferred`, and
+`queue-drain-runtime-operation-deferred` record why a successor cannot yet
+run; `queue-drain-claimed` and `queue-drain-submitted` record the exact item,
+run id, attempt count, and queue wait time once it proceeds. A failed queued
+submit emits `queue-drain-submit-failed`. Repeated polls with the same blocking
+run and reason are deduplicated, so a long-running predecessor produces one
+state record rather than one record per queue-poll interval. They keep the
+waiting and blocking identities separate (`queued*` and `blocking*`), and
+status failures include a safe error kind, HTTP status, and next retry delay
+rather than a redacted exception message. These records
+contain ids, lifecycle state, and durations only—never prompt content or
+serialized queued request bodies.
 
 For a failed send, the app also retains at most 16 persisted workspace-keyed
 failure snapshots in `window.__vesloSendFailureSnapshots`. Each keeps the first
@@ -222,9 +246,12 @@ before OpenCode submission and keeps that context until lifecycle reconciliation
 observes a terminal or missing run state, or until submit fails before the run
 can proceed. On a provider-start timeout, the server first aborts that exact
 OpenCode session and marks the run failed only after the abort succeeds. A
-terminal write—including a recovered submit failure—is not a queue release:
-the server next confirms that the same runtime handoff is idle before admitting
-a successor. This abort is exact-run control:
+terminal write—including a recovered submit failure—is not a queue release.
+For a confirmed provider-start timeout, the server immediately asks the
+lifecycle owner for a generation-fenced recovery; that owner repeats the exact
+engine-owner and active-peer checks before it can suspend the affected runtime.
+All other terminal paths wait for the normal runtime-idle handoff before a
+successor is admitted. This abort is exact-run control:
 it targets the already attached engine with an if-running constraint and does
 not resolve a new skill view, stage configuration, or start a replacement
 engine. If the abort is unavailable or fails, the active gateway context and
@@ -237,6 +264,29 @@ operator/user recovery. Lifecycle status is checked before each retry, so a
 naturally completed run is released normally; a missing or still-active status
 never admits a successor behind a potentially still-busy OpenCode assistant
 message.
+When a terminal result is stale and its recorded owner belongs to a previous
+daemon generation, the server may ask the lifecycle owner once for a separate,
+non-destructive terminal-handoff recovery. An empty new in-memory pool is only
+a candidate for that check: the orchestrator's durable engine-generation
+authority must also prove that the exact persisted process identity is absent.
+It rejects a live, changed, incomplete, or uninspectable generation and never
+stops a process for this path. Only a `lost_proven` result marks the exact old
+owner lost and makes the terminal result eligible for normal release.
+The pooled and shared-engine topologies both publish the same durable
+generation lifecycle. Any current shared engine, including one still starting,
+is a conservative blocker for this recovery just like a current pooled entry.
+
+Before this request the server persists `terminal_handoff_pending` on the
+reservation. A refusal, uncertain process identity, or request failure becomes
+`terminal_handoff_unresolved`, which remains an admission fence and does not
+resume the one-second reconcile loop after restart. The persisted state records
+only finite safe reason codes and timestamps; it contains no prompt, token,
+path, or raw process output. The app projects this as a blocked/degraded run
+with a single “retry verification” intent. That intent calls a server-owned
+endpoint which reopens only this durable unresolved reservation for one fresh,
+generation-fenced evidence read; it neither releases the reservation nor
+starts, stops, or replaces an engine. Reconnects, polling, and app restart do
+not replay that request automatically.
 The server persists its exact per-conversation `starting` reservation before
 orchestrator registration. For queued work, the durable queue claim and that
 reservation are one SQLite transaction. The server's in-process workspace gate
@@ -567,7 +617,10 @@ The orchestrator treats `session_idle`, missing engine state, and a session or
 message `404` as observations rather than successful terminality. A fresh
 `prompt_async` run receives a separate OpenCode-compatible ascending
 `messageID` only when it is actually admitted; queued work receives that id at
-dequeue, not when it first enters the queue. The same exact id is forwarded to
+the atomic queue claim (`startedAt`), not when it first enters the queue. The
+enqueue timestamp can predate a preceding assistant turn, which would make a
+later dequeued prompt sort as historical work and let OpenCode accept it
+without dispatching a provider request. The same exact id is forwarded to
 OpenCode and persisted with the orchestrator run so lifecycle probes can reject
 older terminal messages after restart. It must not use a namespace-style id:
 OpenCode 1.17.x compares message ids lexicographically when deciding whether a
@@ -841,10 +894,10 @@ Minimum coverage for implementation work:
   and cross-workspace rejection,
 - orchestrator tests for shared-process and sandbox execution selection,
 - app tests proving prompt send goes through Veslo conversation APIs,
-- desktop or Tauri-pilot coverage for local server startup and recovery,
-- Tauri-pilot scenario for two concurrent workspace directories without
+- desktop WebDriverIO coverage for local server startup and recovery,
+- WebDriverIO scenario for two concurrent workspace directories without
   sandbox,
-- Tauri-pilot scenario for sandboxed execution when the sandbox feature is part
+- WebDriverIO scenario for sandboxed execution when the sandbox feature is part
   of the change.
 
 If `packages/server/src` changes, rebuild the server binary with:

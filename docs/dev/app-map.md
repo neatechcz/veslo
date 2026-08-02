@@ -13,7 +13,9 @@ This document maps the main Veslo code surfaces so future coding agents can find
 - `packages/orchestrator`
   CLI host that runs OpenCode, Veslo server, and optionally OpenCode Router together.
 - `packages/e2e`
-  `tauri-pilot` scenarios and helpers for the real Tauri desktop runtime. WebdriverIO is not part of the current E2E surface.
+  Legacy Tauri Pilot scenarios retained for historical reference; they are not a supported validation lane.
+- `packages/desktop-webdriver`
+  WebDriverIO scenarios, reusable visible-UI actions, and redacted artifacts for the real Tauri desktop runtime.
 
 ## Managed-AI Ownership
 

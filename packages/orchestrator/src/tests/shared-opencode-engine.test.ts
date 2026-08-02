@@ -5,7 +5,7 @@ import { SharedOpenCodeEngine } from "../shared-opencode-engine.js";
 import type { EngineSpawnResult } from "../engine-pool.js";
 
 function fakeChild(pid: number): ChildProcess {
-  return { pid } as ChildProcess;
+  return { pid, on: () => undefined } as unknown as ChildProcess;
 }
 
 function harness(options: {
@@ -14,6 +14,7 @@ function harness(options: {
   failHealthCheck?: boolean;
   waitForHealthy?: () => Promise<void>;
   onEngineChange?: (event: string, engine: { pid: number } | null) => void;
+  generationLifecycle?: ConstructorParameters<typeof SharedOpenCodeEngine>[0]["deps"]["generationLifecycle"];
 } = {}) {
   let spawns = 0;
   let stops = 0;
@@ -51,6 +52,7 @@ function harness(options: {
       isProcessAlive: (pid) => alive.has(pid),
       now: () => 123456,
       onEngineChange: options.onEngineChange,
+      generationLifecycle: options.generationLifecycle,
     },
   });
 
@@ -135,6 +137,24 @@ describe("SharedOpenCodeEngine", () => {
       runtimeDirectory: "/tmp/veslo/shared-opencode-runtime",
       configDirectory: "/tmp/veslo/shared-opencode-config",
     });
+  });
+
+  test("persists the same generation through shared spawn and intentional stop", async () => {
+    const events: Array<{ kind: string; ownerId: string }> = [];
+    const h = harness({
+      generationLifecycle: {
+        beforeSpawn: (seed) => { events.push({ kind: "creating", ownerId: seed.engineOwnerId }); },
+        afterSpawn: (engine) => { events.push({ kind: "live", ownerId: engine.engineOwnerId }); },
+        beforeStop: (engine) => { events.push({ kind: "stopping", ownerId: engine.engineOwnerId }); },
+        afterExit: (engine) => { events.push({ kind: "exited", ownerId: engine.engineOwnerId }); },
+      },
+    });
+
+    const engine = await h.manager.ensureStarted("prompt");
+    await h.manager.dispose();
+
+    expect(events.map((event) => event.kind)).toEqual(["creating", "live", "stopping", "exited"]);
+    expect(new Set(events.map((event) => event.ownerId))).toEqual(new Set([engine.engineOwnerId]));
   });
 
   test("snapshot exposes the selected skill view identity and revision", () => {

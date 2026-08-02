@@ -128,6 +128,12 @@ export type ConversationServiceClient = {
     conversationId: string,
     runId: string,
   ) => Promise<VesloConversationRunStatusResult>;
+  retryTerminalHandoff: (
+    workspaceId: string,
+    conversationId: string,
+    runId: string,
+    input?: { directory?: string | null },
+  ) => Promise<{ ok: true; workspaceId: string; conversationId: string; runId: string; status: "requested" }>;
   recoverSessionTranscript: (
     workspaceId: string,
     sessionId: string,
@@ -2301,6 +2307,37 @@ export function createConversationService<
     }
   };
 
+  const retryTerminalHandoff = async (scope: {
+    workspaceId: string;
+    directory?: string | null;
+    conversationId: string;
+    opencodeSessionId?: string | null;
+    sessionId?: string | null;
+    runId: string;
+    clientMessageId?: string | null;
+  }) => {
+    const serverClient = await resolvePassiveConversationReadClient({
+      intent: "write-control",
+      reason: "retryTerminalHandoff",
+      workspaceId: scope.workspaceId,
+      directory: scope.directory,
+    });
+    if (!serverClient) return null;
+    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
+      serverClient,
+      scope.workspaceId,
+      scope.directory,
+    );
+    if (!serverWorkspaceId) return null;
+    await serverClient.retryTerminalHandoff(
+      serverWorkspaceId,
+      scope.conversationId,
+      scope.runId,
+      { directory: scope.directory },
+    );
+    return await readConversationRunStatus(scope);
+  };
+
   const recoverConversationTranscript = async (
     scope: {
       workspaceId: string;
@@ -2503,6 +2540,7 @@ export function createConversationService<
     abortConversationFromVesloWriteApi,
     resolveConversationRunForSession,
     readConversationRunStatus,
+    retryTerminalHandoff,
     recoverAcceptedConversationRunStatus,
     recoverConversationTranscript,
     recoverAcceptedConversationTranscript,

@@ -91,6 +91,65 @@ test("terminalization pending remains visible but cannot start another local run
   });
 });
 
+test("unresolved terminal runtime handoff remains visible and blocks a new local run", () => {
+  const projection = deriveSessionRunPresentation({
+    hasSessionScope: true,
+    engineStatus: "idle",
+    lifecycle: {
+      runId: "run-a",
+      status: "failed",
+      stale: true,
+      terminalHandoff: {
+        state: "unresolved",
+        reasonCode: "exact_process_alive",
+        attempts: 1,
+        requestedAt: 1_000,
+        decidedAt: 1_100,
+      },
+    },
+    local: { started: true, hasBegun: true, optimisticSending: true, responseStarted: false },
+  });
+
+  assert.deepEqual(projection, {
+    phase: "error",
+    showIndicator: true,
+    abortable: false,
+    source: "lifecycle",
+    diagnosticKind: "terminal-handoff-unresolved",
+    recoveryNotice: "terminal-handoff-unresolved",
+    composerMode: "recovery-blocked",
+  });
+});
+
+test("pending terminal runtime handoff remains visible until the server decides it", () => {
+  const projection = deriveSessionRunPresentation({
+    hasSessionScope: true,
+    engineStatus: "idle",
+    lifecycle: {
+      runId: "run-a",
+      status: "failed",
+      stale: true,
+      terminalHandoff: {
+        state: "pending",
+        reasonCode: "no_current_engine",
+        attempts: 2,
+        requestedAt: 1_000,
+        decidedAt: null,
+      },
+    },
+    local: { started: true, hasBegun: true, optimisticSending: true, responseStarted: false },
+  });
+
+  assert.deepEqual(projection, {
+    phase: "thinking",
+    showIndicator: true,
+    abortable: false,
+    source: "lifecycle",
+    diagnosticKind: "terminal-handoff-pending",
+    composerMode: "recovery-blocked",
+  });
+});
+
 test("transcript-unavailable lifecycle evidence keeps the composer idle without a Stop action", () => {
   const projection = deriveSessionRunPresentation({
     hasSessionScope: true,

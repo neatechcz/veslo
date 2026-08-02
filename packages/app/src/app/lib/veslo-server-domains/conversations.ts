@@ -232,6 +232,24 @@ export function createConversationsClient(context: ConversationsClientContext) {
         { token, hostToken, timeoutMs: timeouts.status },
       ),
 
+    retryTerminalHandoff: (
+      workspaceId: string,
+      conversationId: string,
+      runId: string,
+      input?: { directory?: string | null },
+    ) =>
+      requestJson<{ ok: true; workspaceId: string; conversationId: string; runId: string; status: "requested" }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}/retry-terminal-handoff`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: input?.directory?.trim() ? { directory: input.directory.trim() } : {},
+          timeoutMs: timeouts.status,
+        },
+      ),
+
     reportRunDelivery: (
       workspaceId: string,
       conversationId: string,

@@ -85,19 +85,9 @@ process count, directory-instance count, process memory/CPU snapshot where the
 host exposes it, idle residency, and an A refresh while B retains an active
 run. It is a measurement gate, not a production capacity promise.
 
-For the desktop handoff lane, build the Pilot-enabled binary and run the
-isolated directory-scoped scenario. It verifies two workspace-local same-name
-skill views, ten routed session creations, the shared topology, and one shared
-PID through the real Tauri app:
-
-```bash
-pnpm --filter veslo-server build:bin
-VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar
-cd packages/desktop
-pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
-cd ../e2e
-pnpm test:pilot:directory-scoped-shared-engine
-```
+The former desktop handoff lane used Tauri Pilot. It is legacy coverage and
+must not be run or extended; use a focused WebDriverIO scenario for new desktop
+handoff proof.
 
 ## Desktop Test Runtime Preflight
 
@@ -137,9 +127,9 @@ If a match looks like a user-launched production/bundled app or otherwise cannot
 
 In debug builds (`pnpm dev`), Veslo also runs an equivalent best-effort cleanup at startup — orphan sidecars whose process group differs from the booting Tauri process are SIGTERM'd before the new sidecars spawn. Release builds do not run this cleanup so a shipped Veslo never kills unrelated processes.
 
-The `tauri-pilot` launcher waits for the Tauri process it started to exit during teardown and escalates to a force kill if the process ignores the graceful stop signal. This harness cleanup does not replace the preflight above; clear matching Veslo dev/test processes before each desktop runtime launch.
+WebDriverIO scenarios close only the driver session for an attached runtime, or the process tree they explicitly own. This cleanup does not replace the preflight above; clear matching Veslo dev/test processes before each desktop runtime launch.
 
-WebdriverIO is no longer part of the Veslo desktop E2E surface. Desktop E2E coverage lives in `packages/e2e/pilot-scenarios` or focused `*.pilot.ts` scripts, and the default `packages/e2e` `test` script runs the Tauri Pilot `current-gate` suite.
+WebDriverIO is the Veslo desktop E2E surface. Scenarios live in `packages/desktop-webdriver` and drive visible controls in the real Tauri runtime. Tauri Pilot scenarios under `packages/e2e` are legacy and must not be used for new validation.
 
 ### Focused VSLO-281 attachment gate
 
@@ -149,12 +139,8 @@ unsupported MSG as both the first message of a new chat and in an existing
 chat, verifies that no Veslo conversation, OpenCode prompt, or run is admitted,
 and then proves a visible text-only recovery response in the same chat.
 
-Run the desktop preflight above, then:
-
-```bash
-pnpm --filter @neatech/veslo-e2e run build:desktop:e2e
-pnpm --filter @neatech/veslo-e2e run test:pilot:vslo-281-msg-attachment
-```
+The former automated scenario for this regression used Tauri Pilot and is
+legacy. New coverage must use a focused WebDriverIO scenario.
 
 ## Fast Checks by Surface
 
@@ -210,40 +196,37 @@ Use the real desktop runtime:
 pnpm dev
 ```
 
-For internal end-to-end testing, follow the repo rule from `AGENTS.md`:
+For internal end-to-end testing, start the real desktop runtime with the
+loopback-only WebDriver endpoint, then run a focused scenario with explicit
+workspace and mutation inputs:
 
-```bash
+```powershell
 # First run the Desktop Test Runtime Preflight above.
+pnpm dev:webdriver
 
-cd packages/desktop
-pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e
-
-cd ../e2e
-pnpm test
+# From a second terminal, use the runtime-info.json printed at startup.
+$env:WEBDRIVER_ALLOW_MUTATION = "1"
+pnpm test:webdriver:same-conversation-queue-roundtrip -- <runtime-info.json> `
+  --workspace "Disposable workspace" `
+  --first-message "Reply with exactly: first" `
+  --second-message "Reply with exactly: second"
 ```
 
-`tauri-pilot` is the desktop test driver. Debug desktop builds include `tauri-plugin-pilot`; the `e2e` Cargo feature enables its `press` support, and `packages/e2e` launches the debug Tauri binary with a deterministic `TAURI_PILOT_SOCKET`. The desktop plugin is pinned to the upstream `tauri-pilot` 0.7.2 revision that routes macOS eval results through the Pilot IPC callback.
-
-The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
+WebDriverIO is the desktop test driver. It uses an explicit loopback endpoint
+and records redacted per-scenario evidence under `.tmp/webdriver-scenarios/`.
+Use disposable workspaces for every mutating scenario.
 
 ### Focused local-host recovery gate
 
 For a server-child lifecycle or recovery change, follow the Desktop Test Runtime
-Preflight and run the focused quality command from the repository root:
+Preflight and run a focused WebDriverIO recovery scenario against the emitted
+`runtime-info.json`. The former `pnpm check:desktop-recovery` command depends
+on legacy Tauri Pilot coverage and must not be used.
 
-```bash
-pnpm check:desktop-recovery
-```
-
-It rebuilds the server binary and the pilot-enabled E2E Tauri binary, prepares
-sidecars, and runs only `vslo-235-local-host-child-exit` against a fresh profile.
-The scenario first requires the lifecycle API to expose `exited/child_exited`,
-then requires the app-owned recovery path to create a replacement child PID and
-restore `/health` and `/status`. It must not suppress that automatic recovery
-only to make a transient exited state easier to observe.
-Run it twice when changing this contract. It is the `Quality / Desktop recovery`
-Windows CI job, not a replacement for the wider Pilot suite or installed-MSI VM
-verification.
+`pnpm check:desktop-recovery` currently invokes legacy Tauri Pilot tooling and
+must not be used. Add a focused owned WebDriverIO recovery scenario before
+claiming desktop recovery coverage; meanwhile use the headless lifecycle and
+workspace-engine gates for recovery changes.
 
 ### Windows production-shaped packaged smoke
 
@@ -253,12 +236,10 @@ After the Desktop Test Runtime Preflight, run this Windows-only developer gate:
 pnpm desktop:smoke-packaged
 ```
 
-The command forces the UI and sidecar rebuild, then builds the real desktop
-binary with the normal Windows and release configuration plus the E2E-only
-Pilot overlay. The binary is debug-mode only because Pilot requires it; the
-explicit packaged-smoke mode disables dev-server adoption and all external
-runtime/PATH fallbacks and debug-only orchestrator autostart, and Vite ignores
-project environment files for this build.
+The command forces the UI and sidecar rebuild and builds the real desktop
+binary with the normal Windows and release configuration. Its current legacy
+Pilot overlay is not a supported validation mechanism; do not use it as desktop
+E2E evidence until the lane is migrated to WebDriverIO.
 
 The test owns a fresh desktop profile, waits for the redacted durable
 `desktop-bootstrap-ready.json` marker, and uses a loopback-only
@@ -275,7 +256,7 @@ belongs to the installed-MSI VM gate.
 ### Windows installed-MSI VM gate
 
 Run this only in an elevated, disposable Windows VM against one exact signed
-MSI. It is intentionally not a Tauri Pilot test and it does not rely on a
+MSI. It does not use a desktop test driver and does not rely on a
 repository dev server, host Node, npm, Bun, or a pre-existing Veslo profile.
 
 ```powershell
@@ -312,91 +293,15 @@ Run each scenario from a suitable VM snapshot:
 The harness only terminates desktop or listener process trees that it launched;
 an existing Veslo process or port occupant causes a safe failure instead.
 
-For live Den auth, Tauri Pilot accepts the same production desktop snapshot input as the app:
+### Legacy Tauri Pilot coverage
 
-```bash
-VESLO_DEN_AUTH_SNAPSHOT_PATH="$HOME/.veslo/den-auth.json"
-```
-
-`VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE` remains available when a test needs an E2E-only snapshot path.
-
-For core platform skill materialization coverage, build with the pilot-enabled E2E config and run the targeted pilot script:
-
-Prerequisite: the `tauri-pilot` CLI must be on `PATH`. If it is installed elsewhere, set `E2E_TAURI_PILOT_BIN=/absolute/path/to/tauri-pilot`.
-
-```bash
-cargo install tauri-pilot-cli --version 0.7.2 --locked
-```
-
-```bash
-# First run the Desktop Test Runtime Preflight above.
-
-pnpm --filter veslo-server build:bin
-VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar
-
-cd packages/desktop
-pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
-
-cd ../e2e
-pnpm test:pilot:core-platform-skills
-```
-
-For the verified skill publish request flow, use the same pilot-enabled desktop
-build and run:
-
-```bash
-# First run the Desktop Test Runtime Preflight above.
-
-cd packages/e2e
-pnpm test:pilot:skill-publish
-```
-
-This scenario lives in `packages/e2e/specs/skill-publish-request.pilot.ts`. It
-drives the Skills page bulk Publish button, opens the review dialog in request
-mode, submits an organization publish request, and verifies the registry fixture
-recorded `POST /v1/skills`, `POST /v1/skills/:skillId/versions`, and
-`POST /v1/skills/:skillId/review-requests`. The fixture mutation endpoints are
-implemented by the E2E skill registry fixture so the desktop app exercises the
-real Tauri runtime and local server proxy without depending on a live registry.
-
-The pilot config uses the isolated `com.neatech.veslo.e2e` app identifier and enables `pilot:default` only for the E2E build. Do not add pilot permissions to the default desktop capability.
-
-Focused pilot scenarios can be run from `packages/e2e`:
-
-```bash
-pnpm test:pilot:skill-publish
-pnpm test:pilot:smoke
-pnpm test:pilot:navigation
-pnpm test:pilot:google-mcp
-pnpm test:pilot -- --suite current-gate
-pnpm test:pilot:global-managed-ai-model-policy
-pnpm test:pilot -- --scenario sidebar-session-retention
-pnpm test:pilot -- --scenario <name-or-path>
-```
-
-`test:pilot:global-managed-ai-model-policy` is a focused-only, isolated-profile
-acceptance scenario. It starts a secret-free local fixture that mounts the real
-AI Gateway session, entitlement, user-access, global-model, credential, and
-provider proxy pipeline with a deterministic upstream transport. The fixture
-contains two enabled models, one active model, and two users that resolve the
-same active model. It replaces live DEN auth inputs for the duration of the run,
-rejects `E2E_USE_EXISTING_PROFILE=1`, restores the previous environment during
-teardown, rejects a user-supplied `E2E_OPENCODE_HOME`, and records only
-sanitized request metadata with a generated test nonce instead of prompt text.
-The scenario checks the read-only effective model in developer Settings, then
-checks normal Settings and the real Session/composer surface for model-authority
-controls before sending. Run the Desktop Test
-Runtime Preflight first, rebuild the server sidecar, and use the Pilot-enabled
-E2E config explicitly:
-
-```bash
-pnpm --filter veslo-server build:bin
-VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar
-cd packages/desktop
-pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
-cd ../e2e
-pnpm test:pilot:global-managed-ai-model-policy
-```
+The former Pilot scenarios for authentication, skills, navigation, managed-AI
+policy, and recovery are retained only as historical implementation material.
+They are not a test surface, must not be run, and must not receive new
+scenarios. Port a behavior to `packages/desktop-webdriver` before using it as
+desktop acceptance evidence. A WebDriverIO scenario must use the real Tauri
+runtime, visible controls, explicit inputs for mutations, and a redacted
+scenario artifact.
 
 The macOS build requires every `externalBin` resource declared by the Tauri
 config to exist. The documented `prepare:sidecar` command provisions the pinned
@@ -408,80 +313,50 @@ Do not create an ad-hoc symlink or copy a sidecar from another checkout. Before
 relying on a newly provisioned runtime, verify the worktree's base and
 target-suffixed executables both report the pinned version.
 
-`test:pilot:google-mcp` runs the converted Google Workspace MCP connector
-scenario with the local Den-compatible fixture enabled. It verifies separate
-Gmail, Calendar, and Drive catalog cards plus Gmail-only install behavior
-without completing Google OAuth.
+The former Google Workspace connector scenario is legacy Pilot coverage. Port
+it to WebDriverIO before using it as desktop acceptance evidence.
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. It also assigns an isolated local Veslo server port so a user-launched production app on `8787` does not block desktop tests; set `E2E_VESLO_SERVER_PORT` only when a focused test needs a stable port. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
-The previous Windows sidecar runtime probe and visual snapshot flow were removed with the WebdriverIO suite. Use focused Tauri Pilot scenarios for those validations.
+### WebDriverIO live desktop testing
 
-### Tauri Pilot live desktop testing
+WebDriverIO is the supported driver for the real Tauri desktop app. Start the
+development runtime with `pnpm dev:webdriver`, then attach a focused scenario
+using the emitted `runtime-info.json`. Scenarios must act through visible
+controls, require explicit workspace and mutation inputs, and retain a redacted
+artifact under `.tmp/webdriver-scenarios/`.
 
-Tauri Pilot is available in Veslo E2E/debug automation builds. The repo carries the Rust plugin dependency in `packages/desktop/src-tauri/Cargo.toml`, registers it in `packages/desktop/src-tauri/src/lib.rs` under debug/E2E gates, and grants `pilot:default` only through the E2E Tauri config. Keep pilot permissions out of the default desktop capability. It is the desktop E2E driver for the real Tauri app, not a release-runtime feature.
-
-Use Tauri Pilot when the behavior under test depends on the running desktop shell, the system WebView, sidecar startup, native dialogs, workspace activation, or real app state that a browser-only test cannot represent. It is especially useful for exploratory regression checks, timing probes, reproducing UI bugs with the user's current profile, and validating that the real desktop UI reaches the expected state after a fix.
-
-Tauri Pilot can support these live-testing actions:
-
-- discover and target real Tauri windows
-- capture accessibility snapshots of the current UI
-- click, fill, and assert against snapshot refs such as `@e3`
-- diff UI snapshots after an interaction
-- inspect frontend logs and network activity when the MCP tools are available
-- run JavaScript in the live WebView for DOM checks, app-state probes, and `performance.now()` timing
-- exercise Tauri IPC through the Pilot MCP surface when that is the narrowest useful probe
-
-Keep the test anchored in user-visible behavior first. Use JavaScript eval or IPC only to observe state, gather timings, or isolate a lower-level failure after the normal UI path is understood.
+Keep the test anchored in user-visible behavior first. Injected page code may
+capture diagnostics or inspect timing only after the normal UI path is known;
+it must not call Veslo conversation APIs or bypass a user interaction.
 
 ### E2E-only recovery fault controls
 
-`VESLO_E2E_FAULT_INJECTION=1` is supplied only by the pilot-enabled debug
-desktop runtime. It enables narrow, loopback test controls; production and
-normal development server processes do not register them.
+`VESLO_E2E_FAULT_INJECTION=1` is available only in a dedicated test runtime.
+It enables narrow, loopback test controls; production and normal development
+server processes do not register them.
 
 - `POST /e2e/fail-next-lifecycle-mark-failed` on the local Veslo server accepts
   `{ "count": 1..10 }` and fails that many lifecycle `markFailed` writes before
   they reach the orchestrator. It is the deterministic control for durable
   terminalization and restart recovery.
-- The debug/E2E Tauri command `shared_engine_e2e_fail_next_proxy` accepts an
-  optional `count` and makes that many following shared-engine proxy requests
-  fail. It is the deterministic control for one-outage SSE/runtime recovery.
+- The shared-engine proxy fault control accepts an optional `count` and makes
+  that many following shared-engine proxy requests fail. It is the
+  deterministic control for one-outage SSE/runtime recovery. One outage may
+  request one fresh runtime only; that budget resets only after the replacement
+  stream delivers `server.connected` and completes its catch-up successfully.
 
 Arm only the failure required by the scenario, assert its trace/run identity,
 and let the scenario prove the visible convergence. Do not add the controls to
 the default desktop capability or use them as a replacement for normal user
 actions.
 
-For Windows desktop behavior, run the Desktop Test Runtime Preflight first, start the app with the Windows-native toolchain from the repo root, and use the Windows Tauri Pilot executable:
-
-```bash
-pnpm dev
-
-# Use the exact socket printed by pnpm dev as:
-# [veslo:dev-runtime] pilotPing=...
-/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe --socket '\\.\pipe\tauri-pilot-com.neatech.veslo.dev' ping
-/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe --socket '\\.\pipe\tauri-pilot-com.neatech.veslo.dev' --window main snapshot -i
-```
-
-For complex interactions or timing probes, run JavaScript through stdin:
-
-```bash
-/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe --window main eval - <<'EOF'
-performance.now()
-EOF
-```
-
-Recommended live loop:
-
-1. take an initial interactive snapshot and identify stable refs
-2. drive one user action through Pilot
-3. take a fresh snapshot or diff
-4. assert the visible outcome and inspect logs if the UI did not reach the expected state
-5. repeat with small steps so the failing transition is identifiable
-
-When validating workspace opening, workspace-to-server binding, or the first message path, do not replace Tauri Pilot with the local `opencode` CLI. The test must exercise Veslo's configured project runtime, local Veslo server write API, orchestrator-mounted OpenCode endpoint, and selected project model.
+For Windows desktop behavior, run the Desktop Test Runtime Preflight first,
+start `pnpm dev:webdriver`, and use the emitted `runtime-info.json` with a
+focused WebDriverIO scenario. Do not replace the real desktop runtime with the
+local `opencode` CLI. The scenario must exercise Veslo's configured project
+runtime, local Veslo server write API, orchestrator-mounted OpenCode endpoint,
+and selected project model.
 
 For a workspace-to-first-message latency check, measure these checkpoints separately:
 
@@ -489,13 +364,16 @@ For a workspace-to-first-message latency check, measure these checkpoints separa
 2. first message submit until the run is accepted by the server/OpenCode write path
 3. first assistant content or terminal error visible in the desktop UI
 
-For a three-message pass, use one fresh workspace, send three short prompts, and record each result separately. Label the first send as `cold run`; do not average it together with runs 2 and 3. Record the workspace id, workspace path, runtime, model/provider/variant, exact prompt text, exact Tauri Pilot command or script path, and any frontend/server error text.
+For a three-message pass, use one fresh workspace, send three short prompts,
+and record each result separately. Label the first send as `cold run`; do not
+average it together with runs 2 and 3. Record the workspace id, workspace path,
+runtime, model/provider/variant, exact prompt text, exact WebDriverIO command
+or scenario path, and any frontend/server error text.
 
 If a send fails before model streaming with errors such as `OpenCode base URL is missing`, `Conversation directory is outside this workspace`, or `OpenCode request timed out`, classify the result as workspace/server/OpenCode binding failure rather than model latency. Fix that binding path before moving down to lower-level function timing.
 
-See `docs/testing/tauri-pilot/README.md` for the current Tauri Pilot workflow
-and AI gateway/E2E debugging notes. `docs/sandbox/tauri-pilot.md` is historical
-scenario material.
+The Tauri Pilot material is historical only. For the current desktop workflow,
+use the WebDriverIO commands in `docs/dev/development-startup.md`.
 
 ### Feedback diagnostic verification
 
@@ -529,7 +407,8 @@ For a broad app-level check from the repo root:
 pnpm test:e2e
 ```
 
-This is still not a replacement for the Tauri + `tauri-pilot` runtime gate when the user asked to test the real app.
+This is still not a replacement for a focused WebDriverIO scenario when the
+user asked to test the real app.
 
 ## High-Risk Flow Validation
 

@@ -88,3 +88,12 @@ export async function sendComposerMessage(browser, message, workspaceLabel) {
   await writeComposer(browser, message, workspaceLabel);
   await submitComposer(browser, message, workspaceLabel);
 }
+
+export async function queueComposerMessageWithEnter(browser, message, workspaceLabel) {
+  await writeComposer(browser, message, workspaceLabel);
+  await browser.keys("Enter");
+  await browser.waitUntil(
+    async () => !(await browser.execute(visibleComposerText, selectors.composerInput)).includes(message),
+    { timeout: 15_000, timeoutMsg: `The queued message for ${workspaceLabel} was not accepted by the UI.` },
+  );
+}

@@ -13,7 +13,10 @@ export async function waitForAppReady(browser, timeout = 15_000) {
   return root;
 }
 
-export async function waitForWorkspaceVisible(browser, workspaceLabel, timeout = 15_000) {
+// A fresh desktop runtime exposes WebDriver before the asynchronously hydrated
+// workspace list is ready. Keep this wait scoped to the visible sidebar rather
+// than treating normal cold-start hydration as a failed workspace scenario.
+export async function waitForWorkspaceVisible(browser, workspaceLabel, timeout = 30_000) {
   await browser.waitUntil(
     () => browser.execute((label) => Array.from(document.querySelectorAll("[data-project-key]")).some((project) => {
       const style = window.getComputedStyle(project);
@@ -32,7 +35,10 @@ export async function waitForOwnedColdRuntimeAdmission(browser, timeout = 12_000
   await browser.pause(timeout);
 }
 
-export async function waitForSessionSidebarReady(browser, timeout = 15_000) {
+// The loopback endpoint is available before the first desktop sidebar render
+// on a cold start, so give the real workspace hydration the same budget as
+// the workspace-row wait above.
+export async function waitForSessionSidebarReady(browser, timeout = 30_000) {
   const sidebar = await browser.$(selectors.leftSidebar);
   await sidebar.waitForDisplayed({ timeout });
   return sidebar;
@@ -112,6 +118,23 @@ export async function visibleAssistantMessages(browser) {
   }, selectors.sessionCenterPane, selectors.assistantMessage);
 }
 
+export async function visibleAssistantErrors(browser) {
+  return browser.execute((centerSelector, errorSelector) => {
+    const center = document.querySelector(centerSelector);
+    if (!center) return [];
+    return Array.from(center.querySelectorAll(errorSelector)).flatMap((element) => {
+      const message = element.closest("[data-message-role=\"assistant\"]");
+      const style = window.getComputedStyle(element);
+      const visible = element.getClientRects().length > 0
+        && style.display !== "none"
+        && style.visibility !== "hidden";
+      const messageId = message?.getAttribute("data-message-id")?.trim() ?? "";
+      const text = element.textContent?.trim() ?? "";
+      return visible && messageId ? [{ messageId, text }] : [];
+    });
+  }, selectors.sessionCenterPane, selectors.assistantMessageError);
+}
+
 export async function waitForVisibleAssistantOutput(browser, baselineMessages, timeout = 120_000) {
   const baselineIds = new Set((baselineMessages ?? []).map((message) => message.messageId));
   let delivered = null;
@@ -127,6 +150,26 @@ export async function waitForVisibleAssistantOutput(browser, baselineMessages, t
   return delivered;
 }
 
+export async function waitForVisibleAssistantOutputCount(
+  browser,
+  baselineMessages,
+  expectedAdditionalCount,
+  timeout = 120_000,
+) {
+  const baselineIds = new Set((baselineMessages ?? []).map((message) => message.messageId));
+  let delivered = [];
+  await browser.waitUntil(async () => {
+    const messages = await visibleAssistantMessages(browser);
+    delivered = messages.filter((message) => !baselineIds.has(message.messageId) && message.textLength > 0);
+    return delivered.length >= expectedAdditionalCount;
+  }, {
+    timeout,
+    interval: 150,
+    timeoutMsg: `Expected ${expectedAdditionalCount} new visible assistant outputs, received ${delivered.length}.`,
+  });
+  return delivered;
+}
+
 export async function waitForNoVisibleOperationalError(browser, timeout = 2_000) {
   try {
     await browser.waitUntil(
@@ -136,5 +179,23 @@ export async function waitForNoVisibleOperationalError(browser, timeout = 2_000)
   } catch {
     const message = await browser.execute((selector) => document.querySelector(selector)?.textContent?.trim() ?? "unknown error", selectors.operationalError);
     fail(`Visible operational error: ${message}`);
+  }
+}
+
+export async function waitForNoVisibleAssistantError(browser, baselineErrors = [], timeout = 2_000) {
+  const baselineIds = new Set(baselineErrors.map((error) => error.messageId));
+  let errorMessage = "unknown assistant error";
+  try {
+    await browser.waitUntil(
+      async () => {
+        const currentErrors = await visibleAssistantErrors(browser);
+        const newError = currentErrors.find((error) => !baselineIds.has(error.messageId));
+        errorMessage = newError?.text || "unknown assistant error";
+        return !newError;
+      },
+      { timeout },
+    );
+  } catch {
+    fail(`Visible assistant error: ${errorMessage}`);
   }
 }

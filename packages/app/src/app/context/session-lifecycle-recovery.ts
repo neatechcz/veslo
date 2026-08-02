@@ -2,6 +2,7 @@ import type {
   VesloConversationRunActivityKind,
   VesloConversationRunLifecycleStatus,
   VesloConversationRunTerminalization,
+  VesloConversationRunTerminalHandoff,
   VesloConversationRunWaitReason,
   VesloSessionTranscriptSnapshot,
 } from "../lib/veslo-server";
@@ -39,6 +40,7 @@ export type SessionLifecycleRecoveryStatus = {
   retrySince?: number | null;
   noProgressSeconds?: number | null;
   terminalization?: VesloConversationRunTerminalization | null;
+  terminalHandoff?: VesloConversationRunTerminalHandoff | null;
   recoveryState?: SessionRunRecoveryState;
 };
 
@@ -61,6 +63,9 @@ export type SessionLifecycleRecoveryControllerOptions = {
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
   recoverAcceptedConversationRunStatus?: (
+    scope: SessionLifecycleRecoveryScope,
+  ) => Promise<SessionLifecycleRecoveryStatus | null>;
+  retryTerminalHandoff?: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
   isAcceptedRunVisible?: (scope: SessionLifecycleRecoveryScope) => boolean;
@@ -235,6 +240,7 @@ export function createSessionLifecycleRecoveryController(
   const admittedRunKeys = new Set<string>();
   const settledRunKeys = new Set<string>();
   const terminalTranscriptRecoveries = new Map<string, TerminalTranscriptRecovery>();
+  const terminalHandoffScopes = new Map<string, SessionLifecycleRecoveryScope>();
   let disposed = false;
 
   // This key is only for deduplicating a best-effort latest-run probe. It must
@@ -795,6 +801,12 @@ export function createSessionLifecycleRecoveryController(
         options.onConversationRunStatus?.(watch.scope, watch.lastStatus);
         if (status.status === "queued") retainQueuedRun(watch.scope, watch.generation);
       }
+      if (status?.terminalHandoff?.state === "unresolved") {
+        terminalHandoffScopes.set(key, watch.scope);
+        clearWatch(key, { clearDiagnostic: false });
+        return;
+      }
+      terminalHandoffScopes.delete(key);
       if (terminal && status) {
         settledRunKeys.add(key);
         recoverTerminalRun(watch.scope, status.status, "watch", watch.admitted, watch.generation, status);
@@ -1233,6 +1245,32 @@ export function createSessionLifecycleRecoveryController(
       }
       return resumed;
     },
+    retryTerminalHandoffForSession(sessionId: string, workspaceId?: string | null) {
+      const targetSessionId = normalize(sessionId);
+      const targetWorkspaceId = normalize(workspaceId);
+      if (!targetSessionId || !options.retryTerminalHandoff) return 0;
+      let retried = 0;
+      for (const [key, scope] of [...terminalHandoffScopes]) {
+        if (targetWorkspaceId && normalize(scope.workspaceId) !== targetWorkspaceId) continue;
+        const aliases = unique([scope.sessionId, scope.opencodeSessionId, scope.conversationId]);
+        if (!aliases.includes(targetSessionId)) continue;
+        terminalHandoffScopes.delete(key);
+        retried += 1;
+        void options.retryTerminalHandoff(scope).then((status) => {
+          if (!status) return;
+          options.onConversationRunStatus?.(scope, status);
+          if (status.terminalHandoff?.state === "unresolved") {
+            terminalHandoffScopes.set(key, scope);
+          }
+        }).catch((error) => {
+          terminalHandoffScopes.set(key, scope);
+          traceForScope("session-lifecycle-recovery:terminal-handoff-retry-error", scope, 1, {
+            errorType: error instanceof Error ? error.name : "unknown",
+          });
+        });
+      }
+      return retried;
+    },
     resumeAcceptedRunsForWorkspace(workspaceId?: string | null) {
       const targetWorkspaceId = normalize(workspaceId);
       let resumed = 0;
@@ -1287,6 +1325,7 @@ export function createSessionLifecycleRecoveryController(
       disposed = true;
       for (const key of [...watches.keys()]) clearWatch(key);
       exhaustedWatches.clear();
+      terminalHandoffScopes.clear();
       latestProbeScopes.clear();
       admittedRunKeys.clear();
       settledRunKeys.clear();

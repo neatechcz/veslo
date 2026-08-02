@@ -47,8 +47,8 @@ test("active first-send pending views select the captured pending instance key",
 
   assert.match(
     conversationFlowSource,
-    /export const resolveCurrentSessionQueueKey = \(\{[\s\S]*const selectedSessionKey = selectedSessionId\?\.trim\(\);[\s\S]*if \(selectedSessionKey\) return resolveSessionQueueKeyForSessionId\(context, selectedSessionKey\);[\s\S]*const basePendingKey = resolvePendingSessionQueueKey\(context\);[\s\S]*return pendingQueueKeyAwaitingSessionIdByBaseKey\[basePendingKey\] \?\? basePendingKey;/,
-    "pending views should select a pending instance only for their own base pending key",
+    /export const resolveCurrentSessionQueueKey = \(\{[\s\S]*const selectedSessionKey = selectedSessionId\?\.trim\(\);[\s\S]*if \(selectedSessionKey\) return resolveSessionQueueKeyForSessionId\(context, selectedSessionKey\);[\s\S]*const basePendingKey = resolvePendingSessionQueueKey\(context\);[\s\S]*const exactPendingKey = pendingQueueKeyAwaitingSessionIdByBaseKey\[basePendingKey\];[\s\S]*const pendingWorkspaceId = resolvePendingDraftWorkspaceId\(context\);[\s\S]*candidateScope\?\.kind === "pending-session"[\s\S]*pendingHandoffCandidates\.length === 1/,
+    "pending views should preserve only one in-flight pending handoff across a draft-key transition",
   );
 
   assert.match(
@@ -322,11 +322,16 @@ test("pending sidebar selection does not materialize another pending draft into 
   );
 });
 
-test("opening another project pending draft clears only the visible base mapping", () => {
+test("opening a fresh pending draft clears the target workspace materialization mapping", () => {
   assert.match(
     source,
-    /const openPendingDirectoryDraftFromList = \(workspaceId: string\) => \{[\s\S]*const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null;[\s\S]*if \(pendingKey\) \{[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}[\s\S]*props\.openPendingDirectoryDraftInWorkspace\(workspaceId\);[\s\S]*\};/s,
-    "project plus should clear the displayed pending-instance mapping so same-project sends can start a fresh pending row",
+    /const clearPendingQueueHandoffsForWorkspace = \(workspaceId: string\) => \{[\s\S]*Object\.entries\(current\)\.filter\(\(\[baseKey\]\) => \{[\s\S]*resolveWorkspaceIdForQueueKey\([\s\S]*baseKey,[\s\S]*\) === targetWorkspaceId[\s\S]*\}\),[\s\S]*pending-draft:clear-materialized-handoffs/s,
+    "the queue owner should remove stale materialization mappings only for the new draft's workspace",
+  );
+  assert.match(
+    source,
+    /const openPendingDirectoryDraftFromList = \(workspaceId: string\) => \{[\s\S]*clearPendingQueueHandoffsForWorkspace\(workspaceId\);[\s\S]*props\.openPendingDirectoryDraftInWorkspace\(workspaceId\);[\s\S]*\};/s,
+    "project plus should clear a completed draft handoff before the stable pending key is activated again",
   );
   assert.match(
     source,
@@ -623,8 +628,18 @@ test("clicking a pending dashboard sidebar row does not select it as a server se
 test("app sendPrompt wires scoped materialized handoff before selecting the created session", () => {
   assert.match(
     appSource,
-    /const sessionSendWorkflow = createSessionSendWorkflow\(\{[\s\S]*createSessionAndOpen: \(initialTitle, options\) => createSessionAndOpen\(initialTitle, options\),[\s\S]*\}\);[\s\S]*const sessionFlowFacade = createSessionFlowFacade\(\{[\s\S]*createSessionAndOpen,[\s\S]*sendWorkflow: sessionSendWorkflow,[\s\S]*\}\);[\s\S]*const sendPrompt = sessionFlowFacade\.sendPrompt;/s,
-    "app should expose sendPrompt through the session flow facade while preserving createSessionAndOpen wiring",
+    /const sessionSendWorkflow = createSessionSendWorkflow\(\{/,
+    "app should construct the session send workflow",
+  );
+  assert.match(
+    appSource,
+    /createSessionAndOpen:\s*\(initialTitle, options\) =>\s*createSessionAndOpen\(\s*initialTitle,\s*options\s*\),/,
+    "the send workflow should preserve createSessionAndOpen wiring",
+  );
+  assert.match(
+    appSource,
+    /const sessionFlowFacade = createSessionFlowFacade\(\{\s*createSessionAndOpen,\s*sendWorkflow: sessionSendWorkflow,\s*\}\);\s*const sendPrompt = sessionFlowFacade\.sendPrompt;/,
+    "app should expose sendPrompt through the session flow facade",
   );
 
   const sendPromptStart = sessionSendWorkflowSource.indexOf("  async function sendPrompt(");
@@ -648,7 +663,7 @@ test("app sendPrompt wires scoped materialized handoff before selecting the crea
 
   assert.match(
     createNeededSource,
-    /const createdSessionId = await deps\.sendTraceStep\([\s\S]*"sendPrompt:create-session-and-open",[\s\S]*\(\) => deps\.createSessionAndOpen\(initialSessionTitle, \{[\s\S]*blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*pendingSession: pendingSidebarSession,[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*onMaterializedSessionId: options\.onMaterializedSessionId,[\s\S]*preflight: sendPreflight,[\s\S]*\}\),/,
+    /const createdSessionId = await deps\.sendTraceStep\([\s\S]*"sendPrompt:create-session-and-open",[\s\S]*\(\) =>\s*deps\.createSessionAndOpen\(\s*initialSessionTitle,\s*\{[\s\S]*blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*pendingSession: pendingSidebarSession,[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*onMaterializedSessionId: options\.onMaterializedSessionId,[\s\S]*preflight: sendPreflight,[\s\S]*\}\),/,
     "first sends should pass the captured client id and scoped handoff callback into createSessionAndOpen",
   );
   assert.doesNotMatch(
@@ -674,7 +689,7 @@ test("app sendPrompt wires scoped materialized handoff before selecting the crea
   const createSessionSource = sessionCreationWorkflowSource.slice(createSessionStart, createSessionEnd);
   assert.match(
     createSessionSource,
-    /const handoff: MaterializedSessionHandoff \| null = clientMessageId[\s\S]*workspaceId:[\s\S]*pendingSessionKey: pendingSidebarSession\?\.id \?\? null,[\s\S]*sessionId: createdSession\.id,[\s\S]*clientMessageId,[\s\S]*sendTraceId: sendTraceId \|\| null,[\s\S]*conversationId: createdSession\.conversationId \?\? null,[\s\S]*opencodeSessionId: createdSession\.opencodeSessionId \?\? createdSession\.id,[\s\S]*if \(applyEffects\) \{[\s\S]*deps\.applyCreatedSessionState\(creationResult, options\);[\s\S]*deps\.applyCreatedSessionTransition\(creationResult\)/,
+    /const handoff: MaterializedSessionHandoff \| null = clientMessageId[\s\S]*createMaterializedSessionHandoff\(\{[\s\S]*workspaceId:[\s\S]*pendingSessionKey: pendingSidebarSession\?\.id \?\? null,[\s\S]*sessionId: createdSession\.id,[\s\S]*clientMessageId,[\s\S]*sendTraceId: sendTraceId \|\| null,[\s\S]*conversationId: createdSession\.conversationId \?\? null,[\s\S]*opencodeSessionId:[\s\S]*createdSession\.opencodeSessionId \?\? createdSession\.id,[\s\S]*\}\)[\s\S]*if \(applyEffects\) \{[\s\S]*deps\.applyCreatedSessionState\(creationResult, options\);[\s\S]*deps\.applyCreatedSessionTransition\(creationResult\)/,
     "createSessionAndOpen should build a scoped handoff before applying app state and selecting the real session",
   );
 });

@@ -28,6 +28,7 @@ import {
   setConversationRunLifecycleControllerFactoryForTests,
   startServer,
 } from "../server.js";
+import { createConversationRunOpenCodeMessageId } from "../conversation-run-message-id.js";
 
 const tempDirs: string[] = [];
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
@@ -107,6 +108,8 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
   registerError: unknown = null;
   registerResult: LifecycleRunStatusResult | null = null;
   markFailedError: unknown = null;
+  recoverProviderStartTimeoutError: unknown = null;
+  recoverTerminalRuntimeHandoffError: unknown = null;
   onRegister: ((input: Parameters<OrchestratorLifecycleClient["register"]>[0]) => void) | null = null;
   readonly calls: string[] = [];
   readonly registerInputs: Array<Parameters<OrchestratorLifecycleClient["register"]>[0]> = [];
@@ -158,6 +161,13 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
 
   async recoverProviderStartTimeout(workspaceId: string, runId: string): Promise<LifecycleRunStatusResult | null> {
     this.calls.push(`recoverProviderStartTimeout:${workspaceId}:${runId}`);
+    if (this.recoverProviderStartTimeoutError) throw this.recoverProviderStartTimeoutError;
+    return this.withIdleTerminalHandoff(this.statusResult);
+  }
+
+  async recoverTerminalRuntimeHandoff(workspaceId: string, runId: string): Promise<LifecycleRunStatusResult | null> {
+    this.calls.push(`recoverTerminalRuntimeHandoff:${workspaceId}:${runId}`);
+    if (this.recoverTerminalRuntimeHandoffError) throw this.recoverTerminalRuntimeHandoffError;
     return this.withIdleTerminalHandoff(this.statusResult);
   }
 
@@ -364,6 +374,11 @@ class QueueHarness implements ConversationRunQueueStore {
       terminalizationLastError: previous?.terminalizationLastError ?? null,
       terminalizationNextAttemptAt: previous?.terminalizationNextAttemptAt ?? null,
       terminalizationDeadlineAt: previous?.terminalizationDeadlineAt ?? null,
+      terminalHandoffReason: previous?.terminalHandoffReason ?? null,
+      terminalHandoffFingerprint: previous?.terminalHandoffFingerprint ?? null,
+      terminalHandoffAttempts: previous?.terminalHandoffAttempts ?? 0,
+      terminalHandoffRequestedAt: previous?.terminalHandoffRequestedAt ?? null,
+      terminalHandoffDecidedAt: previous?.terminalHandoffDecidedAt ?? null,
       createdAt: previous?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
@@ -414,6 +429,58 @@ class QueueHarness implements ConversationRunQueueStore {
       terminalizationLastError: input.lastError,
       terminalizationNextAttemptAt: input.nextAttemptAt,
       terminalizationDeadlineAt: input.deadlineAt,
+      updatedAt: Date.now(),
+    };
+    this.reservations.set(key, reservation);
+    return reservation;
+  }
+
+  markWorkspaceRunTerminalHandoffPending(
+    input: Parameters<ConversationRunQueueStore["markWorkspaceRunTerminalHandoffPending"]>[0],
+  ) {
+    const key = `${input.workspaceId}\0${input.runId}`;
+    const previous = this.reservations.get(key);
+    if (!previous) return null;
+    const reservation: ConversationWorkspaceRunReservation = {
+      ...previous,
+      state: "terminal_handoff_pending",
+      terminalHandoffReason: input.reason,
+      terminalHandoffFingerprint: input.fingerprint,
+      terminalHandoffAttempts: input.attempts,
+      terminalHandoffRequestedAt: input.requestedAt ?? Date.now(),
+      terminalHandoffDecidedAt: null,
+      updatedAt: Date.now(),
+    };
+    this.reservations.set(key, reservation);
+    return reservation;
+  }
+
+  markWorkspaceRunTerminalHandoffUnresolved(
+    input: Parameters<ConversationRunQueueStore["markWorkspaceRunTerminalHandoffUnresolved"]>[0],
+  ) {
+    const key = `${input.workspaceId}\0${input.runId}`;
+    const previous = this.reservations.get(key);
+    if (!previous) return null;
+    const reservation: ConversationWorkspaceRunReservation = {
+      ...previous,
+      state: "terminal_handoff_unresolved",
+      terminalHandoffReason: input.reason,
+      terminalHandoffFingerprint: input.fingerprint,
+      terminalHandoffAttempts: input.attempts,
+      terminalHandoffDecidedAt: input.decidedAt ?? Date.now(),
+      updatedAt: Date.now(),
+    };
+    this.reservations.set(key, reservation);
+    return reservation;
+  }
+
+  reopenWorkspaceRunTerminalHandoff(workspaceId: string, runId: string) {
+    const key = `${workspaceId}\0${runId}`;
+    const previous = this.reservations.get(key);
+    if (!previous || previous.state !== "terminal_handoff_unresolved") return null;
+    const reservation: ConversationWorkspaceRunReservation = {
+      ...previous,
+      state: "active",
       updatedAt: Date.now(),
     };
     this.reservations.set(key, reservation);
@@ -1127,6 +1194,9 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     reconcileConversationRunLifecycle: async () => {
       throw new Error("reconcileConversationRunLifecycle should not be called by the shutdown fixture");
     },
+    retryTerminalRuntimeHandoff: async () => {
+      throw new Error("retryTerminalRuntimeHandoff should not be called by the shutdown fixture");
+    },
     start: () => {
       startCalls += 1;
     },
@@ -1496,6 +1566,12 @@ test("submitRun keeps the reservation through exact runtime handoff after a term
     reason: "upstream-submit-failed-runtime-idle",
   });
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
+  expect(reconcileCalls).toContainEqual(expect.objectContaining({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    reason: "server:conversation-run:queue-drain-scheduled",
+    delayMs: 0,
+  }));
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
   expect(providerWatchCalls).toEqual([]);
   expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
@@ -1736,6 +1812,163 @@ test("terminal transcript keeps the reservation until the runtime handoff is idl
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
 });
 
+test("stale terminal handoff asks the lifecycle owner once to retire an absent old runtime", async () => {
+  const { controller, lifecycle, queue, timers, traceEntries } = controllerHarness();
+  const input = submitInput();
+  await controller.submitRun(input);
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: true,
+    runtimeReadyForSuccessor: false,
+    engineOwnerState: "attached",
+    unavailableReason: "no_current_engine",
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "queue-drain-terminal-handoff-pending",
+  });
+  expect(lifecycle.calls).toContain("recoverTerminalRuntimeHandoff:ws_1:run-reserved");
+  expect(queue.items[0]?.state).toBe("pending");
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:terminal-runtime-handoff-recovery",
+    runId: "run-reserved",
+    outcome: "requested",
+  }));
+
+  lifecycle.statusResult = {
+    ...lifecycle.statusResult,
+    stale: false,
+    runtimeReadyForSuccessor: true,
+    engineOwnerState: "lost",
+  };
+  const recoveryReconcile = timers.activeTimers().find((timer) => timer.delayMs === 0);
+  expect(recoveryReconcile).toBeDefined();
+  timers.fire(recoveryReconcile!.id);
+  await flushMicrotasks();
+
+  expect(queue.listWorkspaceRunReservations()).not.toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+});
+
+test("stale terminal handoff does not repeat a rejected recovery request on every poll", async () => {
+  const { controller, lifecycle, queue } = controllerHarness();
+  const input = submitInput();
+  await controller.submitRun(input);
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: true,
+    runtimeReadyForSuccessor: false,
+    engineOwnerState: "attached",
+    unavailableReason: "no_current_engine",
+  };
+  lifecycle.recoverTerminalRuntimeHandoffError = new OrchestratorLifecycleRequestError(
+    "/workspace/ws_1/runs/run-reserved/recover-terminal-runtime-handoff",
+    409,
+    { error: "terminal_handoff_recovery_runtime_active" },
+  );
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "queue-drain-terminal-handoff-pending",
+  });
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "queue-drain-terminal-handoff-pending",
+    attempt: 1,
+  });
+
+  expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-reserved")).toHaveLength(1);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    runId: "run-reserved",
+    state: "terminal_handoff_unresolved",
+    terminalHandoffAttempts: 1,
+  }));
+});
+
+test("explicit terminal handoff retry is the only way to reopen a durable unresolved decision", async () => {
+  const { controller, lifecycle, queue } = controllerHarness();
+  const input = submitInput();
+  await controller.submitRun(input);
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: true,
+    runtimeReadyForSuccessor: false,
+    engineOwnerState: "attached",
+    unavailableReason: "no_current_engine",
+  };
+  lifecycle.recoverTerminalRuntimeHandoffError = new OrchestratorLifecycleRequestError(
+    "/workspace/ws_1/runs/run-reserved/recover-terminal-runtime-handoff",
+    409,
+    { error: "terminal_handoff_recovery_owner_live_or_ambiguous", reason: "exact_process_alive" },
+  );
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "initial-terminal-handoff",
+  });
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    runId: "run-reserved",
+    state: "terminal_handoff_unresolved",
+    terminalHandoffReason: "exact_process_alive",
+  }));
+
+  lifecycle.recoverTerminalRuntimeHandoffError = null;
+  await expect(controller.retryTerminalRuntimeHandoff({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "terminal-runtime-handoff-explicit-retry",
+  })).resolves.toBe(true);
+
+  expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-reserved")).toHaveLength(2);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    runId: "run-reserved",
+    state: "terminal_handoff_pending",
+  }));
+});
+
+test("stale terminal status errors never request owner-loss recovery", async () => {
+  const { controller, lifecycle, queue } = controllerHarness();
+  const input = submitInput();
+  await controller.submitRun(input);
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: true,
+    runtimeReadyForSuccessor: false,
+    engineOwnerState: "attached",
+    unavailableReason: "session_status_http",
+    unavailableHttpStatus: 502,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "terminal-status-http-error",
+  });
+
+  expect(lifecycle.calls).not.toContain("recoverTerminalRuntimeHandoff:ws_1:run-reserved");
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    runId: "run-reserved",
+    state: "active",
+  }));
+});
+
 test("provider-start terminal handoff requests one generation-fenced runtime recovery", async () => {
   const { controller, lifecycle, queue } = controllerHarness();
   const input = submitInput();
@@ -1747,15 +1980,13 @@ test("provider-start terminal handoff requests one generation-fenced runtime rec
     runtimeReadyForSuccessor: false,
   };
 
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await controller.reconcileConversationRunLifecycle({
-      workspace: input.workspace,
-      conversationId: "conv-a",
-      runId: "run-reserved",
-      reason: "provider-start-timeout-aborted",
-      attempt,
-    });
-  }
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "provider-start-timeout-aborted",
+    attempt: 0,
+  });
 
   expect(lifecycle.calls.filter((call) => call === "recoverProviderStartTimeout:ws_1:run-reserved")).toHaveLength(1);
   expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
@@ -1773,6 +2004,40 @@ test("provider-start terminal handoff requests one generation-fenced runtime rec
   });
 
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
+});
+
+test("provider-start terminal handoff retries a refused generation recovery without releasing the queue", async () => {
+  const { controller, lifecycle, queue } = controllerHarness();
+  const input = submitInput();
+  await controller.submitRun(input);
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: false,
+    runtimeReadyForSuccessor: false,
+  };
+  lifecycle.recoverProviderStartTimeoutError = new Error("active peer still owns engine");
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "provider-start-timeout-aborted",
+    attempt: 0,
+  });
+
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+  lifecycle.recoverProviderStartTimeoutError = null;
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "provider-start-timeout-aborted",
+    attempt: 1,
+  });
+
+  expect(lifecycle.calls.filter((call) => call === "recoverProviderStartTimeout:ws_1:run-reserved")).toHaveLength(2);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
 });
 
 test("provider-start timeout retries a failed OpenCode abort without releasing the queue", async () => {
@@ -2236,16 +2501,57 @@ test("submitRun tracks active gateway context for command runs when provider sta
 });
 
 test("queue drain keeps pending work blocked while latest lifecycle is active", async () => {
-  const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
+  const { controller, lifecycle, queue, submitCalls, timers, backgroundTraceEntries } = controllerHarness();
   enqueuePendingRun(queue);
   lifecycle.statusResult = { runId: "run-active", status: "running", stale: false };
 
   await controller.drainConversationQueue("ws_1", "conv-a");
+  await controller.drainConversationQueue("ws_1", "conv-a");
 
   expect(queue.items[0]?.state).toBe("pending");
   expect(submitCalls).toEqual([]);
-  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest"]);
+  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest", "status:ws_1:conv-a:latest"]);
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
+  const activeDeferrals = backgroundTraceEntries.flat().filter(
+    (entry) => entry.event === "server:conversation-run:queue-drain-active-deferred",
+  );
+  expect(activeDeferrals).toEqual([expect.objectContaining({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    queueItemId: queue.items[0]?.queueItemId,
+    runId: "run-queued",
+    blockingRunId: "run-active",
+    status: "running",
+    stale: false,
+    clientMessageId: "msg-queued",
+    queuedClientMessageId: "msg-queued",
+    blockingClientMessageId: null,
+  })]);
+});
+
+test("queue-drain status diagnostics retain a safe error classification without a redacted message", async () => {
+  const { controller, lifecycle, queue, backgroundTraceEntries } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusError = new OrchestratorLifecycleRequestError(
+    "/workspace/ws_1/conversations/conv-a/runs/latest",
+    503,
+    { error: "daemon_unavailable" },
+  );
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(backgroundTraceEntries.flat()).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:queue-drain-status-error",
+    queueItemId: "queue-1",
+    runId: "run-queued",
+    clientMessageId: "msg-queued",
+    errorKind: "lifecycle_request_failed",
+    lifecycleHttpStatus: 503,
+    nextRetryInMs: 1_500,
+  }));
+  expect(backgroundTraceEntries.flat().find(
+    (entry) => entry.event === "server:conversation-run:queue-drain-status-error",
+  )).not.toHaveProperty("message");
 });
 
 test("queue drain delegates generic stale active runs to normal lifecycle reconciliation", async () => {
@@ -2269,7 +2575,8 @@ test("queue drain delegates generic stale active runs to normal lifecycle reconc
     event: "server:conversation-run:queue-drain-stale-active-deferred",
     workspaceId: "ws_1",
     conversationId: "conv-a",
-    runId: "run-zombie",
+    runId: "run-queued",
+    blockingRunId: "run-zombie",
     waitReason: "engine_unreachable",
   }));
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
@@ -2536,6 +2843,68 @@ test("queue drain submits the next pending item after terminal latest lifecycle"
       causation: expect.objectContaining({ queueItemId: queued.queueItemId, clientMessageId: "msg-queued" }),
     }),
   });
+  expect((submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:queue-drain-claimed",
+    queueItemId: queued.queueItemId,
+    runId: "run-queued",
+    queueWaitMs: expect.any(Number),
+  }));
+  expect((submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:queue-drain-submitted",
+    queueItemId: queued.queueItemId,
+    runId: "run-queued",
+    queueWaitMs: expect.any(Number),
+  }));
+});
+
+test("queue drain gives a delayed draft an admission-time OpenCode message id", async () => {
+  const { controller, lifecycle, queue, submitCalls } = controllerHarness();
+  const queued = enqueuePendingRun(queue);
+  // Model a draft that waited behind a previous assistant turn. Its queue
+  // timestamp must never determine OpenCode's chronological turn ordering.
+  queue.items[0]!.createdAt = 1;
+  lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  const submittedMessageId = (submitCalls[0] as SubmittedOpenCodeCall).opencodeMessageId;
+  const startedAt = queue.items[0]?.startedAt;
+  expect(startedAt).toEqual(expect.any(Number));
+  expect(submittedMessageId).toBe(createConversationRunOpenCodeMessageId({
+    workspaceId: "ws_1",
+    engineSessionId: "sess-a",
+    clientMessageId: "msg-queued",
+    runId: "run-queued",
+    timestamp: startedAt!,
+  }));
+  expect(submittedMessageId).not.toBe(createConversationRunOpenCodeMessageId({
+    workspaceId: "ws_1",
+    engineSessionId: "sess-a",
+    clientMessageId: "msg-queued",
+    runId: "run-queued",
+    timestamp: queued.createdAt,
+  }));
+});
+
+test("queue drain reuses an attached terminal runtime only after exact idle evidence", async () => {
+  const { controller, lifecycle, queue, submitCalls } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = {
+    runId: "run-terminal",
+    status: "completed",
+    stale: false,
+    runtimeReadyForSuccessor: true,
+    engineOwnerState: "attached",
+  };
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(lifecycle.calls).toEqual([
+    "status:ws_1:conv-a:latest",
+    "register:ws_1:conv-a:run-queued:sess-a:prompt",
+  ]);
+  expect(queue.items[0]?.state).toBe("submitted");
+  expect(submitCalls).toHaveLength(1);
 });
 
 test("queue drain does not submit when another controller wins the durable claim", async () => {
@@ -2645,7 +3014,7 @@ test("exact missing lifecycle recovery re-pends an unconfirmed queued registrati
 });
 
 test("queue drain marks pending items failed when accepted submit fails", async () => {
-  const { controller, lifecycle, queue, behavior } = controllerHarness();
+  const { controller, lifecycle, queue, behavior, backgroundTraceEntries } = controllerHarness();
   enqueuePendingRun(queue);
   lifecycle.statusResult = null;
   behavior.submitError = new Error("accepted submit failed");
@@ -2654,6 +3023,12 @@ test("queue drain marks pending items failed when accepted submit fails", async 
 
   expect(queue.items[0]?.state).toBe("failed");
   expect(queue.items[0]?.error).toBe("accepted submit failed");
+  expect(backgroundTraceEntries.flat()).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:queue-drain-submit-failed",
+    queueItemId: queue.items[0]?.queueItemId,
+    runId: "run-queued",
+    message: "accepted submit failed",
+  }));
 });
 
 test("queue drain reuses one OpenCode message id when the same queued run is retried", async () => {
@@ -2749,6 +3124,31 @@ test("startup returns an absent starting queue row to pending before scheduling 
     queueItemId: item.queueItemId,
     runId: "run-a",
   });
+});
+
+test("startup retains a durable unresolved terminal handoff without recreating its poll loop", () => {
+  const { controller, timers, traceEntries } = controllerHarness({
+    startupReservation: {
+      conversationId: "conv-a",
+      runId: "run-a",
+      state: "terminal_handoff_unresolved",
+      terminalHandoffReason: "terminal_handoff_recovery_owner_live_or_ambiguous",
+      terminalHandoffFingerprint: "run-a\0owner-a\0no_current_engine",
+      terminalHandoffAttempts: 1,
+      terminalHandoffRequestedAt: 1_000,
+      terminalHandoffDecidedAt: 1_100,
+    },
+  });
+
+  controller.start();
+
+  expect(timers.activeTimers()).toEqual([]);
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:terminal-runtime-handoff-unresolved",
+    workspaceId: "ws_1",
+    runId: "run-a",
+    startup: true,
+  }));
 });
 
 test("startup keeps an active starting queue row out of replay and restores its reservation", async () => {

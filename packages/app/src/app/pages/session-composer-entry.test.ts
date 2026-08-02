@@ -192,6 +192,14 @@ test("session empty state renders target picker above centered composer", () => 
   assert.doesNotMatch(sessionSource, /handleSoulQuickstart/);
 });
 
+test("a newly opened pending draft clears prior entry dismissal for its stable queue key", () => {
+  assert.match(
+    sessionSource,
+    /on\(\s*\(\) => props\.activePendingDraftKey,\s*\(pendingDraftKey, previousPendingDraftKey\) => \{[\s\S]*nextKey \|\| nextKey === previousKey[\s\S]*const sessionKey = pendingSessionQueueKey\(\);[\s\S]*const \{ \[sessionKey\]: _dismissed, \.\.\.next \} = current;[\s\S]*return next;/s,
+    "a fresh pending-draft activation must not inherit entry dismissal from the prior send in the same workspace",
+  );
+});
+
 test("composer entry heading uses the same width cap as the centered composer", () => {
   assert.match(
     sessionSource,

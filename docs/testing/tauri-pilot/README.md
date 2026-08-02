@@ -1,9 +1,11 @@
-# Tauri Pilot Testing Playbook
+# Legacy Tauri Pilot Testing Playbook
 
-This playbook captures the current Veslo desktop/Tauri Pilot practices that
-are known to work. Keep speculative findings in `docs/testing/findings/` or
-scenario-specific `dev-specific/tauri-pilot/` run folders; keep this document
-for repeatable procedures and stable diagnostic boundaries.
+> **Archived.** Veslo no longer uses Tauri Pilot for desktop development,
+> diagnostics, or E2E validation. Use the WebDriverIO workflow in
+> `docs/dev/testing-playbook.md` and `packages/desktop-webdriver` instead.
+
+This document is retained solely as historical context for older artifacts and
+scenarios. Its commands and procedures must not be run or extended.
 
 ## What Tauri Pilot Is
 

@@ -510,7 +510,7 @@ test("rejected pending queue drain updates the remapped item key", () => {
 
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
-  const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)", sendStart);
+  const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(", sendStart);
   const bridgePrepare = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.prepare({", targetCapture);
   const bridgeSubmit = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.submit({", bridgePrepare);
   const bridgeSource = conversationRunCompatibilityBridgeSource();
@@ -536,12 +536,12 @@ test("app prompt send accepts an explicit target session without freezing model 
   );
   assert.match(
     bridgeSource,
-    /deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\)[\s\S]*const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
+    /await deps\.prepareSendRuntimeForSend\(\s*"sendPrompt",\s*input\.sendPreflight,\s*\);[\s\S]*const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
     "compatibility bridge should prepare the target runtime before reading its routed client",
   );
   assert.match(
     bridgeSource,
-    /const model = input\.modelOverride \?\? deps\.modelForSession\(materializedSessionID\);[\s\S]*const agent = deps\.agentForSession\(sessionID\);/,
+    /const model =\s*input\.modelOverride \?\? deps\.modelForSession\(materializedSessionID\);[\s\S]*const agent = deps\.agentForSession\(sessionID\);/,
     "compatibility bridge should resolve model and agent after the prepared compatibility handoff begins",
   );
 });

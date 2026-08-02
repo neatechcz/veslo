@@ -22,9 +22,24 @@ export type RunProbeActivityResult = {
   activityKind?: RunActivityKind | null;
   waitReason?: RunWaitReason | null;
   progressSignature?: string | null;
+  /** Safe metadata from the exact OpenCode session-status lookup. */
+  sessionStatusObserved?: "busy" | "retry" | "explicit_idle" | "absent" | "unknown" | null;
 };
 
-export type RunProbeResult = RunProbeActivityResult | { unreachable: true };
+export type RunProbeUnavailableReason =
+  | "no_current_engine"
+  | "session_status_http"
+  | "session_messages_missing"
+  | "session_messages_http"
+  | "request_timeout"
+  | "request_transport_error";
+
+export type RunProbeResult = RunProbeActivityResult | {
+  unreachable: true;
+  /** Optional only while old external probe implementations are migrated. */
+  unavailableReason?: RunProbeUnavailableReason;
+  unavailableHttpStatus?: number | null;
+};
 
 export type ReconciledRun = {
   record: RunRecord;
@@ -36,6 +51,9 @@ export type ReconciledRun = {
    * prompt, and that handoff fact must not overwrite the terminal run record.
    */
   runtimeReadyForSuccessor?: boolean | null;
+  unavailableReason?: RunProbeUnavailableReason | null;
+  unavailableHttpStatus?: number | null;
+  sessionStatusObserved?: RunProbeActivityResult["sessionStatusObserved"];
 };
 
 export type RunLifecycleOwner = {
@@ -190,6 +208,8 @@ export function createRunRegistry(deps: {
           stale: true,
           noProgressSeconds: currentNoProgressSeconds(),
           runtimeReadyForSuccessor: null,
+          unavailableReason: probe.unavailableReason ?? null,
+          unavailableHttpStatus: probe.unavailableHttpStatus ?? null,
         };
       }
       // Only an inactive exact-session observation opens the admission
@@ -201,6 +221,7 @@ export function createRunRegistry(deps: {
         stale: false,
         noProgressSeconds: currentNoProgressSeconds(),
         runtimeReadyForSuccessor: probe.active === false,
+        sessionStatusObserved: probe.sessionStatusObserved ?? null,
       };
     }
 
@@ -210,7 +231,13 @@ export function createRunRegistry(deps: {
         activityKind: "unknown",
         waitReason: "engine_unreachable",
       }) ?? record;
-      return { record: next, stale: true, noProgressSeconds: noProgressSecondsForRecord(next, now()) };
+      return {
+        record: next,
+        stale: true,
+        noProgressSeconds: noProgressSecondsForRecord(next, now()),
+        unavailableReason: probe.unavailableReason ?? null,
+        unavailableHttpStatus: probe.unavailableHttpStatus ?? null,
+      };
     }
 
     if (probe.active) {
@@ -256,7 +283,12 @@ export function createRunRegistry(deps: {
         retrySince,
         lastProgressSignature: progressSignature,
       }) ?? record;
-      return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
+      return {
+        record: next,
+        stale: false,
+        noProgressSeconds: noProgressSecondsForRecord(next, timestamp),
+        sessionStatusObserved: probe.sessionStatusObserved ?? null,
+      };
     }
 
     if (!probe.terminalCandidate) {
@@ -269,7 +301,12 @@ export function createRunRegistry(deps: {
         retrySince: null,
         lastProgressSignature: normalizeNullableText(probe.progressSignature) ?? record.lastProgressSignature,
       }) ?? record;
-      return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
+      return {
+        record: next,
+        stale: false,
+        noProgressSeconds: noProgressSecondsForRecord(next, timestamp),
+        sessionStatusObserved: probe.sessionStatusObserved ?? null,
+      };
     }
 
     const terminalize = (): ReconciledRun => {
@@ -291,6 +328,7 @@ export function createRunRegistry(deps: {
         stale: false,
         noProgressSeconds: null,
         runtimeReadyForSuccessor: true,
+        sessionStatusObserved: probe.sessionStatusObserved ?? null,
       };
     };
 
@@ -314,7 +352,12 @@ export function createRunRegistry(deps: {
         retrySince: null,
         lastProgressSignature: progressSignature,
       }) ?? record;
-      return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
+      return {
+        record: next,
+        stale: false,
+        noProgressSeconds: noProgressSecondsForRecord(next, timestamp),
+        sessionStatusObserved: probe.sessionStatusObserved ?? null,
+      };
     }
 
     return terminalize();

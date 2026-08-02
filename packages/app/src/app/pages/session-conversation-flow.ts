@@ -222,7 +222,26 @@ export const resolveCurrentSessionQueueKey = ({
   const selectedSessionKey = selectedSessionId?.trim();
   if (selectedSessionKey) return resolveSessionQueueKeyForSessionId(context, selectedSessionKey);
   const basePendingKey = resolvePendingSessionQueueKey(context);
-  return pendingQueueKeyAwaitingSessionIdByBaseKey[basePendingKey] ?? basePendingKey;
+  const exactPendingKey = pendingQueueKeyAwaitingSessionIdByBaseKey[basePendingKey];
+  if (exactPendingKey) return exactPendingKey;
+
+  // Opening a workspace draft is asynchronous. A first submit can begin while
+  // the visible composer still has the generic pending-workspace key, then the
+  // persisted directory draft activates before the handoff has materialized a
+  // real session. Preserve that one in-flight handoff across the UI-only key
+  // transition so later Enter submits join its server-owned conversation.
+  const pendingWorkspaceId = resolvePendingDraftWorkspaceId(context);
+  const pendingHandoffCandidates = Object.entries(
+    pendingQueueKeyAwaitingSessionIdByBaseKey,
+  ).filter(([candidateBaseKey, candidatePendingKey]) => {
+    const candidateScope = parseUiConversationKey(candidatePendingKey);
+    return candidateScope?.kind === "pending-session"
+      && candidateScope.workspaceId === pendingWorkspaceId
+      && resolveWorkspaceIdForQueueKey(context, candidateBaseKey) === pendingWorkspaceId;
+  });
+  return pendingHandoffCandidates.length === 1
+    ? pendingHandoffCandidates[0][1]
+    : basePendingKey;
 };
 
 export type ResolveTranscriptDisplaySessionIdInput = {

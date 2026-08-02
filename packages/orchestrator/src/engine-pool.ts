@@ -192,6 +192,23 @@ export type EngineEvent =
   | "healthy"
   | "unhealthy";
 
+/**
+ * Durable ownership callbacks. Unlike `onEngineChange`, these callbacks carry
+ * the immutable process generation and are part of lifecycle correctness, not
+ * only observability.
+ */
+export type EngineGenerationLifecycleHooks = {
+  beforeSpawn?: (input: {
+    workspaceId: string;
+    engineSlotId: string;
+    engineOwnerId: string;
+    engineStartedAt: number;
+  }) => void | Promise<void>;
+  afterSpawn?: (engine: EngineProcess) => void | Promise<void>;
+  beforeStop?: (engine: EngineProcess, reason: string) => void | Promise<void>;
+  afterExit?: (engine: EngineProcess, reason: string) => void | Promise<void>;
+};
+
 export type EnginePoolDeps = {
   resolveWorkspace: (workspace: EngineWorkspace) => Promise<{
     workdir: string;
@@ -219,7 +236,8 @@ export type EnginePoolDeps = {
   /** F2Ú5 — health probe for one engine. Throw = unhealthy. Default no-op (no health checks). */
   healthCheck?: (baseUrl: string) => Promise<void>;
   /** F2Ú5 — observability callback. Pool calls after every state transition. */
-  onEngineChange?: (workspaceId: string, event: EngineEvent) => void;
+  onEngineChange?: (workspaceId: string, event: EngineEvent, engine: EngineProcess | null) => void;
+  generationLifecycle?: EngineGenerationLifecycleHooks;
   /**
    * Returns true when the workspace has an active run (submitted/running/
    * blocked in the run registry). Engines with active work are skipped by
@@ -284,7 +302,8 @@ export type EnginePoolInput = {
 
 type ResolvedDepsWithEvents = ResolvedDeps & {
   healthCheck?: (baseUrl: string) => Promise<void>;
-  onEngineChange?: (workspaceId: string, event: EngineEvent) => void;
+  onEngineChange?: (workspaceId: string, event: EngineEvent, engine: EngineProcess | null) => void;
+  generationLifecycle?: EngineGenerationLifecycleHooks;
   hasActiveWork?: (workspaceId: string) => boolean;
 };
 
@@ -304,6 +323,8 @@ export class EnginePool {
    * `child.on('exit')` checks this set to distinguish real crashes from intentional kills.
    */
   private readonly intentionallyStopping = new Set<string>();
+  /** One child can notify both its exit event and the awaiting stop path. */
+  private readonly generationExitNotifications = new Map<string, Promise<void>>();
   /** F2Ú5 — pending restart timeouts by workspaceId (for cleanup on suspend/killAll). */
   private readonly restartTimers = new Map<string, ScheduleHandle>();
 
@@ -330,21 +351,94 @@ export class EnginePool {
         deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
       healthCheck: deps.healthCheck,
       onEngineChange: deps.onEngineChange,
+      generationLifecycle: deps.generationLifecycle,
       hasActiveWork: deps.hasActiveWork,
     };
     this.config = { ...DEFAULT_ENGINE_POOL_CONFIG, ...input.config };
     this.startBackgroundLoops();
   }
 
-  private emit(workspaceId: string, event: EngineEvent): void {
+  private emit(workspaceId: string, event: EngineEvent, engine = this.engines.get(workspaceId) ?? null): void {
     try {
-      this.deps.onEngineChange?.(workspaceId, event);
+      this.deps.onEngineChange?.(workspaceId, event, engine);
     } catch (err) {
       this.deps.log?.("engine event listener threw", {
         workspaceId,
         event,
         error: String(err),
       });
+    }
+  }
+
+  private async notifyGenerationBeforeSpawn(input: {
+    workspaceId: string;
+    engineSlotId: string;
+    engineOwnerId: string;
+    engineStartedAt: number;
+  }): Promise<void> {
+    await this.invokeGenerationHook("beforeSpawn", input, undefined, true);
+  }
+
+  private async notifyGenerationBeforeStop(engine: EngineProcess, reason: string): Promise<void> {
+    await this.invokeGenerationHook("beforeStop", engine, reason);
+  }
+
+  private async notifyGenerationAfterSpawn(engine: EngineProcess): Promise<void> {
+    await this.invokeGenerationHook("afterSpawn", engine, undefined, true);
+  }
+
+  private async notifyGenerationAfterExit(engine: EngineProcess, reason: string): Promise<void> {
+    const existing = this.generationExitNotifications.get(engine.engineOwnerId);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const notification = this.invokeGenerationHook("afterExit", engine, reason);
+    this.generationExitNotifications.set(engine.engineOwnerId, notification);
+    // Keep recently exited owners long enough for a child exit event that
+    // follows `stopChild()` to share the same durable closure. Bound the cache
+    // so long-running crash/restart cycles cannot retain every generation.
+    while (this.generationExitNotifications.size > 256) {
+      const oldest = this.generationExitNotifications.keys().next().value;
+      if (!oldest || oldest === engine.engineOwnerId) break;
+      this.generationExitNotifications.delete(oldest);
+    }
+    await notification;
+  }
+
+  private async invokeGenerationHook(
+    hook: keyof EngineGenerationLifecycleHooks,
+    first: EngineProcess | {
+      workspaceId: string;
+      engineSlotId: string;
+      engineOwnerId: string;
+      engineStartedAt: number;
+    },
+    reason?: string,
+    required = false,
+  ): Promise<void> {
+    try {
+      if (hook === "beforeSpawn") {
+        await this.deps.generationLifecycle?.beforeSpawn?.(first as {
+          workspaceId: string;
+          engineSlotId: string;
+          engineOwnerId: string;
+          engineStartedAt: number;
+        });
+      } else if (hook === "afterSpawn") {
+        await this.deps.generationLifecycle?.afterSpawn?.(first as EngineProcess);
+      } else if (hook === "beforeStop") {
+        await this.deps.generationLifecycle?.beforeStop?.(first as EngineProcess, reason ?? "unspecified");
+      } else {
+        await this.deps.generationLifecycle?.afterExit?.(first as EngineProcess, reason ?? "unspecified");
+      }
+    } catch (error) {
+      this.deps.log?.("engine generation lifecycle hook failed", {
+        hook,
+        workspaceId: first.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (required) throw error;
     }
   }
 
@@ -551,7 +645,9 @@ export class EnginePool {
       this.engines.delete(workspace.id);
       if (existing.child && this.deps.isProcessAlive(existing.pid)) {
         try {
+          await this.notifyGenerationBeforeStop(existing, "stale_respawn");
           await this.deps.stopChild(existing.child);
+          await this.notifyGenerationAfterExit(existing, "stale_respawn");
         } catch (err) {
           this.deps.log?.("engine cleanup on respawn failed", {
             workspaceId: workspace.id,
@@ -662,7 +758,9 @@ export class EnginePool {
       }
       if (engine.child && this.deps.isProcessAlive(engine.pid)) {
         try {
+          await this.notifyGenerationBeforeStop(engine, "skill_view_restart");
           await this.deps.stopChild(engine.child);
+          await this.notifyGenerationAfterExit(engine, "skill_view_restart");
         } catch (err) {
           this.deps.log?.("engine cleanup on skill view restart failed", {
             workspaceId: workspace.id,
@@ -722,9 +820,11 @@ export class EnginePool {
     // F2Ú5 — mark before stopChild so child.on('exit') handler treats this as intentional.
     this.intentionallyStopping.add(workspaceId);
     try {
+      await this.notifyGenerationBeforeStop(engine, reason);
       if (this.deps.isProcessAlive(engine.pid)) {
         try {
           await this.deps.stopChild(engine.child);
+          await this.notifyGenerationAfterExit(engine, reason);
         } catch (err) {
           this.deps.log?.("engine suspend failed", {
             workspaceId,
@@ -736,7 +836,7 @@ export class EnginePool {
       this.intentionallyStopping.delete(workspaceId);
     }
     engine.state = "suspended";
-    this.emit(workspaceId, "suspended");
+    this.emit(workspaceId, "suspended", engine);
   }
 
   async forget(workspaceId: string): Promise<void> {
@@ -763,9 +863,11 @@ export class EnginePool {
 
     this.intentionallyStopping.add(workspaceId);
     try {
+      await this.notifyGenerationBeforeStop(engine, "forget");
       if (this.deps.isProcessAlive(engine.pid)) {
         try {
           await this.deps.stopChild(engine.child);
+          await this.notifyGenerationAfterExit(engine, "forget");
         } catch (err) {
           this.deps.log?.("engine forget failed", {
             workspaceId,
@@ -776,7 +878,7 @@ export class EnginePool {
     } finally {
       this.intentionallyStopping.delete(workspaceId);
     }
-    this.emit(workspaceId, "suspended");
+    this.emit(workspaceId, "suspended", engine);
   }
 
   async killAll(): Promise<void> {
@@ -795,7 +897,10 @@ export class EnginePool {
     this.restartTimers.clear();
     const entries = Array.from(this.engines.values());
     // F2Ú5 — mark every engine as intentionally stopping BEFORE killing.
-    for (const engine of entries) this.intentionallyStopping.add(engine.workspaceId);
+    for (const engine of entries) {
+      this.intentionallyStopping.add(engine.workspaceId);
+      await this.notifyGenerationBeforeStop(engine, "orchestrator_shutdown");
+    }
     this.engines.clear();
     await Promise.all(
       entries.map(async (engine) => {
@@ -803,6 +908,7 @@ export class EnginePool {
           if (!this.deps.isProcessAlive(engine.pid)) return;
           try {
             await this.deps.stopChild(engine.child);
+            await this.notifyGenerationAfterExit(engine, "orchestrator_shutdown");
           } catch (err) {
             this.deps.log?.("engine killAll failed", {
               workspaceId: engine.workspaceId,
@@ -931,6 +1037,12 @@ export class EnginePool {
     const engineOwnerId = randomUUID();
     const directoryInstanceEpoch = (this.directoryInstanceEpochs.get(workspace.id) ?? 0) + 1;
     this.directoryInstanceEpochs.set(workspace.id, directoryInstanceEpoch);
+    await this.notifyGenerationBeforeSpawn({
+      workspaceId: workspace.id,
+      engineSlotId: workspace.id,
+      engineOwnerId,
+      engineStartedAt: spawnedAt,
+    });
     writeSpawnDiag("engine-spawn-start", {
       workspaceId: workspace.id,
       workdir,
@@ -1017,7 +1129,7 @@ export class EnginePool {
     // F2Ú5 — register exit handler. Fires for both intentional kill (SIGTERM
     // from stopChild) and real crashes; handleExit distinguishes via
     // `intentionallyStopping` Set.
-    child.on("exit", (code, signal) => this.handleExit(workspace.id, code, signal));
+    child.on("exit", (code, signal) => { void this.handleExit(workspace.id, code, signal); });
 
     let spawnFailureClass = "unknown";
     try {
@@ -1106,6 +1218,22 @@ export class EnginePool {
     engine.state = "ready";
     engine.lastActivityAt = this.deps.now();
     engine.lastSuccessfulRunStartedAt = engine.lastActivityAt;
+    try {
+      await this.notifyGenerationAfterSpawn(engine);
+    } catch (error) {
+      // An engine without its durable generation is not safe to hand to a
+      // run. Stop it before returning so later recovery cannot mistake pool
+      // absence for a proved owner loss.
+      engine.state = "crashed";
+      this.engines.delete(workspace.id);
+      this.intentionallyStopping.add(workspace.id);
+      try {
+        await this.deps.stopChild(child);
+      } finally {
+        this.intentionallyStopping.delete(workspace.id);
+      }
+      throw error;
+    }
     writeSpawnDiag("engine-ready", {
       workspaceId: workspace.id,
       pid: engine.pid,
@@ -1126,7 +1254,7 @@ export class EnginePool {
       baseUrl,
       pid: engine.pid,
     });
-    this.emit(workspace.id, "spawned");
+    this.emit(workspace.id, "spawned", engine);
     return engine;
   }
 
@@ -1136,16 +1264,17 @@ export class EnginePool {
    * from real crashes. Crashes schedule a restart with exponential backoff
    * (capped at `maxRestarts` attempts).
    */
-  private handleExit(
+  private async handleExit(
     workspaceId: string,
     code: number | null,
     signal: NodeJS.Signals | null,
-  ): void {
+  ): Promise<void> {
+    const engine = this.engines.get(workspaceId);
     if (this.intentionallyStopping.has(workspaceId)) {
       // Intentional kill (suspend, killAll, spawn cleanup) — Set is cleared by caller.
+      if (engine) await this.notifyGenerationAfterExit(engine, "intentional_stop");
       return;
     }
-    const engine = this.engines.get(workspaceId);
     if (!engine) return;
     // Engine never reached "ready" (waitForHealthy threw earlier in spawn).
     // Don't treat as crash; ensure() callsite already got the throw.
@@ -1167,6 +1296,7 @@ export class EnginePool {
       return;
     }
 
+    await this.notifyGenerationAfterExit(engine, "child_exit");
     this.markEngineCrashed(workspaceId, engine, code, signal);
   }
 
@@ -1354,8 +1484,10 @@ export class EnginePool {
             engine.healthStrikes = 0;
             this.intentionallyStopping.add(engine.workspaceId);
             try {
+              await this.notifyGenerationBeforeStop(engine, "health_failure");
               if (this.deps.isProcessAlive(engine.pid)) {
                 await this.deps.stopChild(engine.child);
+                await this.notifyGenerationAfterExit(engine, "health_failure");
               }
             } catch (killErr) {
               this.deps.log?.("engine health-driven kill failed", {

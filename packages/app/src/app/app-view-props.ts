@@ -10,7 +10,6 @@ import { isTauriRuntime, isWindowsPlatform, preferredSessionWorkspaceRoot } from
 import type { ErrorSeverity } from "./lib/error-reporter";
 import type { EngineSourcePreference } from "./lib/engine-source";
 import type { ManagedAiAccessProfile } from "./lib/ai-access";
-import type { DocumentRuntimeStatusPayload } from "./lib/document-runtime";
 import type { McpServersRefreshOptions } from "./lib/mcp-server-refresh";
 import type { SessionSubmitResult } from "./lib/session-send-contract";
 import type { SessionAbortResult } from "./pages/session-send-workflow";
@@ -464,9 +463,6 @@ export type AppViewPropsScope = {
   downloadUpdate: (optionsDownload?: DownloadUpdateOptions) => Promise<void>;
   retryUpdateDownload: () => Promise<void>;
   installUpdateAndRestart: () => Promise<void>;
-  documentRuntimeStatus: Accessor<DocumentRuntimeStatusPayload | null>;
-  documentRuntimeRepairBusy: Accessor<boolean>;
-  repairDocumentRuntime: () => Promise<void>;
   anyActiveRuns: Accessor<boolean>;
   engineSource: Accessor<EngineSourcePreference>;
   updateEngineSource: (value: EngineSourcePreference, options?: { explicit?: boolean }) => void;
@@ -619,6 +615,7 @@ export type AppViewPropsScope = {
   selectedSessionHistoryRetrying: () => boolean;
   retryUnavailableHistory: (sessionId: string) => Promise<void>;
   retryAcceptedRunForSession: (sessionId: string, workspaceId?: string | null) => number;
+  retryTerminalHandoffForSession: (sessionId: string, workspaceId?: string | null) => number;
   retryTerminalTranscriptRecoveryForSession: (sessionId: string, workspaceId?: string | null) => number;
   selectedSessionHasEarlierMessages: () => boolean;
   selectedSessionLoadingEarlierMessages: () => boolean;
@@ -824,9 +821,6 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     downloadUpdate,
     retryUpdateDownload,
     installUpdateAndRestart,
-    documentRuntimeStatus,
-    documentRuntimeRepairBusy,
-    repairDocumentRuntime,
     anyActiveRuns,
     engineSource,
     updateEngineSource,
@@ -955,6 +949,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     selectedSessionHistoryRetrying,
     retryUnavailableHistory,
     retryAcceptedRunForSession,
+    retryTerminalHandoffForSession,
     retryTerminalTranscriptRecoveryForSession,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
@@ -1336,9 +1331,6 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       downloadUpdate: () => downloadUpdate(),
       retryUpdateDownload: () => retryUpdateDownload(),
       installUpdateAndRestart,
-      documentRuntimeStatus: documentRuntimeStatus(),
-      documentRuntimeRepairBusy: documentRuntimeRepairBusy(),
-      repairDocumentRuntime,
       anyActiveRuns: anyActiveRuns(),
       engineSource: engineSource(),
       setEngineSource: (value: EngineSourcePreference) => updateEngineSource(value, { explicit: true }),
@@ -2001,6 +1993,9 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     },
     get retryAcceptedRunForSession() {
       return retryAcceptedRunForSession;
+    },
+    get retryTerminalHandoffForSession() {
+      return retryTerminalHandoffForSession;
     },
     get retryTerminalTranscriptRecoveryForSession() {
       return retryTerminalTranscriptRecoveryForSession;

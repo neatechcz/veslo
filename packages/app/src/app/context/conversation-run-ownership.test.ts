@@ -92,6 +92,46 @@ test("clears a waiting handover when the queued successor terminalizes without b
   assert.equal(ownership.holdTransitionMutation("open-a", "ws-a", () => commits.push("next-run")), false);
 });
 
+test("promotes a queued run that completed between lifecycle polls before releasing its held output", () => {
+  const ownership = createConversationRunOwnershipIndex();
+  const a = scope("run-a");
+  const b = scope("run-b");
+  const commits: string[] = [];
+  ownership.activate(a);
+  ownership.reserve(b);
+  ownership.beginTerminal(a);
+  ownership.releaseTerminal(a);
+  ownership.settleTerminalTranscript(a);
+
+  // The server started and finished B before the next client poll saw it as
+  // running. Its text was held by A's completed terminal boundary.
+  assert.equal(ownership.holdTransitionMutation("open-a", "ws-a", () => commits.push("b-final")), true);
+  assert.equal(ownership.observeStatus(b, { runId: "run-b", status: "completed", stale: false }), false);
+
+  const promoted = ownership.promoteObservedTerminalRun(b);
+  assert.equal(promoted?.scope.runId, "run-b");
+  for (const commit of promoted?.commits ?? []) commit();
+  assert.deepEqual(commits, ["b-final"]);
+  assert.equal(ownership.resolveActive("open-a", "ws-a")?.runId, "run-b");
+});
+
+test("does not skip an earlier unresolved queued run when a later run is observed terminal", () => {
+  const ownership = createConversationRunOwnershipIndex();
+  const a = scope("run-a");
+  const b = scope("run-b");
+  const c = scope("run-c");
+  ownership.activate(a);
+  ownership.reserve(b);
+  ownership.reserve(c);
+  ownership.beginTerminal(a);
+  ownership.releaseTerminal(a);
+  ownership.settleTerminalTranscript(a);
+  ownership.observeStatus(c, { runId: "run-c", status: "completed", stale: false });
+
+  assert.equal(ownership.promoteObservedTerminalRun(c), null);
+  assert.equal(ownership.resolveActive("open-a", "ws-a"), null);
+});
+
 test("an exact recovered scope remains active until app-local ownership is known", () => {
   const ownership = createConversationRunOwnershipIndex();
   assert.equal(ownership.isActiveOrUnknown(scope("run-reloaded")), true);

@@ -87,6 +87,10 @@ export function createConversationRunOwnershipIndex() {
     aliasKeys(record.scope).some((alias) => aliases.includes(alias)),
   );
 
+  const firstQueuedRecordForAliases = (aliases: string[]) => Array.from(records.values()).find((record) =>
+    record.state === "queued" && aliasKeys(record.scope).some((alias) => aliases.includes(alias)),
+  );
+
   const hasQueuedRecordForAliases = (aliases: string[]) => Array.from(records.values()).some((record) =>
     record.state === "queued" && aliasKeys(record.scope).some((alias) => aliases.includes(alias)),
   );
@@ -179,7 +183,9 @@ export function createConversationRunOwnershipIndex() {
       if (!record) return false;
       const active = isActive(scope);
       record.status = status;
-      if (status && ["completed", "failed", "aborted"].includes(status.status)) record.state = "terminal";
+      if (active && status && ["completed", "failed", "aborted"].includes(status.status)) {
+        record.state = "terminal";
+      }
       return active;
     },
     beginTerminal(scope: SessionLifecycleRecoveryScope) {
@@ -230,6 +236,24 @@ export function createConversationRunOwnershipIndex() {
       const record = records.get(runKey(scope));
       if (!record || record.state !== "queued" || !record.status || !activeStatus.has(record.status.status)) return null;
       if (!aliasKeys(record.scope).some((alias) => terminalBoundaryAliases.has(alias))) return null;
+      return promote(record);
+    },
+    // A five-second lifecycle poll can observe a queued successor only after
+    // it has already completed. Promote that exact first successor long enough
+    // to release its held transcript mutations before terminal handling. Without
+    // this, the predecessor's terminal latch keeps later assistant text hidden
+    // until an unrelated SSE reconnect happens to hydrate the whole transcript.
+    promoteObservedTerminalRun(scope: SessionLifecycleRecoveryScope) {
+      const record = records.get(runKey(scope));
+      if (
+        !record ||
+        record.state !== "queued" ||
+        !record.status ||
+        !["completed", "failed", "aborted"].includes(record.status.status)
+      ) return null;
+      const aliases = aliasKeys(record.scope);
+      if (!aliases.some((alias) => terminalBoundaryAliases.has(alias))) return null;
+      if (firstQueuedRecordForAliases(aliases) !== record) return null;
       return promote(record);
     },
     settleNonActiveTerminal(scope: SessionLifecycleRecoveryScope) {

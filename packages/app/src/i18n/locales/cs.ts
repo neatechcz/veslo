@@ -1339,6 +1339,8 @@ export default {
   "session.run_observation_exhausted": "Stav běhu se nepodařilo ověřit. Čekám na obnovení připojení.",
   "session.run_transcript_unavailable": "Běh skončil, ale jeho přepis se nepodařilo obnovit.",
   "session.run_terminalization_pending": "Dokončuji předchozí běh, než budu pokračovat.",
+  "session.run_terminal_handoff_pending": "Ověřuji předchozí runtime, než budu pokračovat.",
+  "session.run_terminal_handoff_unresolved": "Předchozí runtime se nepodařilo bezpečně ověřit. Před pokračováním zkuste ověření znovu.",
   "session.run_model_retry_no_output": "Opakuji model/API, bez vystupu {time}",
   "session.run_model_retry_no_output_with_progress": "Opakuji model/API, bez vystupu {time}; posledni postup {lastProgress}",
   "session.run_model_retry_blocked": "Opakovani model/API zablokovano po {time}",

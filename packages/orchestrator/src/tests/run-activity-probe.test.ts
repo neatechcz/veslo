@@ -395,7 +395,10 @@ describe("run activity probe HTTP behavior", () => {
       },
     });
 
-    await expect(probe(record)).resolves.toEqual({ unreachable: true });
+    await expect(probe(record)).resolves.toEqual({
+      unreachable: true,
+      unavailableReason: "no_current_engine",
+    });
   });
 
   test("idle session status requires a terminal transcript candidate", async () => {
@@ -415,7 +418,12 @@ describe("run activity probe HTTP behavior", () => {
       }) as typeof fetch,
     });
 
-    await expect(probe(record)).resolves.toMatchObject({ active: false, terminalCandidate: true, activityKind: "idle" });
+    await expect(probe(record)).resolves.toMatchObject({
+      active: false,
+      terminalCandidate: true,
+      activityKind: "idle",
+      sessionStatusObserved: "explicit_idle",
+    });
     expect(urls).toEqual(["http://engine/session/status", "http://engine/session/sess-a/message"]);
   });
 
@@ -438,6 +446,7 @@ describe("run activity probe HTTP behavior", () => {
       active: true,
       activityKind: "unknown",
       waitReason: "assistant_message_open",
+      sessionStatusObserved: "busy",
     });
   });
 
@@ -771,7 +780,33 @@ describe("run activity probe HTTP behavior", () => {
       }) as typeof fetch,
     });
 
-    await expect(probe(record)).resolves.toEqual({ unreachable: true });
+    await expect(probe(record)).resolves.toEqual({
+      unreachable: true,
+      unavailableReason: "session_messages_missing",
+      unavailableHttpStatus: 404,
+    });
+  });
+
+  test("non-404 transcript failures retain a distinct unavailable reason", async () => {
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        const url = String(input);
+        return url.endsWith("/session/status")
+          ? Response.json({})
+          : Response.json({ error: "unavailable" }, { status: 503 });
+      }) as typeof fetch,
+    });
+
+    await expect(probe(record)).resolves.toEqual({
+      unreachable: true,
+      unavailableReason: "session_messages_http",
+      unavailableHttpStatus: 503,
+    });
   });
 
   test("non-404 engine failures remain unreachable", async () => {
@@ -784,7 +819,11 @@ describe("run activity probe HTTP behavior", () => {
       fetchImpl: mockFetch(async () => Response.json({ error: "bad gateway" }, { status: 502 })),
     });
 
-    await expect(probe(record)).resolves.toEqual({ unreachable: true });
+    await expect(probe(record)).resolves.toEqual({
+      unreachable: true,
+      unavailableReason: "session_status_http",
+      unavailableHttpStatus: 502,
+    });
   });
 });
 
@@ -977,5 +1016,27 @@ describe("run activity probe with registry reconciliation", () => {
       kind: "prompt",
     })).rejects.toBeInstanceOf(RunAlreadyActiveError);
     expect(store.get("ws-a", "run-still-busy")?.status).toBe("running");
+  });
+
+  test("timeout and transport failures retain different safe unavailable reasons", async () => {
+    const timeoutProbe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({ url: `http://engine${input.targetPath}`, headers: {} }),
+      fetchImpl: mockFetch(async () => { throw new DOMException("timed out", "TimeoutError"); }),
+    });
+    const transportProbe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({ url: `http://engine${input.targetPath}`, headers: {} }),
+      fetchImpl: mockFetch(async () => { throw new TypeError("connection reset"); }),
+    });
+
+    await expect(timeoutProbe(record)).resolves.toEqual({
+      unreachable: true,
+      unavailableReason: "request_timeout",
+    });
+    await expect(transportProbe(record)).resolves.toEqual({
+      unreachable: true,
+      unavailableReason: "request_transport_error",
+    });
   });
 });

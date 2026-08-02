@@ -341,7 +341,7 @@ test("session view props carry unavailable history state and retry action", () =
   assert.match(appSource, /retryUnavailableHistory,/);
 });
 
-test("document runtime status is wired from Veslo server client to settings", () => {
+test("document runtime stays in the runtime workflow and is not exposed through settings", () => {
   assert.match(
     appSource,
     /createSignal<DocumentRuntimeStatusPayload \| null>\(null\)/,
@@ -355,34 +355,10 @@ test("document runtime status is wired from Veslo server client to settings", ()
     appSource,
     /documentRuntimeRepairBusy\(\) \|\| anyActiveRuns\(\)/,
   );
-  assert.match(appSource, /documentRuntimeStatus,/);
-  assert.match(appSource, /documentRuntimeRepairBusy,/);
-  assert.match(appSource, /repairDocumentRuntime,/);
-
-  assert.match(
-    viewPropsSource,
-    /documentRuntimeStatus: documentRuntimeStatus\(\)/,
-  );
-  assert.match(
-    viewPropsSource,
-    /documentRuntimeRepairBusy: documentRuntimeRepairBusy\(\)/,
-  );
-  assert.match(viewPropsSource, /repairDocumentRuntime,/);
-
-  assert.match(
-    dashboardSource,
-    /documentRuntimeStatus: DocumentRuntimeStatusPayload \| null/,
-  );
-  assert.match(
-    dashboardSource,
-    /documentRuntimeStatus=\{props\.documentRuntimeStatus\}/,
-  );
-  assert.match(
-    dashboardSource,
-    /documentRuntimeRepairBusy=\{props\.documentRuntimeRepairBusy\}/,
-  );
-  assert.match(
-    dashboardSource,
-    /repairDocumentRuntime=\{props\.repairDocumentRuntime\}/,
-  );
+  assert.doesNotMatch(viewPropsSource, /documentRuntimeStatus/);
+  assert.doesNotMatch(viewPropsSource, /documentRuntimeRepairBusy/);
+  assert.doesNotMatch(viewPropsSource, /repairDocumentRuntime/);
+  assert.doesNotMatch(dashboardSource, /documentRuntimeStatus/);
+  assert.doesNotMatch(dashboardSource, /documentRuntimeRepairBusy/);
+  assert.doesNotMatch(dashboardSource, /repairDocumentRuntime/);
 });

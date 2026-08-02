@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import type {
+  EngineGenerationLifecycleHooks,
   EngineProcess,
   EngineState,
   EngineSpawnContext,
@@ -43,6 +44,8 @@ export type SharedOpenCodeEngineDeps = {
   now?: () => number;
   log?: (message: string, attributes?: Record<string, unknown>) => void;
   onEngineChange?: (event: SharedOpenCodeEngineEvent, engine: EngineProcess | null) => void;
+  /** Durable generation hooks mirror the pooled engine contract. */
+  generationLifecycle?: EngineGenerationLifecycleHooks;
 };
 
 export type SharedOpenCodeEngineInput = {
@@ -66,6 +69,8 @@ export class SharedOpenCodeEngine {
   private lastEngineState: RuntimeEngineState = "absent";
   private skillView: { workspaceId: string; workspaceRoot: string; revision?: string } | null = null;
   private readonly healthFailureThreshold = 2;
+  /** Bound recent exit dedupe across stop completion and a later child exit event. */
+  private readonly generationExitNotifications = new Map<string, Promise<void>>();
 
   constructor(input: SharedOpenCodeEngineInput) {
     this.runtimeDirectory = input.runtimeDirectory;
@@ -86,6 +91,7 @@ export class SharedOpenCodeEngine {
       this.engine = null;
       engine.state = "crashed";
       this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
+      void this.notifyGenerationAfterExit(engine, "process_not_alive");
       this.emit("crashed", engine);
       return null;
     }
@@ -174,8 +180,89 @@ export class SharedOpenCodeEngine {
     if (!engine) return;
     engine.state = "suspended";
     this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
+    await this.notifyGenerationBeforeStop(engine, "shared_engine_dispose");
     await this.deps.stopChild(engine.child);
+    await this.notifyGenerationAfterExit(engine, "shared_engine_dispose");
     this.emit("suspended", engine);
+  }
+
+  private async notifyGenerationBeforeSpawn(input: {
+    workspaceId: string;
+    engineSlotId: string;
+    engineOwnerId: string;
+    engineStartedAt: number;
+  }): Promise<void> {
+    await this.invokeGenerationHook("beforeSpawn", input, undefined, true);
+  }
+
+  private async notifyGenerationAfterSpawn(engine: EngineProcess): Promise<void> {
+    await this.invokeGenerationHook("afterSpawn", engine, undefined, true);
+  }
+
+  private async notifyGenerationBeforeStop(engine: EngineProcess, reason: string): Promise<void> {
+    await this.invokeGenerationHook("beforeStop", engine, reason);
+  }
+
+  private async notifyGenerationAfterExit(engine: EngineProcess, reason: string): Promise<void> {
+    const existing = this.generationExitNotifications.get(engine.engineOwnerId);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const notification = this.invokeGenerationHook("afterExit", engine, reason);
+    this.generationExitNotifications.set(engine.engineOwnerId, notification);
+    while (this.generationExitNotifications.size > 256) {
+      const oldest = this.generationExitNotifications.keys().next().value;
+      if (!oldest || oldest === engine.engineOwnerId) break;
+      this.generationExitNotifications.delete(oldest);
+    }
+    await notification;
+  }
+
+  private async invokeGenerationHook(
+    hook: keyof EngineGenerationLifecycleHooks,
+    first: EngineProcess | {
+      workspaceId: string;
+      engineSlotId: string;
+      engineOwnerId: string;
+      engineStartedAt: number;
+    },
+    reason?: string,
+    required = false,
+  ): Promise<void> {
+    try {
+      if (hook === "beforeSpawn") {
+        await this.deps.generationLifecycle?.beforeSpawn?.(first as {
+          workspaceId: string;
+          engineSlotId: string;
+          engineOwnerId: string;
+          engineStartedAt: number;
+        });
+      } else if (hook === "afterSpawn") {
+        await this.deps.generationLifecycle?.afterSpawn?.(first as EngineProcess);
+      } else if (hook === "beforeStop") {
+        await this.deps.generationLifecycle?.beforeStop?.(first as EngineProcess, reason ?? "unspecified");
+      } else {
+        await this.deps.generationLifecycle?.afterExit?.(first as EngineProcess, reason ?? "unspecified");
+      }
+    } catch (error) {
+      this.deps.log?.("shared engine generation lifecycle hook failed", {
+        hook,
+        workspaceId: first.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (required) throw error;
+    }
+  }
+
+  private async handleChildExit(engine: EngineProcess): Promise<void> {
+    await this.notifyGenerationAfterExit(engine, "child_exit");
+    if (this.engine?.engineOwnerId !== engine.engineOwnerId) return;
+    this.engine = null;
+    this.startingEngine = null;
+    engine.state = "crashed";
+    this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
+    this.emit("crashed", engine);
   }
 
   private emit(event: SharedOpenCodeEngineEvent, engine: EngineProcess | null): void {
@@ -195,6 +282,13 @@ export class SharedOpenCodeEngine {
     const now = this.deps.now();
     const engineOwnerId = randomUUID();
     let spawned: EngineSpawnResult | null = null;
+
+    await this.notifyGenerationBeforeSpawn({
+      workspaceId: this.workspaceId,
+      engineSlotId: this.workspaceId,
+      engineOwnerId,
+      engineStartedAt: now,
+    });
 
     this.deps.log?.("shared opencode spawn start", {
       reason,
@@ -232,11 +326,13 @@ export class SharedOpenCodeEngine {
       };
       this.startingEngine = engine;
       this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
+      spawned.child.on("exit", () => { void this.handleChildExit(engine); });
 
       await this.deps.waitForHealthy(engine.baseUrl);
       engine.state = "ready";
       engine.lastSuccessfulRunStartedAt = this.deps.now();
       engine.lastActivityAt = engine.lastSuccessfulRunStartedAt;
+      await this.notifyGenerationAfterSpawn(engine);
       this.engine = engine;
       this.startingEngine = null;
       this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
@@ -310,9 +406,11 @@ export class SharedOpenCodeEngine {
       error: error instanceof Error ? error.message : String(error),
     });
     try {
+      await this.notifyGenerationBeforeStop(engine, `shared_engine_unhealthy:${reason}`);
       if (this.deps.isProcessAlive(engine.pid)) {
         await this.deps.stopChild(engine.child);
       }
+      await this.notifyGenerationAfterExit(engine, `shared_engine_unhealthy:${reason}`);
     } catch (stopError) {
       this.deps.log?.("shared opencode unhealthy cleanup failed", {
         reason,

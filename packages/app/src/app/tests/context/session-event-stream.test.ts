@@ -1465,6 +1465,91 @@ test("a replacement stream that fails before its first event cannot spend a seco
   });
 });
 
+test("a stream event after failed reconnect catch-up cannot reset the outage recovery budget", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let reconnectCallback: (() => void) | null = null;
+  let subscriptionCount = 0;
+  const recovered: string[] = [];
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+    reconnectCallback = () => callback();
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    await createRoot(async (dispose) => {
+      try {
+        const streamClient = {
+          ...makeEventClient(async () => {
+            subscriptionCount += 1;
+            if (subscriptionCount === 1) {
+              return {
+                stream: (async function* () {
+                  yield { type: "server.connected" } as OpencodeEvent;
+                })(),
+              };
+            }
+            if (subscriptionCount === 2) {
+              throw new Error("engine_not_running");
+            }
+            return {
+              stream: (async function* () {
+                yield { type: "server.connected" } as OpencodeEvent;
+                throw new Error("engine_not_running");
+              })(),
+            };
+          }),
+          session: {
+            get: async () => {
+              throw new Error("catch-up status unavailable");
+            },
+          },
+        } as any;
+        const routing = {
+          activeWorkspaceId: () => "ws-a",
+          active: () => null,
+          client: (workspaceId?: string) => (workspaceId === "ws-a" ? streamClient : null),
+          entry: () => null,
+          entryIds: () => ["ws-a"],
+          release: () => {},
+        };
+        const { controller, setStore } = makeController({
+          activeWorkspaceId: "ws-a",
+          workspaceSessionIds: new Set(["sess-a"]),
+          routing,
+          isWorkspaceRuntimeReady: () => false,
+          recoverWorkspaceRuntimeForEventStream: async (workspaceId) => {
+            recovered.push(workspaceId);
+            return true;
+          },
+        });
+        setStore("sessionStatus", "ws-a\0sess-a", "running");
+
+        const cleanup = controller.setupSseStream("ws-a", streamClient);
+        await tick(8);
+        const reconnect = reconnectCallback;
+        assert.ok(reconnect);
+        reconnect();
+        await tick(8);
+
+        const replacementCleanup = controller.setupSseStream("ws-a", streamClient);
+        await tick(12);
+
+        assert.deepEqual(recovered, ["ws-a"]);
+        cleanup();
+        replacementCleanup();
+      } finally {
+        dispose();
+      }
+    });
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
 test("duplicate workspace SSE setup replaces the previous stream generation", withSendWorkflowTraceWindow(async (target) => {
   await createRoot(async (dispose) => {
     try {

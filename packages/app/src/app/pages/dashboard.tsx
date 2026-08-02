@@ -90,7 +90,6 @@ import {
 import { openSidebarSessionFromList, type SessionBrowseScope } from "./session-navigation";
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import type { WorkspaceBusyMap } from "../context/workspace-debug";
-import type { DocumentRuntimeStatusPayload } from "../lib/document-runtime";
 import {
   resolveDashboardTabSelectionAction,
   resolveLeftMenuAction,
@@ -378,9 +377,6 @@ export type DashboardViewProps = {
   downloadUpdate: () => void;
   retryUpdateDownload: () => void;
   installUpdateAndRestart: () => void;
-  documentRuntimeStatus: DocumentRuntimeStatusPayload | null;
-  documentRuntimeRepairBusy: boolean;
-  repairDocumentRuntime: () => void;
   anyActiveRuns: boolean;
   engineSource: "path" | "sidecar" | "custom";
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
@@ -1260,9 +1256,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   downloadUpdate={props.downloadUpdate}
                   retryUpdateDownload={props.retryUpdateDownload}
                   installUpdateAndRestart={props.installUpdateAndRestart}
-                  documentRuntimeStatus={props.documentRuntimeStatus}
-                  documentRuntimeRepairBusy={props.documentRuntimeRepairBusy}
-                  repairDocumentRuntime={props.repairDocumentRuntime}
                   anyActiveRuns={props.anyActiveRuns}
                   onResetStartupPreference={props.onResetStartupPreference}
                   openResetModal={props.openResetModal}

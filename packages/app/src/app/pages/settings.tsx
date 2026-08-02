@@ -47,11 +47,6 @@ import { resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import { resolveEffectiveRuntimeSandboxState } from "../lib/runtime-sandbox-state";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
-import {
-  documentRuntimeSettingsRow,
-  redactDocumentRuntimeStatus,
-  type DocumentRuntimeStatusPayload,
-} from "../lib/document-runtime";
 import { recordBootstrapDiagnostic, sanitizeBootstrapDiagnosticPayload } from "../lib/bootstrap-diagnostics";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
@@ -136,9 +131,6 @@ export type SettingsViewProps = {
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   appVersion: string | null;
-  documentRuntimeStatus?: DocumentRuntimeStatusPayload | null;
-  documentRuntimeRepairBusy?: boolean;
-  repairDocumentRuntime?: () => void;
   checkForUpdates: () => void;
   downloadUpdate: () => void;
   retryUpdateDownload: () => void;
@@ -210,40 +202,6 @@ export default function SettingsView(props: SettingsViewProps) {
     const retry = updateRetry();
     if (retry?.kind !== "scheduled") return null;
     return formatUpdateRetryDelay(retry.nextRetryAt - Date.now());
-  };
-  const documentRuntimeRow = createMemo(() => documentRuntimeSettingsRow(props.documentRuntimeStatus));
-  const documentRuntimeToneClass = createMemo(() => {
-    switch (documentRuntimeRow().tone) {
-      case "ready":
-        return "border-green-7/25 bg-green-3/20 text-green-11";
-      case "info":
-        return "border-blue-7/25 bg-blue-3/20 text-blue-11";
-      case "warning":
-        return "border-amber-7/35 bg-amber-3/20 text-amber-11";
-      case "danger":
-        return "border-red-7/35 bg-red-3/20 text-red-11";
-    }
-  });
-  const documentRuntimeActionLabel = createMemo(() => {
-    switch (documentRuntimeRow().action) {
-      case "install":
-        return props.documentRuntimeRepairBusy ? "Installing..." : "Install office package";
-      case "repair":
-        return props.documentRuntimeRepairBusy ? "Repairing..." : "Repair";
-      case "update":
-        return props.documentRuntimeRepairBusy ? "Updating..." : "Update office package";
-      case "wait":
-        return "Waiting";
-      case "none":
-        return null;
-    }
-  });
-  const handleDocumentRuntimeAction = () => {
-    const action = documentRuntimeRow().action;
-    if (action === "install" || action === "repair" || action === "update") {
-      props.repairDocumentRuntime?.();
-      return;
-    }
   };
   const updateDownloadPercent = createMemo<number | null>(() => {
     const total = updateTotalBytes();
@@ -323,15 +281,6 @@ export default function SettingsView(props: SettingsViewProps) {
     if (updateState() === "ready" && props.anyActiveRuns) return true;
     return props.busy;
   });
-  const documentRuntimeActionDisabled = createMemo(() => {
-    const action = documentRuntimeRow().action;
-    if (action === "wait") return true;
-    if (action === "install" || action === "repair" || action === "update") {
-      return !props.repairDocumentRuntime || Boolean(props.documentRuntimeRepairBusy) || props.anyActiveRuns;
-    }
-    return true;
-  });
-
   const generalUpdateTitle = createMemo(() => {
     if (updateState() === "ready" && props.anyActiveRuns) {
       return translate("settings.stop_runs_to_update");
@@ -966,7 +915,6 @@ export default function SettingsView(props: SettingsViewProps) {
     },
     diagnostics: props.vesloServerDiagnostics,
     capabilities: props.vesloServerCapabilities,
-    documentRuntime: redactDocumentRuntimeStatus(props.documentRuntimeStatus),
     runtimeSandbox: runtimeSandboxReport(),
     bootstrap: sanitizeBootstrapDiagnosticPayload({
       serverStatus: props.vesloServerStatus,
@@ -1182,42 +1130,6 @@ export default function SettingsView(props: SettingsViewProps) {
                   </Button>
                 </div>
               </Show>
-            </div>
-
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-              <div class="flex items-center justify-between gap-4">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <div class="text-sm text-gray-12">{__vesloT("ui.literal.document_runtime_z4n8k2", __vesloCurrentLocale())}</div>
-                    <span class={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${documentRuntimeToneClass()}`}>
-                      {documentRuntimeRow().status}
-                    </span>
-                  </div>
-                  <div class="text-xs text-gray-7">{documentRuntimeRow().detail}</div>
-                  <Show when={documentRuntimeRow().progressPercent !== null}>
-                    <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-5">
-                      <div
-                        class="h-full rounded-full bg-blue-9 transition-[width] duration-300"
-                        style={{ width: `${documentRuntimeRow().progressPercent ?? 0}%` }}
-                      />
-                    </div>
-                  </Show>
-                </div>
-                <Show when={documentRuntimeActionLabel()}>
-                  {(label) => (
-                    <Button
-                      variant="outline"
-                      class="text-xs h-8 py-0 px-3 shrink-0"
-                      onClick={handleDocumentRuntimeAction}
-                      disabled={documentRuntimeActionDisabled()}
-                      title={props.anyActiveRuns && ["install", "repair", "update"].includes(documentRuntimeRow().action) ? translate("settings.stop_runs_to_update") : ""}
-                    >
-                      {label()}
-                    </Button>
-                  )}
-                </Show>
-              </div>
-
             </div>
 
             <Show when={showGeneralUpdateControls()}>

@@ -1343,6 +1343,8 @@ export default {
   "session.run_observation_exhausted": "Run status could not be verified. Waiting for reconnection.",
   "session.run_transcript_unavailable": "The run completed, but its transcript could not be recovered.",
   "session.run_terminalization_pending": "Finalizing the previous run before continuing.",
+  "session.run_terminal_handoff_pending": "Verifying the previous runtime before continuing.",
+  "session.run_terminal_handoff_unresolved": "The previous runtime could not be safely verified. Retry verification before continuing.",
   "session.run_model_retry_no_output": "Retrying model/API, no output for {time}",
   "session.run_model_retry_no_output_with_progress": "Retrying model/API, no output for {time}; last progress {lastProgress}",
   "session.run_model_retry_blocked": "Model/API retry blocked after {time}",

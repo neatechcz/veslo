@@ -1463,12 +1463,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
     const runReconnectCatchup = async ({ refreshTranscript }: { refreshTranscript: boolean }) => {
       let outageEpisode = outageEpisodeFor(streamConnectionKey);
-      if (!outageEpisode.active) return;
+      if (!outageEpisode.active) return true;
       if (!outageEpisode.hadRunningSessions) {
         outageEpisode = clearOutageEpisode();
         setOutageEpisode(streamConnectionKey, outageEpisode);
         emitReconnectState("live", { messagesMayBeDelayed: false });
-        return;
+        return true;
       }
 
       const sessionIds = outageEpisode.runningSessionIds.slice();
@@ -1559,7 +1559,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           lastError: truncateErrorField(lastCriticalFailure ?? "Reconnect catch-up incomplete"),
           messagesMayBeDelayed: true,
         });
-        return;
+        return false;
       }
 
       if (refreshTranscript && shouldShowReconnected(outageEpisode)) {
@@ -1578,6 +1578,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       // `live` lets lifecycle recovery resume its terminal transcript path;
       // no success toast is emitted above unless a fenced refresh succeeded.
       emitReconnectState("live", { messagesMayBeDelayed: !refreshTranscript });
+      return true;
     };
 
     const connectSse = async (controller: AbortController) => {
@@ -1644,6 +1645,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         reconnectAttempt = 0;
         recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "connected", { generation });
 
+        const reconnectCatchupCompleted = isReconnection
+          ? await runReconnectCatchup({ refreshTranscript: false })
+          : true;
         if (isReconnection) {
           // Neither the engine API nor its messages endpoint currently exposes
           // an atomic snapshot/cursor fence. Last-Event-ID is forwarded when
@@ -1659,7 +1663,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             hasLastUpstreamEventId: Boolean(lastUpstreamEventId),
             contract: "eventual-reconciliation",
           });
-          await runReconnectCatchup({ refreshTranscript: false });
         } else {
           emitReconnectState("live", { messagesMayBeDelayed: false });
         }
@@ -1674,10 +1677,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             if (event.type === "server.connected") {
               setStreamSseConnected(streamConnectionKey, true);
               // A subscription alone is not proof that its replacement is
-              // live: it can fail before the first server event. Keep the
-              // workspace outage budget across that gap, and clear it only
-              // after the new stream has proven it can deliver events.
-              runtimeRecoveryEpisodesByWorkspace.delete(streamConnectionKey);
+              // live: it can fail before the first server event. Nor is a
+              // stream event enough after a failed catch-up. Keep the outage
+              // recovery budget until both conditions are true.
+              if (reconnectCatchupCompleted) {
+                runtimeRecoveryEpisodesByWorkspace.delete(streamConnectionKey);
+              }
             }
 
             const arrivedAt = Date.now();
