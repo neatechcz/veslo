@@ -96,7 +96,8 @@ use commands::config::{read_opencode_config, write_opencode_config};
 use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
-    runtime_ensure_admission_transport, runtime_prepare_workspace,
+    runtime_control_plane_binding_matches, runtime_ensure_admission_transport,
+    runtime_prepare_workspace, runtime_rebind_control_plane,
 };
 use commands::engine_sse::{engine_sse_subscribe, engine_sse_unsubscribe, EngineSseRegistry};
 use commands::misc::{
@@ -380,6 +381,8 @@ pub fn run() {
             engine_restart,
             runtime_prepare_workspace,
             runtime_ensure_admission_transport,
+            runtime_control_plane_binding_matches,
+            runtime_rebind_control_plane,
             access_proof_ai_read,
             access_proof_ai_write,
             access_proof_ai_clear,

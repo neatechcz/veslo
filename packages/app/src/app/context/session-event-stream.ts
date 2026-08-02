@@ -915,7 +915,20 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               recoveryAvailable,
             });
             if (sourceWsId && deps.recoverWorkspaceRuntimeForEventStream) {
-              deps.routing.release(sourceWsId);
+              const runtimeRecoveryKey = sseConnectionKey(sourceWsId);
+              const existingEpisode = runtimeRecoveryEpisodesByWorkspace.get(runtimeRecoveryKey);
+              if (existingEpisode?.attemptedFreshRuntimeRecovery) {
+                deps.recordSessionStatusTrace("sse-session-error-local-runtime-recovery-budget-exhausted", {
+                  sessionId: sessionID || null,
+                  sourceWorkspaceId: sourceWsId,
+                });
+                return;
+              }
+              const episode: RuntimeRecoveryEpisode = {
+                attemptedFreshRuntimeRecovery: true,
+                recovery: null,
+              };
+              runtimeRecoveryEpisodesByWorkspace.set(runtimeRecoveryKey, episode);
               deps.sessionWarn("session.error:recovering-runtime-route", {
                 workspaceId: sourceWsId,
                 sessionID: sessionID || null,
@@ -927,12 +940,20 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
                 error: "local-veslo-server-invalid-bearer",
               });
               try {
-                const recovered = await deps.recoverWorkspaceRuntimeForEventStream(sourceWsId);
+                episode.recovery = Promise.resolve(
+                  deps.recoverWorkspaceRuntimeForEventStream(sourceWsId),
+                ).then(Boolean);
+                const recovered = await episode.recovery;
                 deps.recordSessionStatusTrace("sse-session-error-local-runtime-recovery-result", {
                   sessionId: sessionID || null,
                   sourceWorkspaceId: sourceWsId,
                   recovered: Boolean(recovered),
                 });
+                // The server-owned rebind needs the current route to remain a
+                // valid projection while it holds its durable operation lease.
+                // Only discard it after the rebind has actually succeeded, so
+                // the replacement stream resolves against the new descriptor.
+                if (recovered) deps.routing.release(sourceWsId);
               } catch (recoveryError) {
                 deps.sessionWarn("session.error:runtime-route-recovery-failed", {
                   workspaceId: sourceWsId,
@@ -941,6 +962,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
                     recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
                   ),
                 });
+              } finally {
+                episode.recovery = null;
               }
             }
           }
@@ -1619,7 +1642,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const isReconnection = wasConnected || outageEpisodeFor(streamConnectionKey).active;
         wasConnected = true;
         reconnectAttempt = 0;
-        runtimeRecoveryEpisodesByWorkspace.delete(streamConnectionKey);
         recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "connected", { generation });
 
         if (isReconnection) {
@@ -1651,6 +1673,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             lastUpstreamEventId = nextUpstreamEventCursor(lastUpstreamEventId, event);
             if (event.type === "server.connected") {
               setStreamSseConnected(streamConnectionKey, true);
+              // A subscription alone is not proof that its replacement is
+              // live: it can fail before the first server event. Keep the
+              // workspace outage budget across that gap, and clear it only
+              // after the new stream has proven it can deliver events.
+              runtimeRecoveryEpisodesByWorkspace.delete(streamConnectionKey);
             }
 
             const arrivedAt = Date.now();
@@ -1734,7 +1761,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             return;
           }
           setStreamSseConnected(streamConnectionKey, false);
-          deps.routing.release(sourceWsId);
           emitReconnectState("runtime-recovering", {
             lastError: truncateErrorField(message),
             messagesMayBeDelayed: true,
@@ -1768,6 +1794,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
                 lastError: truncateErrorField(message),
                 messagesMayBeDelayed: true,
               });
+            } else {
+              // Keep the routed client alive until the server has settled the
+              // recovery operation. Releasing it beforehand can cause the UI
+              // to create a second runtime route while the first recovery is
+              // still authoritative.
+              deps.routing.release(sourceWsId);
             }
           } catch (recoveryError) {
             emitReconnectState("degraded", {

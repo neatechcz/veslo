@@ -2,6 +2,7 @@ import { createSignal, onCleanup, type Accessor } from "solid-js";
 
 import {
   submitFeedbackReport,
+  type FeedbackCaptureResult,
   type FeedbackDiagnosticAttachment,
   type FeedbackRuntimeContext,
   type SubmitFeedbackReportResult,
@@ -36,6 +37,11 @@ export type FeedbackSubmitInput = {
   description: string;
   attachDiagnostics?: boolean;
   context: FeedbackRuntimeContext;
+  submissionId: string;
+  diagnosticCaptureId?: string;
+  onDiagnosticSnapshotCreated?: (captureId: string) => void;
+  screenshot?: FeedbackCaptureResult;
+  onFeedbackRequestPrepared?: (screenshot: FeedbackCaptureResult) => void;
 };
 
 export type FeedbackWorkflowDeps = {
@@ -46,6 +52,7 @@ export type FeedbackWorkflowDeps = {
   stringifyError: (error: unknown) => string;
   readDiagnosticCaptureStatus?: () => Promise<UserDiagnosticCaptureStatus>;
   diagnosticStatusPollMs?: number;
+  createSubmissionId?: () => string;
 };
 
 export type FeedbackWorkflow = {
@@ -129,8 +136,16 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
   const buildContext = deps.buildContext ?? (() => buildFeedbackRuntimeContext(requireRuntimeContext(deps)));
   const readDiagnosticCaptureStatus = deps.readDiagnosticCaptureStatus ?? userDiagnosticCaptureStatus;
   const diagnosticStatusPollMs = deps.diagnosticStatusPollMs ?? DIAGNOSTIC_STATUS_POLL_MS;
+  const createSubmissionId = deps.createSubmissionId ?? (() => globalThis.crypto.randomUUID());
   let diagnosticStatusPoll: ReturnType<typeof setTimeout> | undefined;
   let diagnosticStatusPollGeneration = 0;
+  let pendingSubmission: {
+    fingerprint: string;
+    submissionId: string;
+    diagnosticCaptureId: string | null;
+    context: FeedbackRuntimeContext;
+    screenshot: FeedbackCaptureResult | null;
+  } | null = null;
 
   const feedbackDiagnosticUploadPending = () => {
     const attachment = feedbackDiagnosticAttachment();
@@ -177,21 +192,22 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
     void poll();
   };
 
-  const clearFeedbackSubmitState = () => {
+  const clearFeedbackSubmitState = ({ clearPendingSubmission = false }: { clearPendingSubmission?: boolean } = {}) => {
     stopDiagnosticStatusPoll();
     setFeedbackSubmitError(null);
     setFeedbackSubmitSuccessFeedbackId(null);
     setFeedbackDiagnosticAttachment(null);
+    if (clearPendingSubmission) pendingSubmission = null;
   };
 
   const openFeedbackModal = () => {
-    clearFeedbackSubmitState();
+    clearFeedbackSubmitState({ clearPendingSubmission: true });
     setFeedbackModalOpen(true);
   };
 
   const closeFeedbackModal = () => {
     if (feedbackDiagnosticUploadPending()) return;
-    clearFeedbackSubmitState();
+    clearFeedbackSubmitState({ clearPendingSubmission: true });
     setFeedbackModalOpen(false);
   };
 
@@ -199,6 +215,21 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
     if (feedbackSubmitting()) return;
 
     clearFeedbackSubmitState();
+    const fingerprint = JSON.stringify({
+      title: values.title.trim(),
+      description: values.description.trim(),
+      attachDiagnostics: values.attachDiagnostics ?? null,
+    });
+    if (pendingSubmission?.fingerprint !== fingerprint) {
+      pendingSubmission = {
+        fingerprint,
+        submissionId: createSubmissionId(),
+        diagnosticCaptureId: null,
+        context: buildContext(),
+        screenshot: null,
+      };
+    }
+    const submission = pendingSubmission;
     setFeedbackSubmitting(true);
     try {
       const result = await submitReport({
@@ -207,7 +238,22 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
         ...(values.attachDiagnostics === undefined
           ? {}
           : { attachDiagnostics: values.attachDiagnostics }),
-        context: buildContext(),
+        context: submission.context,
+        submissionId: submission.submissionId,
+        ...(submission.diagnosticCaptureId
+          ? { diagnosticCaptureId: submission.diagnosticCaptureId }
+          : {}),
+        ...(submission.screenshot ? { screenshot: submission.screenshot } : {}),
+        onDiagnosticSnapshotCreated: (captureId) => {
+          if (pendingSubmission?.submissionId === submission.submissionId) {
+            pendingSubmission = { ...pendingSubmission, diagnosticCaptureId: captureId };
+          }
+        },
+        onFeedbackRequestPrepared: (screenshot) => {
+          if (pendingSubmission?.submissionId === submission.submissionId) {
+            pendingSubmission = { ...pendingSubmission, screenshot };
+          }
+        },
       });
 
       setFeedbackSubmitSuccessFeedbackId(result.feedbackId);

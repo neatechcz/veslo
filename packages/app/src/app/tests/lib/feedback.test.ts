@@ -111,6 +111,7 @@ test("submitFeedbackReport posts authenticated feedback payload with captured sc
       title: "Sidebar stopped responding",
       description: "The left sidebar stopped reacting after switching sessions.",
       context: TEST_CONTEXT,
+      submissionId: "00000000-0000-4000-8000-000000000099",
       captureSurface: async (): Promise<FeedbackCaptureResult> => ({
         status: "captured",
         dataUrl: "data:image/jpeg;base64,abc123",
@@ -152,6 +153,7 @@ test("submitFeedbackReport posts authenticated feedback payload with captured sc
       screenshotDataUrl: "data:image/jpeg;base64,abc123",
       screenshotMimeType: "image/jpeg",
       diagnosticCaptureId: null,
+      submissionId: "00000000-0000-4000-8000-000000000099",
     });
     assert.deepEqual(result, {
       feedbackId: "fb_123",

@@ -91,6 +91,7 @@ export type SendRuntimePreparationResult = {
     | "runtime-health-ok"
     | "runtime-recovery-ok"
     | "runtime-recovery-not-started"
+    | "runtime-recovery-not-ready"
     | "runtime-recovery-error"
     | "managed-ai-bootstrap-blocked";
 };
@@ -106,6 +107,14 @@ export type SendRuntimeReadinessDeps<
   workspaces: () => SendRuntimeWorkspaceInfo[];
   routedClient: (workspaceId?: string) => Client | null | undefined;
   releaseWorkspaceRoute?: (workspaceId: string) => void;
+  requestServerRuntimeRecovery?: (input: {
+    workspaceId: string;
+    reason:
+      | "invalid_bearer_token"
+      | "engine_unavailable"
+      | "workspace_route_stale"
+      | "transport_unavailable";
+  }) => Promise<boolean>;
   ensureEngineForWorkspace: (
     workspaceId?: string,
     options?: {
@@ -488,6 +497,11 @@ export function createSendRuntimeReadiness<
       };
     }
 
+    let recoveryReason:
+      | "invalid_bearer_token"
+      | "engine_unavailable"
+      | "workspace_route_stale"
+      | "transport_unavailable" = "engine_unavailable";
     const currentClient = targetWorkspaceId
       ? deps.routedClient(targetWorkspaceId)
       : deps.routedClient();
@@ -579,6 +593,17 @@ export function createSendRuntimeReadiness<
           error,
           deps.safeStringify,
         );
+        const recoveryCategory = classifyLocalRuntimeRecoveryError(
+          error,
+          deps.safeStringify,
+        );
+        recoveryReason = recoveryCategory === "stale_authorization"
+          ? "invalid_bearer_token"
+          : recoveryCategory === "workspace_route_stale"
+            ? "workspace_route_stale"
+            : recoveryCategory === "transport_unavailable"
+              ? "transport_unavailable"
+              : "engine_unavailable";
         deps.recordSendTrace(`${reason}:runtime-health-error`, {
           ...(tracePayload ?? {}),
           message,
@@ -639,7 +664,13 @@ export function createSendRuntimeReadiness<
     deps.recordSendTrace(`${reason}:runtime-recovery-start`, tracePayload);
     const recoveryWorkspaceId =
       targetWorkspaceId || deps.activeWorkspaceId().trim();
-    if (recoveryWorkspaceId) {
+    // A server-owned operation retains the current route while it checks or
+    // repairs the runtime. The route is a client projection, not evidence that
+    // a reload is safe; eagerly deleting it made a successful guarded reload
+    // look like a failure because this layer had no authority to rebuild it.
+    // The optional legacy path is retained only for callers that have not yet
+    // supplied the server operation owner.
+    if (recoveryWorkspaceId && !deps.requestServerRuntimeRecovery) {
       deps.releaseWorkspaceRoute?.(recoveryWorkspaceId);
       deps.recordSendTrace(`${reason}:runtime-route-released`, {
         ...(tracePayload ?? {}),
@@ -653,89 +684,28 @@ export function createSendRuntimeReadiness<
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     try {
-      const started = await deps.sendTraceStep(
-        `${reason}:runtime-recovery-ensure-engine`,
-        () =>
-          deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
-            reason: `${reason}-runtime-recovery`,
-            loadSessions: false,
-            forceFreshRuntime: true,
-            skipManagedAiConfig: true,
-            skipServingViewRefresh: true,
-          }),
-        {
-          ...(tracePayload ?? {}),
-          activeWorkspaceId: deps.activeWorkspaceId().trim(),
-          activeWorkspaceRoot: deps.activeWorkspaceRoot().trim(),
-          targetWorkspaceId: targetWorkspaceId || null,
-        },
-      );
+      const requested = recoveryWorkspaceId
+        ? await deps.sendTraceStep(
+          `${reason}:runtime-recovery-server-operation`,
+          () => deps.requestServerRuntimeRecovery?.({
+            workspaceId: recoveryWorkspaceId,
+            reason: recoveryReason,
+          }) ?? Promise.resolve(false),
+          {
+            ...(tracePayload ?? {}),
+            targetWorkspaceId: recoveryWorkspaceId,
+          },
+        )
+        : false;
       const recoveredClient = targetWorkspaceId
         ? deps.routedClient(targetWorkspaceId)
         : deps.routedClient();
-      if (!started || !recoveredClient) {
-        let retryStarted: boolean | null = null;
-        let retryHasClient: boolean | null = null;
-        if (!started && !recoveredClient) {
-          deps.recordSendTrace(
-            `${reason}:runtime-recovery-first-attempt-not-started`,
-            {
-              ...(tracePayload ?? {}),
-              started,
-              hasClient: false,
-              targetWorkspaceId: targetWorkspaceId || null,
-            },
-          );
-          await new Promise((resolve) => setTimeout(resolve, 250));
-          retryStarted = await deps.sendTraceStep(
-            `${reason}:runtime-recovery-ensure-engine-retry`,
-            () =>
-              deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
-                reason: `${reason}-runtime-recovery-retry`,
-                loadSessions: false,
-                forceFreshRuntime: true,
-                skipManagedAiConfig: true,
-                skipServingViewRefresh: true,
-              }),
-            {
-              ...(tracePayload ?? {}),
-              activeWorkspaceId: deps.activeWorkspaceId().trim(),
-              activeWorkspaceRoot: deps.activeWorkspaceRoot().trim(),
-              targetWorkspaceId: targetWorkspaceId || null,
-            },
-          );
-          const retryClient = targetWorkspaceId
-            ? deps.routedClient(targetWorkspaceId)
-            : deps.routedClient();
-          retryHasClient = Boolean(retryClient);
-          if (retryStarted && retryClient) {
-            deps.recordSendTrace(`${reason}:runtime-recovery-ok`, {
-              ...(tracePayload ?? {}),
-              hasClient: true,
-              targetWorkspaceId: targetWorkspaceId || null,
-              retryAttempted: true,
-            });
-            if (preflight) preflight.runtimeHealthOk = true;
-            if (preflight) preflight.forceRecovery = false;
-            return {
-              ok: true,
-              runtimeReady: true,
-              managedAiReady: false,
-              workspaceId: resultWorkspaceId,
-              activeWorkspace: targetIsActiveWorkspace,
-              recoveryAttempted: true,
-              reason: "runtime-recovery-ok",
-            };
-          }
-        }
+      if (!requested || !recoveredClient) {
         deps.recordSendTrace(`${reason}:runtime-recovery-not-started`, {
           ...(tracePayload ?? {}),
-          started,
+          requested,
           hasClient: Boolean(recoveredClient),
           targetWorkspaceId: targetWorkspaceId || null,
-          retryAttempted: !started && !recoveredClient,
-          retryStarted,
-          retryHasClient,
         });
         return {
           ok: false,
@@ -745,6 +715,51 @@ export function createSendRuntimeReadiness<
           activeWorkspace: targetIsActiveWorkspace,
           recoveryAttempted: true,
           reason: "runtime-recovery-not-started",
+        };
+      }
+      try {
+        await deps.sendTraceStep(
+          `${reason}:runtime-recovery-health`,
+          async () => {
+            await withLocalRuntimeHealthTimeout(
+              recoveredClient.global
+                .health()
+                .then((result) =>
+                  assertLocalRuntimeHealthOk(result, deps.safeStringify),
+                ),
+              3_000,
+            );
+            const engineInfo = await deps.engineInfo(
+              resultWorkspaceId ?? undefined,
+              preflight?.targetWorkspace?.workspaceRoot ??
+                targetWorkspace?.path ??
+                deps.activeWorkspaceRoot(),
+            );
+            if (!isReadyRuntimeEngine(engineInfo)) {
+              throw new Error(
+                `local runtime chain is not ready after recovery: engineState=${engineInfo.engineState ?? "unknown"} running=${Boolean(engineInfo.running)}`,
+              );
+            }
+          },
+          {
+            ...(tracePayload ?? {}),
+            targetWorkspaceId: targetWorkspaceId || null,
+          },
+        );
+      } catch (error) {
+        deps.recordSendTrace(`${reason}:runtime-recovery-not-ready`, {
+          ...(tracePayload ?? {}),
+          targetWorkspaceId: targetWorkspaceId || null,
+          message: errorMessage(error),
+        });
+        return {
+          ok: false,
+          runtimeReady: false,
+          managedAiReady: false,
+          workspaceId: resultWorkspaceId,
+          activeWorkspace: targetIsActiveWorkspace,
+          recoveryAttempted: true,
+          reason: "runtime-recovery-not-ready",
         };
       }
       deps.recordSendTrace(`${reason}:runtime-recovery-ok`, {

@@ -41,6 +41,7 @@ function createHarness(overrides: HarnessOverrides = {}) {
   const engineReadyValues: boolean[] = [];
   const sseConnectedValues: boolean[] = [];
   const ensureEngineCalls: Array<string | undefined> = [];
+  const runtimeRecoveryCalls: Array<{ workspaceId: string; reason: string }> = [];
   const routeReleaseCalls: string[] = [];
   const connectCalls: Array<{
     baseUrl: string;
@@ -56,6 +57,19 @@ function createHarness(overrides: HarnessOverrides = {}) {
   const clients = new Map<string, TestClient | null>();
   const activeClient = createClient("active");
   clients.set("active", activeClient);
+  const ensureEngineForWorkspace = overrides.ensureEngineForWorkspace ??
+    (async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      return true;
+    });
+  const requestServerRuntimeRecovery = overrides.requestServerRuntimeRecovery ??
+    (async ({ workspaceId, reason }: { workspaceId: string; reason: string }) => {
+      runtimeRecoveryCalls.push({ workspaceId, reason });
+      return ensureEngineForWorkspace(workspaceId, {
+        reason: "test-server-runtime-operation",
+        loadSessions: false,
+      });
+    });
 
   const deps: SendRuntimeReadinessDeps<TestClient> = {
     isTauriRuntime: () => true,
@@ -88,10 +102,8 @@ function createHarness(overrides: HarnessOverrides = {}) {
       routeReleaseCalls.push(workspaceId);
       clients.delete(workspaceId);
     },
-    ensureEngineForWorkspace: async (workspaceId?: string) => {
-      ensureEngineCalls.push(workspaceId);
-      return true;
-    },
+    requestServerRuntimeRecovery,
+    ensureEngineForWorkspace,
     connectToServer: async (baseUrl, directory, metadata, auth, options) => {
       connectCalls.push({ baseUrl, directory, metadata, auth, options });
       return true;
@@ -129,6 +141,7 @@ function createHarness(overrides: HarnessOverrides = {}) {
     engineReadyValues,
     sseConnectedValues,
     ensureEngineCalls,
+    runtimeRecoveryCalls,
     routeReleaseCalls,
     connectCalls,
     engineInfoCalls,
@@ -440,7 +453,7 @@ test("send runtime readiness owner blocks managed AI bootstrap when runtime reco
       reason: "runtime-recovery-not-started",
     },
   );
-  assert.deepEqual(ensureEngineCalls, ["target", "target", "target"]);
+  assert.deepEqual(ensureEngineCalls, ["target", "target"]);
   assert.deepEqual(managedConfigChecks, []);
   assert.equal(preflight.enginePrepared, undefined);
   assert.equal(preflight.managedAiReady, undefined);
@@ -451,7 +464,7 @@ test("send runtime readiness owner blocks managed AI bootstrap when runtime reco
   );
 });
 
-test("send runtime readiness retries foreground recovery after a shared warmup fails without a route", async () => {
+test("send runtime readiness does not retry a failed server runtime operation", async () => {
   const { readiness, clients, events, ensureEngineCalls } = createHarness({
     ensureEngineForWorkspace: async (workspaceId?: string) => {
       ensureEngineCalls.push(workspaceId);
@@ -473,23 +486,11 @@ test("send runtime readiness retries foreground recovery after a shared warmup f
 
   assert.equal(
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
-    true,
+    false,
   );
-  assert.deepEqual(ensureEngineCalls, ["target", "target", "target"]);
-  assert.equal(preflight.runtimeHealthOk, true);
-  assert.ok(
-    events.some(
-      (entry) =>
-        entry.event === "sendPrompt:runtime-recovery-first-attempt-not-started",
-    ),
-  );
-  assert.ok(
-    events.some(
-      (entry) =>
-        entry.event === "sendPrompt:runtime-recovery-ok" &&
-        entry.payload?.retryAttempted === true,
-    ),
-  );
+  assert.deepEqual(ensureEngineCalls, ["target", "target"]);
+  assert.equal(preflight.runtimeHealthOk, false);
+  assert.equal(events.some((entry) => entry.event.includes("ensure-engine-retry")), false);
 });
 
 test("send runtime readiness owner blocks managed AI when runtime routing config is unusable", async () => {
@@ -598,6 +599,7 @@ test("local runtime readiness marks the active workspace engine ready after a su
 
 test("local runtime readiness recovers when global health passes but engine info is not ready", async () => {
   const healthCalls: string[] = [];
+  let engineInfoAttempts = 0;
   const {
     readiness,
     clients,
@@ -608,9 +610,10 @@ test("local runtime readiness recovers when global health passes but engine info
   } = createHarness({
     engineInfo: async (workspaceId?: string, workspaceRoot?: string) => {
       engineInfoCalls.push({ workspaceId, workspaceRoot });
+      engineInfoAttempts += 1;
       return {
-        running: false,
-        engineState: "failed",
+        running: engineInfoAttempts > 1,
+        engineState: engineInfoAttempts > 1 ? "ready" : "failed",
         baseUrl: "http://127.0.0.1:53553",
       };
     },
@@ -642,8 +645,9 @@ test("local runtime readiness recovers when global health passes but engine info
   assert.deepEqual(healthCalls, ["target"]);
   assert.deepEqual(engineInfoCalls, [
     { workspaceId: "target", workspaceRoot: "/repo/target" },
+    { workspaceId: "target", workspaceRoot: "/repo/target" },
   ]);
-  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(routeReleaseCalls, []);
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.ok(
     events.some((entry) => entry.event === "sendPrompt:runtime-health-error"),
@@ -749,7 +753,7 @@ test("local runtime readiness joins cold bootstrap before forcing recovery for a
   );
 });
 
-test("local runtime readiness restarts the target workspace engine for dead endpoints", async () => {
+test("local runtime readiness recovers a dead endpoint without a fresh-runtime retry", async () => {
   const {
     readiness,
     clients,
@@ -786,7 +790,7 @@ test("local runtime readiness restarts the target workspace engine for dead endp
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
     true,
   );
-  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(routeReleaseCalls, []);
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, true);
   assert.deepEqual(engineReadyValues, []);
@@ -797,6 +801,109 @@ test("local runtime readiness restarts the target workspace engine for dead endp
   assert.ok(
     events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"),
   );
+});
+
+test("local runtime readiness delegates one failed health recovery to the server operation owner", async () => {
+  const operations: Array<{ workspaceId: string; reason: string }> = [];
+  let clients!: Map<string, TestClient | null>;
+  const harness = createHarness({
+    requestServerRuntimeRecovery: async (input) => {
+      operations.push(input);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients = harness.clients;
+  clients.set("target", createClient("target-stale", async () => {
+    throw new Error("ECONNREFUSED");
+  }));
+
+  const preflight = {
+    traceId: "trace-server-operation-recovery",
+    targetWorkspace: {
+      workspaceId: "target",
+      workspaceRoot: "/repo/target",
+      directory: "/repo/target",
+    },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(
+    await harness.readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
+    true,
+  );
+  assert.deepEqual(operations, [{ workspaceId: "target", reason: "transport_unavailable" }]);
+  assert.deepEqual(harness.ensureEngineCalls, []);
+  assert.deepEqual(harness.routeReleaseCalls, []);
+  assert.equal(
+    harness.events.some((entry) => entry.event.includes("ensure-engine-retry")),
+    false,
+  );
+});
+
+test("local runtime readiness delegates an invalid bearer to a control-plane rebind without discarding its route", async () => {
+  const operations: Array<{ workspaceId: string; reason: string }> = [];
+  let rebound = false;
+  const harness = createHarness({
+    requestServerRuntimeRecovery: async (input) => {
+      operations.push(input);
+      rebound = true;
+      return true;
+    },
+  });
+  harness.clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      if (rebound) return {};
+      throw new VesloServerError(401, "invalid_bearer_token", "Invalid bearer token");
+    }),
+  );
+
+  assert.equal(
+    await harness.readiness.ensureLocalRuntimeReachableForSend("sendPrompt", {
+      traceId: "trace-invalid-bearer-rebind",
+      targetWorkspace: {
+        workspaceId: "target",
+        workspaceRoot: "/repo/target",
+        directory: "/repo/target",
+      },
+      runtimeHealthOk: false,
+    }),
+    true,
+  );
+  assert.deepEqual(operations, [{ workspaceId: "target", reason: "invalid_bearer_token" }]);
+  assert.deepEqual(harness.routeReleaseCalls, []);
+  assert.deepEqual(harness.ensureEngineCalls, []);
+});
+
+test("local runtime readiness does not treat an accepted server operation as healthy without a fresh probe", async () => {
+  const harness = createHarness({
+    requestServerRuntimeRecovery: async () => true,
+  });
+  harness.clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw new Error("ECONNREFUSED");
+    }),
+  );
+
+  const result = await harness.readiness.ensureLocalRuntimeReachableForSendResult(
+    "sendPrompt",
+    {
+      traceId: "trace-server-operation-not-ready",
+      targetWorkspace: {
+        workspaceId: "target",
+        workspaceRoot: "/repo/target",
+        directory: "/repo/target",
+      },
+      runtimeHealthOk: false,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "runtime-recovery-not-ready");
+  assert.deepEqual(harness.ensureEngineCalls, []);
+  assert.deepEqual(harness.routeReleaseCalls, []);
 });
 
 test("local runtime readiness recovers when health throws engine_not_running", async () => {
@@ -836,9 +943,9 @@ test("local runtime readiness recovers when health throws engine_not_running", a
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
     true,
   );
-  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(routeReleaseCalls, []);
   assert.deepEqual(ensureEngineCalls, ["target"]);
-  assert.deepEqual(order, ["release:target", "ensure:target"]);
+  assert.deepEqual(order, ["ensure:target"]);
   assert.equal(preflight.runtimeHealthOk, true);
   assert.ok(
     events.some((entry) => entry.event === "sendPrompt:runtime-recovery-start"),
@@ -878,13 +985,13 @@ test("local runtime readiness does not continue when ensure fails even if a rout
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
     false,
   );
-  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(routeReleaseCalls, []);
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, false);
   const notStarted = events.find(
     (entry) => entry.event === "sendPrompt:runtime-recovery-not-started",
   );
-  assert.equal(notStarted?.payload?.started, false);
+  assert.equal(notStarted?.payload?.requested, false);
   assert.equal(notStarted?.payload?.hasClient, true);
 });
 
@@ -919,7 +1026,7 @@ test("local runtime readiness recovers when health resolves an SDK engine_not_ru
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
     true,
   );
-  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(routeReleaseCalls, []);
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, true);
 });
@@ -962,9 +1069,9 @@ test("local runtime readiness recovers when health reports workspace not found",
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
     true,
   );
-  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(routeReleaseCalls, []);
   assert.deepEqual(ensureEngineCalls, ["target"]);
-  assert.deepEqual(order, ["release:target", "ensure:target"]);
+  assert.deepEqual(order, ["ensure:target"]);
   assert.equal(preflight.runtimeHealthOk, true);
   const healthError = events.find(
     (entry) => entry.event === "sendPrompt:runtime-health-error",
@@ -1003,7 +1110,7 @@ test("local runtime readiness recovers by default when routed health fails with 
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
     true,
   );
-  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(routeReleaseCalls, []);
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, true);
   const healthError = events.find(
@@ -1042,15 +1149,13 @@ test("local runtime readiness blocks when workspace-not-found recovery cannot re
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
     false,
   );
-  assert.deepEqual(routeReleaseCalls, ["target"]);
-  assert.deepEqual(ensureEngineCalls, ["target", "target"]);
+  assert.deepEqual(routeReleaseCalls, []);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, false);
   const notStarted = events.find(
     (entry) => entry.event === "sendPrompt:runtime-recovery-not-started",
   );
-  assert.equal(notStarted?.payload?.retryAttempted, true);
-  assert.equal(notStarted?.payload?.retryStarted, false);
-  assert.equal(notStarted?.payload?.retryHasClient, false);
+  assert.equal(notStarted?.payload?.requested, false);
 });
 
 test("local runtime readiness reflects route state only for the active workspace", async () => {
@@ -1083,7 +1188,7 @@ test("local runtime readiness reflects route state only for the active workspace
     await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight),
     true,
   );
-  assert.deepEqual(ensureEngineCalls, [undefined]);
+  assert.deepEqual(ensureEngineCalls, ["active"]);
   assert.equal(preflight.runtimeHealthOk, true);
   assert.deepEqual(engineReadyValues, [false]);
   assert.deepEqual(sseConnectedValues, [false]);
@@ -1123,7 +1228,7 @@ test("local runtime readiness returns a typed preparation result after successfu
     },
   );
 
-  assert.deepEqual(ensureEngineCalls, [undefined]);
+  assert.deepEqual(ensureEngineCalls, ["active"]);
 });
 
 test("local runtime readiness classifies circular non-Error endpoint failures through the injected serializer", async () => {

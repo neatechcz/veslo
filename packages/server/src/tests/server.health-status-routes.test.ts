@@ -101,7 +101,27 @@ describe("Health and status routes", () => {
     const payload = await resolveRuntimeChainPayload(config(), workspace, fetchSequence([]));
 
     expect(payload.status).toBe("server_running");
+    expect(payload.lifecycle.configured).toBe(false);
     expect(payload.orchestrator.configured).toBe(false);
+  });
+
+  test("runtimeChain reports lifecycle configuration only when daemon URL and token are both present", async () => {
+    const withoutToken = await resolveRuntimeChainPayload(
+      config({ orchestratorDaemonUrl: "http://127.0.0.1:52008" }),
+      workspace,
+      fetchSequence([]),
+    );
+    const configured = await resolveRuntimeChainPayload(
+      config({
+        orchestratorDaemonUrl: "http://127.0.0.1:52008",
+        orchestratorLifecycleToken: "lifecycle-token",
+      }),
+      workspace,
+      fetchSequence([]),
+    );
+
+    expect(withoutToken.lifecycle.configured).toBe(false);
+    expect(configured.lifecycle.configured).toBe(true);
   });
 
   test("runtimeChain reports orchestrator_unavailable when daemon probe fails", async () => {

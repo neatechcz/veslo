@@ -17,6 +17,8 @@ describe("Conversation and session routes", () => {
       ["POST", "/workspace/demo/conversations/import", "client"],
       ["GET", "/workspace/demo/conversations/conv-1/transcript", "client"],
       ["POST", "/workspace/demo/conversations/conv-1/runs", "client"],
+      ["GET", "/workspace/demo/conversations/conv-1/runs/run-1/delivery", "client"],
+      ["POST", "/workspace/demo/conversations/conv-1/runs/run-1/delivery/app-report", "client"],
       ["GET", "/workspace/demo/conversations/conv-1/queue", "client"],
       ["GET", "/workspace/demo/conversations/conv-1/queue/queue-1", "client"],
       ["POST", "/workspace/demo/conversations/conv-1/abort", "client"],

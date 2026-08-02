@@ -21,6 +21,11 @@ export type ServerOwnedSubmitTransportTarget =
 
 type TransportTrace = (event: string, payload: Record<string, unknown>) => void;
 
+export type ControlPlaneBindingStatus = {
+  matches: boolean;
+  reason: string;
+};
+
 export function classifyAdmissionTransportError(error: unknown): string {
   const message =
     error instanceof Error
@@ -58,8 +63,10 @@ export type EnsureServerOwnedSubmitTransportInput = {
   }) => Promise<unknown>;
   ensureLocalVesloServerRunning: (input: {
     requireRuntimeChainReady: false;
-    forceRestart: true;
+    forceRestart?: false;
   }) => Promise<boolean>;
+  inspectControlPlaneBinding: (workspaceId: string) => Promise<ControlPlaneBindingStatus>;
+  rebindControlPlane: (workspaceId: string) => Promise<boolean>;
   recordTrace?: TransportTrace;
 };
 
@@ -95,9 +102,10 @@ export function resolveServerOwnedSubmitTransportTarget(input: {
 
 /**
  * A server-owned first submit needs the desktop admission daemon and a Veslo
- * server configured with that daemon's current lifecycle token. Recreate the
- * local server after daemon admission so its run registration and the proxy
- * share one lifecycle owner generation.
+ * server configured with that daemon's current lifecycle token. The server
+ * itself decides whether a missing binding may be repaired: the app may only
+ * ask for the server-owned control-plane operation after it has confirmed that
+ * the daemon exists.
  */
 export async function ensureServerOwnedSubmitTransport(
   input: EnsureServerOwnedSubmitTransportInput,
@@ -139,10 +147,49 @@ export async function ensureServerOwnedSubmitTransport(
     readiness: "admission-transport-ready",
   });
   try {
-    const ready = await input.ensureLocalVesloServerRunning({
+    let ready = await input.ensureLocalVesloServerRunning({
       requireRuntimeChainReady: false,
-      forceRestart: true,
     });
+    if (!ready) {
+      trace("runtime-readiness:admission-transport:end", {
+        workspaceId,
+        ready: false,
+        readiness: "service-unavailable",
+      });
+      return false;
+    }
+
+    const binding = await input.inspectControlPlaneBinding(workspaceId);
+    if (!binding.matches) {
+      trace("runtime-readiness:admission-transport:binding-missing", {
+        workspaceId,
+        bindingReason: binding.reason,
+      });
+      const rebound = await input.rebindControlPlane(workspaceId);
+      if (!rebound) {
+        trace("runtime-readiness:admission-transport:end", {
+          workspaceId,
+          ready: false,
+          readiness: "control-plane-rebind-unavailable",
+        });
+        return false;
+      }
+      ready = await input.ensureLocalVesloServerRunning({
+        requireRuntimeChainReady: false,
+      });
+      const reboundBinding = ready
+        ? await input.inspectControlPlaneBinding(workspaceId)
+        : { matches: false, reason: "server-unavailable" };
+      if (!reboundBinding.matches) {
+        trace("runtime-readiness:admission-transport:end", {
+          workspaceId,
+          ready: false,
+          readiness: "control-plane-binding-unconfirmed",
+          bindingReason: reboundBinding.reason,
+        });
+        return false;
+      }
+    }
     trace("runtime-readiness:admission-transport:end", {
       workspaceId,
       ready,

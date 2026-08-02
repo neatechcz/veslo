@@ -148,7 +148,10 @@ import {
   type SessionCreationWorkflowCreateOptions,
 } from "./pages/session-creation-workflow";
 import { createSessionSendWorkflow } from "./pages/session-send-workflow";
-import { ensureServerOwnedSubmitTransport } from "./context/server-owned-submit-transport";
+import {
+  ensureServerOwnedSubmitTransport,
+  type ControlPlaneBindingStatus,
+} from "./context/server-owned-submit-transport";
 import { hasConversationLiveEventRoute } from "./context/conversation-live-event-readiness";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { createSoulDataStore } from "./pages/soul-data-store";
@@ -337,6 +340,8 @@ import {
   writeOpencodeConfig,
   engineInfo,
   runtimeEnsureAdmissionTransport,
+  runtimeControlPlaneBindingMatches,
+  runtimeRebindControlPlane,
   workspaceBootstrap,
   workspaceVesloRead,
   vesloServerInfo,
@@ -1323,6 +1328,88 @@ export default function App() {
       normalizeTranscriptProjectionScope(scope),
       snapshot,
     );
+  const rebindWorkspaceControlPlane = async (
+    workspaceId: string,
+    reasonCode:
+      | "sse_invalid_bearer"
+      | "send_invalid_bearer"
+      | "server_submit_transport",
+  ): Promise<boolean> => {
+    const workspace = workspaceStore.workspaces().find((candidate) => candidate.id === workspaceId);
+    const client = vesloServerClient();
+    if (!workspace || workspace.workspaceType !== "local" || !client || !isTauriRuntime()) {
+      return false;
+    }
+    const workspacePath = workspace.path?.trim() || workspace.directory?.trim() || "";
+    if (!workspacePath) return false;
+    let operationId: string | null = null;
+    try {
+      const grant = await client.requestControlPlaneRebind(workspaceId, reasonCode);
+      operationId = grant.operation.operationId;
+      const begun = await client.beginRuntimeOperation(workspaceId, operationId);
+      if (begun.operation.state !== "executing") {
+        await client.completeRuntimeOperation(workspaceId, operationId, {
+          state: "outcome_unknown",
+          terminalCode: "control_plane_rebind_not_started",
+        }).catch(() => undefined);
+        return false;
+      }
+      await runtimeRebindControlPlane({
+        workspaceId,
+        workspacePath,
+      });
+      // The native rebind may have replaced the server that granted this
+      // lease. Refresh the descriptor before completion so the durable handoff
+      // is released by the newly bound control plane, not a stale bearer.
+      setVesloServerHostInfoStable(await vesloServerInfo());
+      const reboundClient = vesloServerClient();
+      if (!reboundClient) throw new Error("Control-plane rebind did not publish a server client");
+      await reboundClient.completeRuntimeOperation(workspaceId, operationId, {
+        state: "completed",
+        terminalCode: "control_plane_rebound",
+      });
+      return true;
+    } catch (error) {
+      if (operationId) {
+        const completionClient = vesloServerClient() ?? client;
+        await completionClient.completeRuntimeOperation(workspaceId, operationId, {
+          state: "outcome_unknown",
+          terminalCode: "control_plane_rebind_unconfirmed",
+        }).catch(() => undefined);
+      }
+      recordSendTrace("runtime-operation:control-plane-rebind-failed", {
+        workspaceId,
+        operationId,
+        reasonCode,
+        errorType: error instanceof Error ? error.name : typeof error,
+        ...(error instanceof VesloServerError ? {
+          serverStatus: error.status,
+          serverCode: error.code,
+          operationBlockReason: (
+            error.details && typeof error.details === "object" &&
+            ["active-runs", "reconciliation-pending", "runtime-operation"].includes(
+              (error.details as Record<string, unknown>).reason as string,
+            )
+          )
+            ? (error.details as Record<string, unknown>).reason
+            : null,
+        } : {}),
+      });
+      return false;
+    }
+  };
+  const inspectWorkspaceControlPlaneBinding = async (
+    workspaceId: string,
+  ): Promise<ControlPlaneBindingStatus> => {
+    const workspace = workspaceStore.workspaces().find((candidate) => candidate.id === workspaceId);
+    const workspacePath = workspace?.path?.trim() || workspace?.directory?.trim() || "";
+    if (!workspacePath) return { matches: false, reason: "workspace-root-missing" };
+    try {
+      return await runtimeControlPlaneBindingMatches({ workspacePath });
+    } catch {
+      return { matches: false, reason: "binding-probe-failed" };
+    }
+  };
   const sessionStore = createSessionStore({
     client,
     routing: runtimeOwnedRouting,
@@ -1565,11 +1652,7 @@ export default function App() {
     engineReady: () => engineReady(),
     isWorkspaceRuntimeReady,
     recoverWorkspaceRuntimeForEventStream: (workspaceId) =>
-      workspaceStore.ensureEngineForWorkspace(workspaceId, {
-        reason: "event-stream-runtime-recovery",
-        loadSessions: false,
-        forceFreshRuntime: true,
-      }),
+      rebindWorkspaceControlPlane(workspaceId, "sse_invalid_bearer"),
     onSessionBusyChange: (sessionId, busy, sourceWorkspaceId) => {
       const wsId =
         sourceWorkspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
@@ -2306,6 +2389,9 @@ export default function App() {
       traceId: preflight.traceId,
       ensureAdmissionTransport: runtimeEnsureAdmissionTransport,
       ensureLocalVesloServerRunning,
+      inspectControlPlaneBinding: inspectWorkspaceControlPlaneBinding,
+      rebindControlPlane: (workspaceId) =>
+        rebindWorkspaceControlPlane(workspaceId, "server_submit_transport"),
       recordTrace: recordSendTrace,
     });
 
@@ -3127,6 +3213,36 @@ export default function App() {
     routedClient,
     releaseWorkspaceRoute: (workspaceId) =>
       workspaceRouting.release(workspaceId),
+    requestServerRuntimeRecovery: async ({ workspaceId, reason }) => {
+      const workspace = workspaceStore.workspaces().find((candidate) => candidate.id === workspaceId);
+      const client = vesloServerClient();
+      if (!workspace || workspace.workspaceType !== "local" || !client) return false;
+      try {
+        if (reason === "invalid_bearer_token") {
+          return await rebindWorkspaceControlPlane(workspaceId, "send_invalid_bearer");
+        }
+        if (reason === "transport_unavailable") {
+          return await ensureServerOwnedSubmitTransportReady({
+            targetWorkspace: {
+              workspaceId,
+              workspaceRoot: workspace.path,
+              directory: workspace.path,
+            },
+          });
+        }
+        const result = await client.reloadEngine(workspaceId, {
+          ifIdle: true,
+          ifRunning: true,
+        });
+        return result.reloaded === true;
+      } catch (error) {
+        recordSendTrace("send-runtime:server-operation-blocked", {
+          workspaceId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    },
     ensureEngineForWorkspace: (workspaceId, options) =>
       workspaceStore.ensureEngineForWorkspace(workspaceId, options),
     connectToServer: (nextBaseUrl, directory, context, auth, connectOptions) =>
@@ -4662,11 +4778,8 @@ export default function App() {
   };
 
   const reloadWorkspaceEngineFromUi = async () => {
-    if (canReloadLocalEngine()) {
-      return workspaceStore.reloadWorkspaceEngine();
-    }
-
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") {
+    const workspace = workspaceStore.activeWorkspaceDisplay();
+    if (workspace.workspaceType !== "local" && workspace.workspaceType !== "remote") {
       return false;
     }
 
@@ -4678,7 +4791,14 @@ export default function App() {
     }
 
     try {
-      await client.reloadEngine(workspaceId);
+      const result = await client.reloadEngine(workspaceId, {
+        ifIdle: true,
+        ifRunning: true,
+      });
+      if (result.reloaded !== true) {
+        setError("The workspace runtime is not ready to reload.");
+        return false;
+      }
       await workspaceStore.activateWorkspace(
         workspaceStore.activeWorkspaceId(),
         {
@@ -4688,7 +4808,7 @@ export default function App() {
       );
       await refreshMcpServers({
         mode: "explicit",
-        reason: "remote-engine-reload",
+        reason: "workspace-engine-reload",
       });
       return true;
     } catch (error) {

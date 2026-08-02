@@ -89,6 +89,9 @@ export type VesloRuntimeChainStatus =
 export type VesloRuntimeChainPayload = {
   status: VesloRuntimeChainStatus;
   checkedAt: number;
+  lifecycle?: {
+    configured: boolean;
+  };
   orchestrator: {
     configured: boolean;
     daemonUrl: string | null;

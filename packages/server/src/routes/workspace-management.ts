@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { recordAudit, readAuditEntries, readLastAudit } from "../audit.js";
 import {
@@ -29,6 +30,10 @@ import type { ReloadTrigger, ServerConfig, WorkspaceInfo } from "../types.js";
 import { materializeUserGlobalSkillsForWorkspace } from "../user-skill-store.js";
 import { shortId } from "../utils.js";
 import { withWorkspaceSkillLease } from "../workspace-skill-lease.js";
+import type {
+  ConversationRunLifecycleRuntimeOperationResult,
+} from "../conversation-run-lifecycle-controller.js";
+import type { ConversationWorkspaceRuntimeOperation } from "../conversation-run-queue-store.js";
 import { opencodeConfigPath, vesloConfigPath } from "../workspace-files.js";
 import {
   persistServerWorkspaceState,
@@ -83,6 +88,24 @@ export type WorkspaceManagementRouteDependencies = {
     | { kind: "reloaded" }
     | { kind: "blocked"; reason: "active-runs" | "reconciliation-pending" }
   >;
+  requestWorkspaceRuntimeOperation: (input: {
+    workspaceId: string;
+    operationId?: string;
+    kind: "repair_admission_transport" | "rebind_control_plane" | "reload_workspace_if_idle";
+    sourceClass: "automatic" | "user";
+    reasonCode: string;
+    expiresAt: number;
+  }) => Promise<ConversationRunLifecycleRuntimeOperationResult>;
+  beginWorkspaceRuntimeOperation: (
+    workspaceId: string,
+    operationId: string,
+  ) => Promise<ConversationWorkspaceRuntimeOperation | null>;
+  completeWorkspaceRuntimeOperation: (input: {
+    workspaceId: string;
+    operationId: string;
+    state: "completed" | "failed" | "outcome_unknown";
+    terminalCode?: string | null;
+  }) => Promise<ConversationWorkspaceRuntimeOperation | null>;
   exportWorkspace: (workspace: WorkspaceInfo) => Promise<unknown>;
   importWorkspace: (
     workspace: WorkspaceInfo,
@@ -134,6 +157,9 @@ export function registerWorkspaceManagementRoutes(
     buildConfigTrigger,
     reloadOpencodeEngine,
     reloadWorkspaceEngineIfIdle,
+    requestWorkspaceRuntimeOperation,
+    beginWorkspaceRuntimeOperation,
+    completeWorkspaceRuntimeOperation,
     exportWorkspace,
     importWorkspace,
   } = dependencies;
@@ -614,6 +640,111 @@ export function registerWorkspaceManagementRoutes(
       workspaceId: workspace.id,
     });
   });
+
+  addRoute(
+    routes,
+    "POST",
+    "/workspace/:id/runtime-operations/control-plane-rebind",
+    "client",
+    async (ctx) => {
+      const workspace = await resolveWorkspace(
+        ctx.config,
+        requireRouteParam(ctx.params, "id", "workspace id"),
+      );
+      requireClientScope(ctx, "collaborator");
+      if (workspace.workspaceType === "remote") {
+        throw new ApiError(409, "runtime_operation_not_local", "Control-plane rebind is only available for a local workspace", {
+          workspaceId: workspace.id,
+        });
+      }
+      const body = await readOptionalJsonBody(ctx.request);
+      const requestedReason = typeof body?.reasonCode === "string" ? body.reasonCode.trim() : "";
+      const reasonCode = ["sse_invalid_bearer", "send_invalid_bearer", "server_submit_transport"]
+        .includes(requestedReason)
+        ? requestedReason
+        : "runtime_control_plane_rebind";
+      const result = await requestWorkspaceRuntimeOperation({
+        workspaceId: workspace.id,
+        // The server creates the canonical operation identifier only after it
+        // holds the workspace gate. Client-side ids are correlation hints, not
+        // authority to replace an in-flight operation.
+        operationId: randomUUID(),
+        kind: "rebind_control_plane",
+        sourceClass: "automatic",
+        reasonCode,
+        expiresAt: Date.now() + 90_000,
+      });
+      if (result.kind === "blocked") {
+        throw new ApiError(
+          409,
+          "runtime_operation_blocked",
+          "Workspace runtime operation is blocked by active work or another operation",
+          {
+            workspaceId: workspace.id,
+            reason: result.reason,
+            operation: result.operation ?? null,
+          },
+        );
+      }
+      return jsonResponse({ ok: true, operation: result.operation });
+    },
+  );
+
+  addRoute(
+    routes,
+    "POST",
+    "/workspace/:id/runtime-operations/:operationId/begin",
+    "client",
+    async (ctx) => {
+      const workspace = await resolveWorkspace(
+        ctx.config,
+        requireRouteParam(ctx.params, "id", "workspace id"),
+      );
+      requireClientScope(ctx, "collaborator");
+      const operation = await beginWorkspaceRuntimeOperation(
+        workspace.id,
+        requireRouteParam(ctx.params, "operationId", "operation id"),
+      );
+      if (!operation) {
+        throw new ApiError(409, "runtime_operation_not_granted", "Workspace runtime operation is not available to begin", {
+          workspaceId: workspace.id,
+        });
+      }
+      return jsonResponse({ ok: true, operation });
+    },
+  );
+
+  addRoute(
+    routes,
+    "POST",
+    "/workspace/:id/runtime-operations/:operationId/complete",
+    "client",
+    async (ctx) => {
+      const workspace = await resolveWorkspace(
+        ctx.config,
+        requireRouteParam(ctx.params, "id", "workspace id"),
+      );
+      requireClientScope(ctx, "collaborator");
+      const body = await readOptionalJsonBody(ctx.request);
+      const state = body?.state;
+      if (state !== "completed" && state !== "failed" && state !== "outcome_unknown") {
+        throw new ApiError(400, "invalid_payload", "state must be completed, failed, or outcome_unknown");
+      }
+      const terminalCode = typeof body?.terminalCode === "string" ? body.terminalCode.trim() || null : null;
+      const operation = await completeWorkspaceRuntimeOperation({
+        workspaceId: workspace.id,
+        operationId: requireRouteParam(ctx.params, "operationId", "operation id"),
+        state,
+        terminalCode,
+      });
+      if (!operation) {
+        throw new ApiError(409, "runtime_operation_not_active", "Workspace runtime operation is not active", {
+          workspaceId: workspace.id,
+        });
+      }
+      return jsonResponse({ ok: true, operation });
+    },
+  );
 
   addRoute(
     routes,

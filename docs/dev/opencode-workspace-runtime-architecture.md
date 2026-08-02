@@ -221,15 +221,22 @@ For accepted local runs, the server registers active AI gateway run context
 before OpenCode submission and keeps that context until lifecycle reconciliation
 observes a terminal or missing run state, or until submit fails before the run
 can proceed. On a provider-start timeout, the server first aborts that exact
-OpenCode session and marks the run failed only after the abort succeeds; only
-then can it release the conversation queue. If the abort is unavailable or
-fails, the active gateway context and reservation remain in place and the run
-retries the abort at a bounded cadence. Lifecycle status is checked before
-each retry, so a naturally completed run is released normally; a missing or
-still-active status never admits a successor behind a potentially still-busy
-OpenCode assistant message. The pending-abort marker and exact session target
-are persisted with the run reservation, so the same recovery continues after
-the local server restarts.
+OpenCode session and marks the run failed only after the abort succeeds. A
+terminal write—including a recovered submit failure—is not a queue release:
+the server next confirms that the same runtime handoff is idle before admitting
+a successor. This abort is exact-run control:
+it targets the already attached engine with an if-running constraint and does
+not resolve a new skill view, stage configuration, or start a replacement
+engine. If the abort is unavailable or fails, the active gateway context and
+reservation remain in place. Its pending marker, exact session target, attempt
+count, last error, next retry, and deadline are persisted with the reservation,
+so restart resumes the same recovery rather than resetting its budget. Recovery
+uses at most three attempts during a two-minute window; exhaustion stops the
+automatic retry loop and keeps admission conservatively blocked for explicit
+operator/user recovery. Lifecycle status is checked before each retry, so a
+naturally completed run is released normally; a missing or still-active status
+never admits a successor behind a potentially still-busy OpenCode assistant
+message.
 The server persists its exact per-conversation `starting` reservation before
 orchestrator registration. For queued work, the durable queue claim and that
 reservation are one SQLite transaction. The server's in-process workspace gate
@@ -239,6 +246,12 @@ per-conversation reservation. On restart, a `starting` queue row is
 outcome-unknown: only an exact lifecycle `404` with `run not found` permits a
 replay; a workspace-level `404`, active, terminal, stale, or unreachable
 evidence follows reconciliation without a duplicate prompt submit.
+The controller uses one keyed, in-process scheduler only for ephemeral queue
+drain, exact-run reconciliation, terminalization retry, provider-start abort
+recovery, starting-row recovery, and pre-attachment engine-loss expiry. It
+coalesces/cancels timer callbacks and records a safe callback failure, but it
+does not own a durable job record or decide a release. Restart reconstruction
+comes only from the persisted queue and reservation rows.
 This keeps `traceId`, `runId`, `workspaceId`, conversation id, and OpenCode
 session id attached to AI gateway proxy events through the useful lifetime of
 the send workflow.
@@ -702,7 +715,17 @@ observe the current orchestrator generation.
     keeps its client admission identity out of the OpenCode request body.
 12. Engine-loss callbacks carry the same owner tuple; the server only releases
     reservations whose generation matches exactly. A callback racing owner
-    persistence is held briefly and reconciled when the response headers arrive.
+    persistence is held only in a process-local exact-run buffer for the
+    configured upstream-header wait plus a five-second margin. The buffer is
+    discarded on expiry, controller stop, or restart; the durable reservation
+    then follows normal exact-run reconciliation rather than replaying a
+    stale callback.
+    When this runtime evidence is shown outside the trusted server/orchestrator
+    boundary, it is projected as workspace identity, readiness, observed time,
+    evidence source, safe reason code, and a one-way generation fingerprint.
+    The projection never exposes engine owner ids, PIDs, endpoint URLs, local
+    paths, credentials, or provider payloads, and it is never release or
+    queue-admission authority.
 13. After a submitted admission, the app attaches the workspace event stream
     for live projection of comments and tool steps. Stream attachment is not
     authority for write success: a transient attach failure keeps the admitted

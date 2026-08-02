@@ -1,5 +1,6 @@
 import crypto from "node:crypto"
 import express from "express"
+import { and, eq } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "../db/index.js"
 import { FeedbackReportTable, FeedbackScreenshotStatus } from "../db/schema.js"
@@ -19,6 +20,16 @@ type FeedbackInsertDb = {
 export type FeedbackRouterOptions = {
   authorize?: FeedbackRouterAuthorize
   db?: FeedbackInsertDb
+  findFeedbackSubmission?: (input: {
+    submissionId: string
+    userId: string
+    orgId: string
+  }) => Promise<{ feedbackId: string; requestHash: string } | null>
+  findFeedbackByDiagnosticCapture?: (input: {
+    captureId: string
+    userId: string
+    orgId: string
+  }) => Promise<string | null>
   generateId?: () => string
   now?: () => Date
 }
@@ -50,6 +61,7 @@ const feedbackBodySchema = z.object({
   screenshotDataUrl: z.string().trim().max(8 * 1024 * 1024).nullable().optional(),
   screenshotMimeType: z.string().trim().max(255).nullable().optional(),
   diagnosticCaptureId: z.string().uuid().nullable().optional(),
+  submissionId: z.string().uuid().nullable().optional(),
 })
 
 function normalizeOptionalString(value: string | null | undefined) {
@@ -63,6 +75,24 @@ function normalizeOptionalString(value: string | null | undefined) {
 
 function buildFeedbackId() {
   return `fb_${crypto.randomUUID().replaceAll("-", "")}`
+}
+
+function feedbackRequestHash(input: Record<string, unknown>) {
+  return crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex")
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+  const candidate = error as { code?: unknown; errno?: unknown; cause?: unknown; message?: unknown }
+  if (candidate.code === "ER_DUP_ENTRY" || candidate.errno === 1062) {
+    return true
+  }
+  if (typeof candidate.message === "string" && candidate.message.toLowerCase().includes("duplicate")) {
+    return true
+  }
+  return isDuplicateKeyError(candidate.cause)
 }
 
 function buildFieldErrorResponse(error: z.ZodError) {
@@ -151,8 +181,60 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
   const feedbackDb = options.db ?? db
   const generateId = options.generateId ?? buildFeedbackId
   const now = options.now ?? (() => new Date())
+  const findFeedbackSubmission = options.findFeedbackSubmission ?? (async (input) => {
+    const rows = await db
+      .select({
+        feedbackId: FeedbackReportTable.id,
+        requestHash: FeedbackReportTable.request_hash,
+      })
+      .from(FeedbackReportTable)
+      .where(and(
+        eq(FeedbackReportTable.submission_id, input.submissionId),
+        eq(FeedbackReportTable.user_id, input.userId),
+        eq(FeedbackReportTable.org_id, input.orgId),
+      ))
+      .limit(1)
+    const row = rows[0]
+    return row?.requestHash ? { feedbackId: row.feedbackId, requestHash: row.requestHash } : null
+  })
+  const findFeedbackByDiagnosticCapture = options.findFeedbackByDiagnosticCapture ?? (async (input) => {
+    const rows = await db
+      .select({ feedbackId: FeedbackReportTable.id })
+      .from(FeedbackReportTable)
+      .where(and(
+        eq(FeedbackReportTable.diagnostic_capture_id, input.captureId),
+        eq(FeedbackReportTable.user_id, input.userId),
+        eq(FeedbackReportTable.org_id, input.orgId),
+      ))
+      .limit(1)
+    return rows[0]?.feedbackId ?? null
+  })
   const router = express.Router()
   const feedbackJsonParser = express.json({ limit: "10mb" })
+
+  router.get("/feedback/diagnostic-captures/:captureId", asyncRoute(async (req, res) => {
+    const context = await authorize(req, res, {
+      minimumRole: "member",
+    })
+    if (!context) {
+      return
+    }
+
+    const captureId = z.string().uuid().safeParse(req.params.captureId)
+    if (!captureId.success) {
+      res.status(400).json({ error: "invalid_diagnostic_capture_id" })
+      return
+    }
+
+    const feedbackId = await findFeedbackByDiagnosticCapture({
+      captureId: captureId.data,
+      userId: context.session.user.id,
+      orgId: context.organization.id,
+    })
+    res.status(200).json(feedbackId
+      ? { linked: true, feedbackId }
+      : { linked: false })
+  }))
 
   router.post("/feedback", feedbackJsonParser, asyncRoute(async (req, res) => {
     const context = await authorize(req, res, {
@@ -182,9 +264,41 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
       return
     }
 
+    const submissionId = parsed.data.submissionId ?? null
+    const requestHash = submissionId ? feedbackRequestHash({
+      title: parsed.data.title.trim(),
+      description: parsed.data.description.trim(),
+      context: parsed.data.context,
+      screenshotStatus: parsed.data.screenshotStatus,
+      screenshotDataUrl: normalizeOptionalString(parsed.data.screenshotDataUrl),
+      screenshotMimeType: screenshot.screenshotMimeType,
+      diagnosticCaptureId: parsed.data.diagnosticCaptureId ?? null,
+      userId: context.session.user.id,
+      orgId: context.organization.id,
+    }) : null
+    const existingSubmission = submissionId
+      ? await findFeedbackSubmission({
+        submissionId,
+        userId: context.session.user.id,
+        orgId: context.organization.id,
+      })
+      : null
+    if (existingSubmission) {
+      if (existingSubmission.requestHash !== requestHash) {
+        res.status(409).json({ error: "feedback_submission_conflict" })
+        return
+      }
+      res.status(200).json({
+        feedbackId: existingSubmission.feedbackId,
+        status: "stored",
+        idempotent: true,
+      })
+      return
+    }
+
     const feedbackId = generateId()
     const normalizedPlatform = normalizeOptionalString(parsed.data.context.platform)
-    await feedbackDb.insert(FeedbackReportTable).values({
+    const insert = {
       id: feedbackId,
       type: "bug",
       status: "stored",
@@ -216,11 +330,38 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
       screenshot_bytes: screenshot.screenshotBytes,
       screenshot_data: screenshot.screenshotData,
       diagnostic_capture_id: parsed.data.diagnosticCaptureId ?? null,
+      submission_id: submissionId,
+      request_hash: requestHash,
       youtrack_issue_id: null,
       youtrack_issue_url: null,
       last_projector_error: null,
       next_projector_attempt_at: null,
-    })
+    } satisfies typeof FeedbackReportTable.$inferInsert
+    try {
+      await feedbackDb.insert(FeedbackReportTable).values(insert)
+    } catch (error) {
+      if (!submissionId || !isDuplicateKeyError(error)) {
+        throw error
+      }
+      const concurrentSubmission = await findFeedbackSubmission({
+        submissionId,
+        userId: context.session.user.id,
+        orgId: context.organization.id,
+      })
+      if (!concurrentSubmission) {
+        throw error
+      }
+      if (concurrentSubmission.requestHash !== requestHash) {
+        res.status(409).json({ error: "feedback_submission_conflict" })
+        return
+      }
+      res.status(200).json({
+        feedbackId: concurrentSubmission.feedbackId,
+        status: "stored",
+        idempotent: true,
+      })
+      return
+    }
     // Feedback is the durable MySQL record itself. Diagnostics may now be
     // queued immediately by the desktop without depending on a third-party
     // ticketing integration.

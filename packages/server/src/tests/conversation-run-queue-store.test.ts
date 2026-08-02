@@ -520,4 +520,94 @@ describe("conversation run queue store", () => {
       expect.objectContaining(owner),
     ]);
   });
+
+  test("persists one active runtime-operation lease per workspace across store instances", async () => {
+    const dataDir = await tempDataDir();
+    const store = createConversationRunQueueStore({ dataDir, now: () => 1_000 });
+    const acquired = store.acquireWorkspaceRuntimeOperation({
+      workspaceId: "ws-a",
+      operationId: "operation-a",
+      kind: "rebind_control_plane",
+      sourceClass: "automatic",
+      reasonCode: "sse_invalid_bearer",
+      expiresAt: 2_000,
+    });
+
+    expect(acquired).toEqual({
+      acquired: true,
+      operation: expect.objectContaining({
+        workspaceId: "ws-a",
+        operationId: "operation-a",
+        state: "granted",
+      }),
+    });
+    expect(store.beginWorkspaceRuntimeOperation("ws-a", "operation-a")).toEqual(
+      expect.objectContaining({ state: "executing" }),
+    );
+
+    const restarted = createConversationRunQueueStore({ dataDir, now: () => 1_500 });
+    const duplicate = restarted.acquireWorkspaceRuntimeOperation({
+      workspaceId: "ws-a",
+      operationId: "operation-b",
+      kind: "rebind_control_plane",
+      sourceClass: "automatic",
+      reasonCode: "sse_invalid_bearer",
+      expiresAt: 2_500,
+    });
+    expect(duplicate).toEqual({
+      acquired: false,
+      operation: expect.objectContaining({
+        operationId: "operation-a",
+        state: "executing",
+      }),
+    });
+  });
+
+  test("does not allow an expired or completed runtime-operation lease to block later work", async () => {
+    let currentTime = 1_000;
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => currentTime });
+    store.acquireWorkspaceRuntimeOperation({
+      workspaceId: "ws-a",
+      operationId: "operation-a",
+      kind: "rebind_control_plane",
+      sourceClass: "automatic",
+      reasonCode: "sse_invalid_bearer",
+      expiresAt: 1_500,
+    });
+    expect(store.completeWorkspaceRuntimeOperation({
+      workspaceId: "ws-a",
+      operationId: "wrong-operation",
+      state: "completed",
+    })).toBeNull();
+    expect(store.completeWorkspaceRuntimeOperation({
+      workspaceId: "ws-a",
+      operationId: "operation-a",
+      state: "completed",
+      terminalCode: "rebound",
+    })).toEqual(expect.objectContaining({ state: "completed", terminalCode: "rebound" }));
+
+    const afterCompletion = store.acquireWorkspaceRuntimeOperation({
+      workspaceId: "ws-a",
+      operationId: "operation-b",
+      kind: "reload_workspace_if_idle",
+      sourceClass: "user",
+      reasonCode: "manual_reload",
+      expiresAt: 2_000,
+    });
+    expect(afterCompletion.acquired).toBe(true);
+
+    currentTime = 2_100;
+    expect(store.expireWorkspaceRuntimeOperations()).toEqual([
+      expect.objectContaining({ operationId: "operation-b", state: "outcome_unknown", terminalCode: "lease_expired" }),
+    ]);
+    expect(store.listActiveWorkspaceRuntimeOperations()).toEqual([]);
+    expect(store.acquireWorkspaceRuntimeOperation({
+      workspaceId: "ws-a",
+      operationId: "operation-c",
+      kind: "rebind_control_plane",
+      sourceClass: "automatic",
+      reasonCode: "sse_invalid_bearer",
+      expiresAt: 3_000,
+    })).toEqual(expect.objectContaining({ acquired: true }));
+  });
 });

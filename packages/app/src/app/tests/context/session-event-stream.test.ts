@@ -1380,6 +1380,7 @@ test("event stream typed local runtime errors recover route when scoped runtime 
     try {
       const released: string[] = [];
       const recovered: string[] = [];
+      const recoveryOrder: string[] = [];
       const reconnectStates: ReconnectState[] = [];
       const streamClient = makeEventClient(async () => {
         throw new Error("engine_not_running");
@@ -1392,6 +1393,7 @@ test("event stream typed local runtime errors recover route when scoped runtime 
         entryIds: () => ["ws-a"],
         release: (workspaceId: string) => {
           released.push(workspaceId);
+          recoveryOrder.push("route-released");
         },
       };
       const { controller } = makeController({
@@ -1401,6 +1403,7 @@ test("event stream typed local runtime errors recover route when scoped runtime 
         isWorkspaceRuntimeReady: () => false,
         recoverWorkspaceRuntimeForEventStream: async (workspaceId) => {
           recovered.push(workspaceId);
+          recoveryOrder.push("recovery-confirmed");
           return true;
         },
         onReconnectState: (state) => reconnectStates.push(state),
@@ -1412,7 +1415,50 @@ test("event stream typed local runtime errors recover route when scoped runtime 
 
       assert.deepEqual(released, ["ws-a"]);
       assert.deepEqual(recovered, ["ws-a"]);
+      assert.deepEqual(recoveryOrder, ["recovery-confirmed", "route-released"]);
       assert.equal(reconnectStates.some((state) => state.status === "runtime-recovering"), true);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("a replacement stream that fails before its first event cannot spend a second fresh-runtime recovery", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const recovered: string[] = [];
+      const reconnectStates: ReconnectState[] = [];
+      const streamClient = makeEventClient(async () => {
+        throw new Error("engine_not_running");
+      });
+      const routing = {
+        activeWorkspaceId: () => "ws-a",
+        active: () => null,
+        client: (workspaceId?: string) => (workspaceId === "ws-a" ? streamClient : null),
+        entry: () => null,
+        entryIds: () => ["ws-a"],
+        release: () => {},
+      };
+      const { controller } = makeController({
+        activeWorkspaceId: "ws-a",
+        routing,
+        isWorkspaceRuntimeReady: () => false,
+        recoverWorkspaceRuntimeForEventStream: async (workspaceId) => {
+          recovered.push(workspaceId);
+          return true;
+        },
+        onReconnectState: (state) => reconnectStates.push(state),
+      });
+
+      const firstCleanup = controller.setupSseStream("ws-a", streamClient);
+      await tick(8);
+      const replacementCleanup = controller.setupSseStream("ws-a", streamClient);
+      await tick(8);
+      firstCleanup();
+      replacementCleanup();
+
+      assert.deepEqual(recovered, ["ws-a"]);
+      assert.equal(reconnectStates.at(-1)?.status, "degraded");
     } finally {
       dispose();
     }
@@ -1693,6 +1739,7 @@ test("local Veslo bearer session errors trace and recover workspace runtime", wi
     try {
       const released: string[] = [];
       const recovered: string[] = [];
+      const recoveryOrder: string[] = [];
       const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
       const sessionErrorTurns: Array<{ sessionID: string; text: string }> = [];
       const routing = {
@@ -1703,6 +1750,7 @@ test("local Veslo bearer session errors trace and recover workspace runtime", wi
         entryIds: () => ["ws-a"],
         release: (workspaceId: string) => {
           released.push(workspaceId);
+          recoveryOrder.push("route-released");
         },
       };
       const { controller } = makeController({
@@ -1713,6 +1761,7 @@ test("local Veslo bearer session errors trace and recover workspace runtime", wi
         sessionErrorTurns,
         recoverWorkspaceRuntimeForEventStream: async (workspaceId) => {
           recovered.push(workspaceId);
+          recoveryOrder.push("recovery-confirmed");
           return true;
         },
       });
@@ -1736,8 +1785,24 @@ test("local Veslo bearer session errors trace and recover workspace runtime", wi
         "ws-a",
       );
 
+      await controller.applyEvent(
+        {
+          type: "session.error",
+          properties: {
+            sessionID: "sess-a",
+            error: {
+              name: "APIError",
+              message: "Unauthorized: Invalid bearer token",
+              data: { statusCode: 401 },
+            },
+          },
+        } as OpencodeEvent,
+        "ws-a",
+      );
+
       assert.deepEqual(released, ["ws-a"]);
       assert.deepEqual(recovered, ["ws-a"]);
+      assert.deepEqual(recoveryOrder, ["recovery-confirmed", "route-released"]);
       assert.equal(sessionErrorTurns[0]?.sessionID, "sess-a");
       assert.match(sessionErrorTurns[0]?.text ?? "", /^Local runtime connection changed/);
       assert.equal(

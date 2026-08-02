@@ -30,6 +30,12 @@ export type ReconciledRun = {
   record: RunRecord;
   stale: boolean;
   noProgressSeconds: number | null;
+  /**
+   * Kept outside the durable transcript result. A completed assistant message
+   * can be visible before OpenCode has released the session for the next
+   * prompt, and that handoff fact must not overwrite the terminal run record.
+   */
+  runtimeReadyForSuccessor?: boolean | null;
 };
 
 export type RunLifecycleOwner = {
@@ -47,6 +53,8 @@ export type RunLifecycleOwner = {
   markFailed(workspaceId: string, runId: string, error: string): RunRecord | null;
   markAborted(workspaceId: string, runId: string, error?: string): RunRecord | null;
   markAbortRequested(workspaceId: string, runId: string): RunRecord | null;
+  /** Mark one already-terminal run's attached generation as definitely gone. */
+  markTerminalRunEngineLost(input: RunEngineOwner & { workspaceId: string; runId: string }): RunRecord | null;
   attachEngineOwner(workspaceId: string, runId: string, owner: RunEngineOwner): RunRecord | null;
   markEngineLost(input: RunEngineOwner & { error: string }): RunRecord[];
   sweepLegacyActiveRuns(input: {
@@ -164,7 +172,36 @@ export function createRunRegistry(deps: {
     const currentNoProgressSeconds = () => noProgressSecondsForRecord(record, now());
 
     if (isTerminalRunStatus(record.status)) {
-      return { record, stale: false, noProgressSeconds: currentNoProgressSeconds() };
+      // A confirmed engine-loss transition is stronger than an idle probe: the
+      // exact process that could still own this session no longer exists.
+      // Do not wait for a replacement generation to answer about the old one.
+      if (record.engineOwnerState === "lost") {
+        return {
+          record,
+          stale: false,
+          noProgressSeconds: currentNoProgressSeconds(),
+          runtimeReadyForSuccessor: true,
+        };
+      }
+      const probe = await deps.probeRunActivity(record);
+      if ("unreachable" in probe) {
+        return {
+          record,
+          stale: true,
+          noProgressSeconds: currentNoProgressSeconds(),
+          runtimeReadyForSuccessor: null,
+        };
+      }
+      // Only an inactive exact-session observation opens the admission
+      // handoff. A terminal assistant transcript with an open/busy session is
+      // precisely the race that otherwise produces a successful but
+      // undispatched 204.
+      return {
+        record,
+        stale: false,
+        noProgressSeconds: currentNoProgressSeconds(),
+        runtimeReadyForSuccessor: probe.active === false,
+      };
     }
 
     const probe = await deps.probeRunActivity(record);
@@ -249,7 +286,12 @@ export function createRunRegistry(deps: {
           waitReason: "none",
           retrySince: null,
         }) ?? record;
-      return { record: next, stale: false, noProgressSeconds: null };
+      return {
+        record: next,
+        stale: false,
+        noProgressSeconds: null,
+        runtimeReadyForSuccessor: true,
+      };
     };
 
     if (probe.terminalConfirmed) {
@@ -296,17 +338,25 @@ export function createRunRegistry(deps: {
         throw new Error("runId already exists");
       }
 
-      const active = deps.store.activeForConversation(workspaceId, conversationId);
-      if (active) {
-        const reconciled = await reconcile(active);
-        if (!isTerminalRunStatus(reconciled.record.status)) {
+      // A terminal transcript does not itself reopen admission: its exact
+      // OpenCode session can still be busy for a short handoff window. Inspect
+      // the latest run as well as active rows so that only a confirmed idle
+      // runtime can admit a successor.
+      const previous = deps.store.activeForConversation(workspaceId, conversationId)
+        ?? deps.store.latestForConversation(workspaceId, conversationId);
+      if (previous) {
+        const reconciled = await reconcile(previous);
+        if (
+          !isTerminalRunStatus(reconciled.record.status) ||
+          reconciled.runtimeReadyForSuccessor !== true
+        ) {
           if (
             clientMessageId &&
             normalizeNullableText(reconciled.record.clientMessageId) === clientMessageId
           ) {
             return reconciled.record;
           }
-          throw new RunAlreadyActiveError(active.runId);
+          throw new RunAlreadyActiveError(previous.runId);
         }
       }
 
@@ -377,6 +427,20 @@ export function createRunRegistry(deps: {
     markAbortRequested(workspaceId, runId) {
       return deps.store.update(workspaceId, runId, {
         abortRequested: true,
+      });
+    },
+
+    markTerminalRunEngineLost(input) {
+      const workspaceId = normalizeText(input.workspaceId);
+      const runId = normalizeText(input.runId);
+      const owner = normalizeEngineOwner(input);
+      if (!workspaceId || !runId || !owner.engineOwnerId) return null;
+      const record = deps.store.get(workspaceId, runId);
+      if (!record || !isTerminalRunStatus(record.status) || !runMatchesEngineOwner(record, owner)) {
+        return null;
+      }
+      return deps.store.update(workspaceId, runId, {
+        engineOwnerState: "lost",
       });
     },
 

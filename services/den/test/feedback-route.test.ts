@@ -112,6 +112,8 @@ async function startServer(options: {
     }
   }
   generateId?: () => string
+  findFeedbackSubmission?: (input: { submissionId: string; userId: string; orgId: string }) => Promise<{ feedbackId: string; requestHash: string } | null>
+  findFeedbackByDiagnosticCapture?: (input: { captureId: string; userId: string; orgId: string }) => Promise<string | null>
 }) {
   const { createFeedbackRouter, errorMiddleware } = await loadFeedbackModules()
   const app = express()
@@ -339,6 +341,166 @@ test("den index mounts feedback router and raises the JSON body size limit", () 
   assert.doesNotMatch(indexSource, /express\.json\(\{\s*limit:\s*"10mb"\s*\}\)/)
   assert.match(routeSource, /express\.json\(\{\s*limit:\s*"10mb"\s*\}\)/)
   assert.doesNotMatch(indexSource, /feedbackProjector|createYouTrackRestIssueClient/)
+})
+
+test("feedback submission idempotency returns the original durable feedback record", async () => {
+  const submissions = new Map<string, { feedbackId: string; requestHash: string }>()
+  let insertCalls = 0
+  const server = await startServer({
+    authorize: async () => buildAuthorizationContext(),
+    db: {
+      insert() {
+        return {
+          values(value) {
+            insertCalls += 1
+            const submissionId = String(value.submission_id)
+            submissions.set(submissionId, {
+              feedbackId: String(value.id),
+              requestHash: String(value.request_hash),
+            })
+          },
+        }
+      },
+    },
+    findFeedbackSubmission: async ({ submissionId }) => submissions.get(submissionId) ?? null,
+    generateId: () => "fb_idempotent_123",
+  })
+
+  try {
+    const payload = {
+      ...buildFeedbackPayload(),
+      submissionId: "00000000-0000-4000-8000-000000000099",
+    }
+    const first = await fetch(`http://127.0.0.1:${server.port}/v1/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-veslo-org-id": "org_123" },
+      body: JSON.stringify(payload),
+    })
+    const second = await fetch(`http://127.0.0.1:${server.port}/v1/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-veslo-org-id": "org_123" },
+      body: JSON.stringify(payload),
+    })
+
+    assert.equal(first.status, 201)
+    assert.deepEqual(await first.json(), { feedbackId: "fb_idempotent_123", status: "stored" })
+    assert.equal(second.status, 200)
+    assert.deepEqual(await second.json(), {
+      feedbackId: "fb_idempotent_123",
+      status: "stored",
+      idempotent: true,
+    })
+    assert.equal(insertCalls, 1)
+  } finally {
+    await server.close()
+  }
+})
+
+test("feedback submission idempotency rejects a changed payload", async () => {
+  const submissions = new Map<string, { feedbackId: string; requestHash: string }>()
+  const server = await startServer({
+    authorize: async () => buildAuthorizationContext(),
+    db: {
+      insert() {
+        return {
+          values(value) {
+            submissions.set(String(value.submission_id), {
+              feedbackId: String(value.id),
+              requestHash: String(value.request_hash),
+            })
+          },
+        }
+      },
+    },
+    findFeedbackSubmission: async ({ submissionId }) => submissions.get(submissionId) ?? null,
+    generateId: () => "fb_conflict_123",
+  })
+
+  try {
+    const submissionId = "00000000-0000-4000-8000-000000000098"
+    const first = await fetch(`http://127.0.0.1:${server.port}/v1/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-veslo-org-id": "org_123" },
+      body: JSON.stringify({ ...buildFeedbackPayload(), submissionId }),
+    })
+    const changed = await fetch(`http://127.0.0.1:${server.port}/v1/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-veslo-org-id": "org_123" },
+      body: JSON.stringify({
+        ...buildFeedbackPayload(),
+        submissionId,
+        description: "This is a different feedback payload.",
+      }),
+    })
+
+    assert.equal(first.status, 201)
+    assert.equal(changed.status, 409)
+    assert.deepEqual(await changed.json(), { error: "feedback_submission_conflict" })
+  } finally {
+    await server.close()
+  }
+})
+
+test("feedback diagnostic capture lookup is scoped to the authenticated user and organization", async () => {
+  const lookups: Array<{ captureId: string; userId: string; orgId: string }> = []
+  const server = await startServer({
+    authorize: async () => buildAuthorizationContext(),
+    db: {
+      insert() {
+        throw new Error("insert must not be reached")
+      },
+    },
+    findFeedbackByDiagnosticCapture: async (input) => {
+      lookups.push(input)
+      return "fb_linked_123"
+    },
+  })
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/v1/feedback/diagnostic-captures/00000000-0000-4000-8000-000000000001`,
+      { headers: { "x-veslo-org-id": "org_123" } },
+    )
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { linked: true, feedbackId: "fb_linked_123" })
+    assert.deepEqual(lookups, [{
+      captureId: "00000000-0000-4000-8000-000000000001",
+      userId: "user_123",
+      orgId: "org_123",
+    }])
+  } finally {
+    await server.close()
+  }
+})
+
+test("feedback diagnostic capture lookup rejects an invalid capture id before the store read", async () => {
+  let lookupCalls = 0
+  const server = await startServer({
+    authorize: async () => buildAuthorizationContext(),
+    db: {
+      insert() {
+        throw new Error("insert must not be reached")
+      },
+    },
+    findFeedbackByDiagnosticCapture: async () => {
+      lookupCalls += 1
+      return null
+    },
+  })
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/v1/feedback/diagnostic-captures/not-a-uuid`,
+      { headers: { "x-veslo-org-id": "org_123" } },
+    )
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "invalid_diagnostic_capture_id" })
+    assert.equal(lookupCalls, 0)
+  } finally {
+    await server.close()
+  }
 })
 
 test("den startup ensures feedback persistence tables and indexes", () => {

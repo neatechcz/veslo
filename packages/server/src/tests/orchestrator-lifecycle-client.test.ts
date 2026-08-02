@@ -83,6 +83,34 @@ describe("orchestrator lifecycle client", () => {
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ error: "user abort reconciled" });
   });
 
+  test("provider-start handoff recovery targets one exact lifecycle run", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = mockFetch(async (input, init) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({
+        ok: true,
+        runId: "run-a",
+        status: "failed",
+        stale: false,
+        runtimeReadyForSuccessor: true,
+        engineOwnerState: "lost",
+      }), { status: 200 });
+    });
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    const result = await client.recoverProviderStartTimeout("ws-a", "run-a");
+
+    expect(calls[0]?.url).toBe(
+      "http://127.0.0.1:1234/workspace/ws-a/runs/run-a/recover-provider-start-timeout",
+    );
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(result).toMatchObject({ runId: "run-a", runtimeReadyForSuccessor: true, engineOwnerState: "lost" });
+  });
+
   test("register aborts stalled lifecycle requests with a local timeout", async () => {
     let signal: AbortSignal | undefined;
     const fetchImpl = mockFetch(async (_input, init) =>

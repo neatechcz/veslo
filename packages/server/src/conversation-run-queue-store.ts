@@ -6,6 +6,29 @@ import { Database } from "bun:sqlite";
 
 export type ConversationRunQueueState = "pending" | "starting" | "submitted" | "failed" | "cancelled" | "conflict";
 export type ConversationRunQueueReadableState = Extract<ConversationRunQueueState, "pending" | "starting" | "failed">;
+export type ConversationWorkspaceRuntimeOperationKind =
+  | "repair_admission_transport"
+  | "rebind_control_plane"
+  | "reload_workspace_if_idle";
+export type ConversationWorkspaceRuntimeOperationState =
+  | "granted"
+  | "executing"
+  | "completed"
+  | "blocked"
+  | "failed"
+  | "outcome_unknown";
+export type ConversationWorkspaceRuntimeOperation = {
+  workspaceId: string;
+  operationId: string;
+  kind: ConversationWorkspaceRuntimeOperationKind;
+  sourceClass: "automatic" | "user";
+  reasonCode: string;
+  state: ConversationWorkspaceRuntimeOperationState;
+  createdAt: number;
+  updatedAt: number;
+  expiresAt: number;
+  terminalCode: string | null;
+};
 
 export type ConversationRunQueueCursor = {
   createdAt: number;
@@ -74,6 +97,10 @@ export type ConversationWorkspaceRunReservation = {
   providerStartAbortPending?: boolean;
   providerStartAbortDirectory?: string | null;
   providerStartAbortOpenCodeSessionId?: string | null;
+  providerStartAbortAttempts?: number;
+  providerStartAbortLastError?: string | null;
+  providerStartAbortNextAttemptAt?: number | null;
+  providerStartAbortDeadlineAt?: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -156,9 +183,31 @@ export type ConversationRunQueueStore = {
     runId: string;
     directory: string;
     opencodeSessionId: string;
+    attempts?: number;
+    lastError?: string | null;
+    nextAttemptAt?: number | null;
+    deadlineAt?: number;
   }): ConversationWorkspaceRunReservation | null;
   releaseWorkspaceRun(workspaceId: string, runId: string): boolean;
   listWorkspaceRunReservations(): ConversationWorkspaceRunReservation[];
+  acquireWorkspaceRuntimeOperation(input: {
+    workspaceId: string;
+    operationId?: string;
+    kind: ConversationWorkspaceRuntimeOperationKind;
+    sourceClass: ConversationWorkspaceRuntimeOperation["sourceClass"];
+    reasonCode: string;
+    expiresAt: number;
+  }): { operation: ConversationWorkspaceRuntimeOperation; acquired: boolean };
+  getWorkspaceRuntimeOperation(workspaceId: string): ConversationWorkspaceRuntimeOperation | null;
+  beginWorkspaceRuntimeOperation(workspaceId: string, operationId: string): ConversationWorkspaceRuntimeOperation | null;
+  completeWorkspaceRuntimeOperation(input: {
+    workspaceId: string;
+    operationId: string;
+    state: Extract<ConversationWorkspaceRuntimeOperationState, "completed" | "failed" | "outcome_unknown">;
+    terminalCode?: string | null;
+  }): ConversationWorkspaceRuntimeOperation | null;
+  expireWorkspaceRuntimeOperations(now?: number): ConversationWorkspaceRuntimeOperation[];
+  listActiveWorkspaceRuntimeOperations(now?: number): ConversationWorkspaceRuntimeOperation[];
 };
 
 type QueueRow = {
@@ -207,8 +256,25 @@ type WorkspaceRunReservationRow = {
   provider_start_abort_pending: number | null;
   provider_start_abort_directory: string | null;
   provider_start_abort_opencode_session_id: string | null;
+  provider_start_abort_attempts: number | null;
+  provider_start_abort_last_error: string | null;
+  provider_start_abort_next_attempt_at: number | null;
+  provider_start_abort_deadline_at: number | null;
   created_at: number;
   updated_at: number;
+};
+
+type WorkspaceRuntimeOperationRow = {
+  workspace_id: string;
+  operation_id: string;
+  kind: string;
+  source_class: string;
+  reason_code: string;
+  state: string;
+  created_at: number;
+  updated_at: number;
+  expires_at: number;
+  terminal_code: string | null;
 };
 
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
@@ -300,6 +366,20 @@ function createDatabase(dbPath: string): Database {
     );
     CREATE INDEX IF NOT EXISTS conversation_workspace_run_reservation_workspace_idx
       ON conversation_workspace_run_reservation (workspace_id, state, updated_at);
+    CREATE TABLE IF NOT EXISTS conversation_workspace_runtime_operation (
+      workspace_id TEXT PRIMARY KEY,
+      operation_id TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL,
+      source_class TEXT NOT NULL,
+      reason_code TEXT NOT NULL,
+      state TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      terminal_code TEXT
+    );
+    CREATE INDEX IF NOT EXISTS conversation_workspace_runtime_operation_active_idx
+      ON conversation_workspace_runtime_operation (state, expires_at, updated_at);
   `);
   ensureQueueSchema(db);
   return db;
@@ -339,6 +419,10 @@ function ensureQueueSchema(db: Database): void {
   addReservationColumn("provider_start_abort_pending", "INTEGER NOT NULL DEFAULT 0");
   addReservationColumn("provider_start_abort_directory", "TEXT");
   addReservationColumn("provider_start_abort_opencode_session_id", "TEXT");
+  addReservationColumn("provider_start_abort_attempts", "INTEGER NOT NULL DEFAULT 0");
+  addReservationColumn("provider_start_abort_last_error", "TEXT");
+  addReservationColumn("provider_start_abort_next_attempt_at", "INTEGER");
+  addReservationColumn("provider_start_abort_deadline_at", "INTEGER");
   const legacyRows = db.query<QueueRow, []>(
     `SELECT * FROM conversation_run_queue
      WHERE request_hash IS NULL OR request_hash = ''`,
@@ -462,6 +546,16 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
     providerStartAbortPending: row.provider_start_abort_pending === 1,
     providerStartAbortDirectory: row.provider_start_abort_directory?.trim() || null,
     providerStartAbortOpenCodeSessionId: row.provider_start_abort_opencode_session_id?.trim() || null,
+    providerStartAbortAttempts: Number.isSafeInteger(row.provider_start_abort_attempts)
+      ? Math.max(0, Number(row.provider_start_abort_attempts))
+      : 0,
+    providerStartAbortLastError: row.provider_start_abort_last_error?.trim() || null,
+    providerStartAbortNextAttemptAt: typeof row.provider_start_abort_next_attempt_at === "number"
+      ? row.provider_start_abort_next_attempt_at
+      : null,
+    providerStartAbortDeadlineAt: typeof row.provider_start_abort_deadline_at === "number"
+      ? row.provider_start_abort_deadline_at
+      : null,
     engineSlotId: row.engine_slot_id?.trim() || null,
     engineOwnerId: row.engine_owner_id?.trim() || null,
     directoryInstanceEpoch:
@@ -478,6 +572,26 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
     openCodeConfigDigest: row.opencode_config_digest?.trim() || null,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+  };
+}
+
+function runtimeOperationRowToItem(
+  row: WorkspaceRuntimeOperationRow,
+): ConversationWorkspaceRuntimeOperation {
+  const kind = row.kind as ConversationWorkspaceRuntimeOperationKind;
+  const state = row.state as ConversationWorkspaceRuntimeOperationState;
+  const sourceClass = row.source_class === "user" ? "user" : "automatic";
+  return {
+    workspaceId: normalizeText(row.workspace_id),
+    operationId: normalizeText(row.operation_id),
+    kind,
+    sourceClass,
+    reasonCode: normalizeText(row.reason_code),
+    state,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+    expiresAt: Number(row.expires_at),
+    terminalCode: normalizeText(row.terminal_code) || null,
   };
 }
 
@@ -1036,13 +1150,25 @@ export function createConversationRunQueueStore(options?: {
            SET provider_start_abort_pending = 1,
                provider_start_abort_directory = ?3,
                provider_start_abort_opencode_session_id = ?4,
-               updated_at = ?5
+               provider_start_abort_attempts = ?5,
+               provider_start_abort_last_error = ?6,
+               provider_start_abort_next_attempt_at = ?7,
+               provider_start_abort_deadline_at = ?8,
+               updated_at = ?9
            WHERE workspace_id = ?1 AND run_id = ?2`,
         ).run(
           normalizeText(input.workspaceId),
           normalizeText(input.runId),
           normalizeText(input.directory),
           normalizeText(input.opencodeSessionId),
+          Math.max(0, Math.floor(input.attempts ?? 0)),
+          normalizeText(input.lastError) || null,
+          typeof input.nextAttemptAt === "number" && Number.isFinite(input.nextAttemptAt)
+            ? input.nextAttemptAt
+            : null,
+          typeof input.deadlineAt === "number" && Number.isFinite(input.deadlineAt)
+            ? input.deadlineAt
+            : null,
           timestamp,
         );
         if (result.changes !== 1) return null;
@@ -1066,6 +1192,139 @@ export function createConversationRunQueueStore(options?: {
         `SELECT * FROM conversation_workspace_run_reservation
          ORDER BY workspace_id ASC, created_at ASC, run_id ASC`,
       ).all().map(reservationRowToItem));
+    },
+
+    acquireWorkspaceRuntimeOperation(input) {
+      return withDb((db) => db.transaction(() => {
+        const workspaceId = normalizeText(input.workspaceId);
+        const kind = input.kind;
+        const sourceClass = input.sourceClass;
+        const reasonCode = normalizeText(input.reasonCode);
+        const expiresAt = Math.max(0, Math.floor(input.expiresAt));
+        if (!workspaceId || !reasonCode || !Number.isSafeInteger(expiresAt) || expiresAt <= now()) {
+          throw new Error("workspaceId, reasonCode, and a future expiresAt are required");
+        }
+        const timestamp = now();
+        const existing = db.query<WorkspaceRuntimeOperationRow, [string]>(
+          `SELECT * FROM conversation_workspace_runtime_operation
+           WHERE workspace_id = ?1 LIMIT 1`,
+        ).get(workspaceId);
+        if (
+          existing &&
+          (existing.state === "granted" || existing.state === "executing") &&
+          existing.expires_at > timestamp
+        ) {
+          return { operation: runtimeOperationRowToItem(existing), acquired: false };
+        }
+        if (existing && (existing.state === "granted" || existing.state === "executing")) {
+          db.query(
+            `UPDATE conversation_workspace_runtime_operation
+             SET state = 'outcome_unknown',
+                 terminal_code = 'lease_expired',
+                 updated_at = ?2
+             WHERE workspace_id = ?1`,
+          ).run(workspaceId, timestamp);
+        }
+        const operationId = normalizeText(input.operationId) || randomUUID();
+        db.query(
+          `INSERT INTO conversation_workspace_runtime_operation (
+             workspace_id, operation_id, kind, source_class, reason_code, state,
+             created_at, updated_at, expires_at, terminal_code
+           ) VALUES (?1, ?2, ?3, ?4, ?5, 'granted', ?6, ?6, ?7, NULL)
+           ON CONFLICT(workspace_id) DO UPDATE SET
+             operation_id = excluded.operation_id,
+             kind = excluded.kind,
+             source_class = excluded.source_class,
+             reason_code = excluded.reason_code,
+             state = 'granted',
+             created_at = excluded.created_at,
+             updated_at = excluded.updated_at,
+             expires_at = excluded.expires_at,
+             terminal_code = NULL`,
+        ).run(workspaceId, operationId, kind, sourceClass, reasonCode, timestamp, expiresAt);
+        const row = db.query<WorkspaceRuntimeOperationRow, [string]>(
+          `SELECT * FROM conversation_workspace_runtime_operation
+           WHERE workspace_id = ?1 LIMIT 1`,
+        ).get(workspaceId);
+        if (!row) throw new Error("failed to acquire workspace runtime operation");
+        return { operation: runtimeOperationRowToItem(row), acquired: true };
+      })());
+    },
+
+    getWorkspaceRuntimeOperation(workspaceId) {
+      return withDb((db) => {
+        const row = db.query<WorkspaceRuntimeOperationRow, [string]>(
+          `SELECT * FROM conversation_workspace_runtime_operation
+           WHERE workspace_id = ?1 LIMIT 1`,
+        ).get(normalizeText(workspaceId));
+        return row ? runtimeOperationRowToItem(row) : null;
+      });
+    },
+
+    beginWorkspaceRuntimeOperation(workspaceId, operationId) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_workspace_runtime_operation
+           SET state = 'executing', updated_at = ?3
+           WHERE workspace_id = ?1 AND operation_id = ?2 AND state = 'granted' AND expires_at > ?3`,
+        ).run(normalizeText(workspaceId), normalizeText(operationId), timestamp);
+        if (result.changes !== 1) return null;
+        const row = db.query<WorkspaceRuntimeOperationRow, [string]>(
+          `SELECT * FROM conversation_workspace_runtime_operation
+           WHERE workspace_id = ?1 LIMIT 1`,
+        ).get(normalizeText(workspaceId));
+        return row ? runtimeOperationRowToItem(row) : null;
+      });
+    },
+
+    completeWorkspaceRuntimeOperation(input) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_workspace_runtime_operation
+           SET state = ?3, terminal_code = ?4, updated_at = ?5
+           WHERE workspace_id = ?1
+             AND operation_id = ?2
+             AND state IN ('granted', 'executing')`,
+        ).run(
+          normalizeText(input.workspaceId),
+          normalizeText(input.operationId),
+          input.state,
+          normalizeText(input.terminalCode) || null,
+          timestamp,
+        );
+        if (result.changes !== 1) return null;
+        const row = db.query<WorkspaceRuntimeOperationRow, [string]>(
+          `SELECT * FROM conversation_workspace_runtime_operation
+           WHERE workspace_id = ?1 LIMIT 1`,
+        ).get(normalizeText(input.workspaceId));
+        return row ? runtimeOperationRowToItem(row) : null;
+      });
+    },
+
+    expireWorkspaceRuntimeOperations(at = now()) {
+      return withDb((db) => db.transaction(() => {
+        const timestamp = Math.max(0, Math.floor(at));
+        db.query(
+          `UPDATE conversation_workspace_runtime_operation
+           SET state = 'outcome_unknown', terminal_code = 'lease_expired', updated_at = ?1
+           WHERE state IN ('granted', 'executing') AND expires_at <= ?1`,
+        ).run(timestamp);
+        return db.query<WorkspaceRuntimeOperationRow, [number]>(
+          `SELECT * FROM conversation_workspace_runtime_operation
+           WHERE state = 'outcome_unknown' AND terminal_code = 'lease_expired' AND updated_at = ?1
+           ORDER BY workspace_id ASC`,
+        ).all(timestamp).map(runtimeOperationRowToItem);
+      })());
+    },
+
+    listActiveWorkspaceRuntimeOperations(at = now()) {
+      return withDb((db) => db.query<WorkspaceRuntimeOperationRow, [number]>(
+        `SELECT * FROM conversation_workspace_runtime_operation
+         WHERE state IN ('granted', 'executing') AND expires_at > ?1
+         ORDER BY workspace_id ASC`,
+      ).all(Math.max(0, Math.floor(at))).map(runtimeOperationRowToItem));
     },
   };
 }

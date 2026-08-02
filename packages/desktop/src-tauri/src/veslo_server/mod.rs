@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 pub mod manager;
 pub mod spawn;
 
-use manager::VesloServerManager;
+use manager::{VesloServerManager, VesloServerState};
 use spawn::{
     host_from_http_url, resolve_veslo_host, resolve_veslo_port_after_restart_detailed,
     spawn_veslo_server,
@@ -1228,6 +1228,37 @@ fn launch_config_matches(
     .is_empty()
 }
 
+/// Whether the running Veslo server was spawned with the lifecycle
+/// credentials of the admission daemon that is currently ready.  This is an
+/// observation only: the server lifecycle owner still decides whether a
+/// mismatch may be repaired.
+pub(crate) fn control_plane_binding_matches(
+    state: &VesloServerState,
+    orchestrator_daemon_url: &str,
+    orchestrator_lifecycle_token: &str,
+) -> bool {
+    control_plane_binding_reason(state, orchestrator_daemon_url, orchestrator_lifecycle_token)
+        == "matched"
+}
+
+/// Stable, non-secret explanation of the current server-to-daemon binding.
+pub(crate) fn control_plane_binding_reason(
+    state: &VesloServerState,
+    orchestrator_daemon_url: &str,
+    orchestrator_lifecycle_token: &str,
+) -> &'static str {
+    if state.orchestrator_daemon_url.is_none() || state.orchestrator_lifecycle_token.is_none() {
+        return "server-unbound";
+    }
+    if state.orchestrator_daemon_url.as_deref() != Some(orchestrator_daemon_url) {
+        return "stale-daemon-url";
+    }
+    if state.orchestrator_lifecycle_token.as_deref() != Some(orchestrator_lifecycle_token) {
+        return "stale-lifecycle-token";
+    }
+    "matched"
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Each launch input is compared independently to produce actionable restart reasons."
@@ -1780,9 +1811,10 @@ mod tests {
     use super::manager::VesloServerState;
     use super::{
         build_urls_for_host_with_engine_resolver, classify_stale_veslo_server_process,
-        client_token_for_spawn, discover_external_host_token, launch_config_matches,
-        launch_config_mismatch_reasons, launch_decision_payload, normalize_launch_token,
-        normalize_launch_url, parse_macos_lsof_current_dir, persisted_client_token_matches_request,
+        client_token_for_spawn, control_plane_binding_matches, control_plane_binding_reason,
+        discover_external_host_token, launch_config_matches, launch_config_mismatch_reasons,
+        launch_decision_payload, normalize_launch_token, normalize_launch_url,
+        parse_macos_lsof_current_dir, persisted_client_token_matches_request,
         publishes_external_urls, read_persisted_veslo_server_info,
         read_persisted_veslo_server_info_with_cleanup, ready_signal_bound_port,
         ready_signal_instance_id, resolve_engine_url_for_bind_host, should_bind_wsl_bridge,
@@ -2160,6 +2192,41 @@ mod tests {
                 "orchestrator_daemon_url",
                 "orchestrator_lifecycle_token",
             ]
+        );
+    }
+
+    #[test]
+    fn control_plane_binding_requires_current_daemon_url_and_token() {
+        let unbound = VesloServerState::default();
+        assert_eq!(
+            control_plane_binding_reason(&unbound, "http://127.0.0.1:59104", "current-token"),
+            "server-unbound",
+        );
+
+        let state = VesloServerState {
+            orchestrator_daemon_url: Some("http://127.0.0.1:59104".to_string()),
+            orchestrator_lifecycle_token: Some("current-token".to_string()),
+            ..Default::default()
+        };
+
+        assert!(control_plane_binding_matches(
+            &state,
+            "http://127.0.0.1:59104",
+            "current-token",
+        ));
+        assert!(!control_plane_binding_matches(
+            &state,
+            "http://127.0.0.1:59105",
+            "current-token",
+        ));
+        assert!(!control_plane_binding_matches(
+            &state,
+            "http://127.0.0.1:59104",
+            "stale-token",
+        ));
+        assert_eq!(
+            control_plane_binding_reason(&state, "http://127.0.0.1:59104", "stale-token"),
+            "stale-lifecycle-token",
         );
     }
 

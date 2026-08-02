@@ -150,6 +150,40 @@ export function summarizeDiagnosticLine(line) {
   };
 }
 
+export function normalizeOperationCorrelation(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 1) return null;
+  const record = value;
+  const operation = record.authoritativeOperation;
+  const operationId = textOrNull(operation?.id);
+  if (operation && (operation.kind !== "conversation-run" || !operationId || operationId.length > 256)) return null;
+  const causation = record.causation && typeof record.causation === "object" && !Array.isArray(record.causation)
+    ? record.causation
+    : {};
+  const scope = record.scope && typeof record.scope === "object" && !Array.isArray(record.scope)
+    ? record.scope
+    : {};
+  const bounded = (candidate, max = 256) => {
+    const text = textOrNull(candidate);
+    return text && text.length <= max ? text : null;
+  };
+  return {
+    version: 1,
+    authoritativeOperation: operationId ? { kind: "conversation-run", id: operationId } : null,
+    causation: {
+      clientMessageId: bounded(causation.clientMessageId),
+      queueItemId: bounded(causation.queueItemId),
+      captureId: bounded(causation.captureId),
+    },
+    scope: {
+      workspaceId: bounded(scope.workspaceId),
+      conversationId: bounded(scope.conversationId),
+    },
+    phase: bounded(record.phase, 128),
+    outcome: bounded(record.outcome, 128),
+    reason: bounded(record.reason, 128),
+  };
+}
+
 function textOrNull(value) {
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   const text = typeof value === "string" ? value.trim() : "";
@@ -199,6 +233,53 @@ function traceSummary(line) {
   else if (/opencode-json:error-status/.test(event)) kind = "opencode_status_error";
   else if (/lifecycle-reconcile/.test(event) && data.status === "failed") kind = "run_failed";
   return { event, data, kind };
+}
+
+function correlation(value) {
+  if (value === undefined || value === null) return { kind: "missing" };
+  if (typeof value !== "object" || Array.isArray(value) || value.version !== 1) return { kind: "malformed" };
+  const text = (candidate, max = 256) => {
+    const normalized = optional(candidate);
+    return normalized && normalized.length <= max ? normalized : null;
+  };
+  const operation = value.authoritativeOperation;
+  const operationId = text(operation && operation.id);
+  if (operation && (operation.kind !== "conversation-run" || !operationId)) return { kind: "malformed" };
+  const causation = value.causation && typeof value.causation === "object" && !Array.isArray(value.causation)
+    ? value.causation : {};
+  const scope = value.scope && typeof value.scope === "object" && !Array.isArray(value.scope)
+    ? value.scope : {};
+  return { kind: "valid", value: {
+    authoritativeOperation: operationId ? { kind: "conversation-run", id: operationId } : null,
+    causation: {
+      clientMessageId: text(causation.clientMessageId),
+      queueItemId: text(causation.queueItemId),
+      captureId: text(causation.captureId),
+    },
+    scope: { workspaceId: text(scope.workspaceId), conversationId: text(scope.conversationId) },
+    phase: text(value.phase, 128), outcome: text(value.outcome, 128), reason: text(value.reason, 128),
+  }};
+}
+
+function addOperationObservation(operations, entry, at) {
+  const operation = entry?.authoritativeOperation;
+  if (!operation) return;
+  const key = operation.kind + ":" + operation.id;
+  const existing = operations.get(key) || {
+    operation,
+    causation: entry.causation,
+    scope: entry.scope,
+    firstAt: at,
+    lastAt: at,
+    events: 0,
+    phases: {},
+    outcomes: {},
+  };
+  existing.lastAt = at;
+  existing.events += 1;
+  if (entry.phase) existing.phases[entry.phase] = (existing.phases[entry.phase] || 0) + 1;
+  if (entry.outcome) existing.outcomes[entry.outcome] = (existing.outcomes[entry.outcome] || 0) + 1;
+  operations.set(key, existing);
 }
 
 function optional(value) {
@@ -272,6 +353,8 @@ async function main() {
       signals: {},
       anomalies: [],
       runs: new Map(),
+      operations: new Map(),
+      malformedCorrelationEvents: 0,
       omittedRunObservations: 0,
     };
     await streamRows(connection, "SELECT event_timestamp AS eventTimestamp, source, stream, level, sequence_no AS sequenceNo, payload_bytes AS payloadBytes, payload_ciphertext, payload_iv, payload_auth_tag FROM debug_log_event WHERE capture_id = ? ORDER BY event_timestamp ASC, sequence_no ASC", [report.diagnosticCaptureId], (row) => {
@@ -295,6 +378,13 @@ async function main() {
         }) + "\n");
       }
       const trace = traceSummary(payload?.line);
+      const correlationResult = correlation(trace?.data?.correlation ?? payload?.correlation);
+      if (correlationResult.kind === "malformed") {
+        diagnostics.malformedCorrelationEvents += 1;
+        diagnostics.signals.correlation_malformed = (diagnostics.signals.correlation_malformed || 0) + 1;
+      } else if (correlationResult.kind === "valid") {
+        addOperationObservation(diagnostics.operations, correlationResult.value, at);
+      }
       if (!trace) return;
       const runId = optional(trace.data.runId);
       if (runId) {
@@ -343,6 +433,18 @@ async function main() {
     result.diagnostics = {
       ...diagnostics,
       runs: [...diagnostics.runs.values()],
+      operations: [
+        {
+          operation: { kind: "feedback", id: report.id },
+          causation: { captureId: report.diagnosticCaptureId ?? null },
+          firstAt: result.feedback.submittedAt,
+          lastAt: result.feedback.submittedAt,
+          events: 1,
+          phases: { "feedback-stored": 1 },
+          outcomes: { [report.status]: 1 },
+        },
+        ...diagnostics.operations.values(),
+      ],
       runsTruncated: diagnostics.omittedRunObservations > 0,
     };
     return result;
@@ -458,6 +560,8 @@ export function formatReport(report, includeFeedbackText) {
   );
   const signals = Object.entries(diagnostics.signals);
   lines.push(`Signals: ${signals.length ? signals.map(([kind, count]) => `${kind}=${count}`).join(", ") : "none"}.`);
+  const operations = diagnostics.operations ?? [];
+  lines.push(`Operations: ${operations.length ? operations.map((entry) => `${entry.operation.kind}:${entry.operation.id}=${entry.events}`).join(", ") : "legacy traces only"}.`);
   const runCounts = { completed: 0, failed: 0, aborted: 0, unresolved: 0, providerTimedOut: 0, submitError: 0 };
   for (const run of diagnostics.runs) {
     if (run.finalStatus === "completed") runCounts.completed += 1;

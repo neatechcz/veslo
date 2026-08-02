@@ -949,6 +949,8 @@ async function ensureTables() {
         \`screenshot_bytes\` int unsigned,
         \`screenshot_data\` longtext,
         \`diagnostic_capture_id\` varchar(36),
+        \`submission_id\` varchar(36),
+        \`request_hash\` varchar(64),
         \`youtrack_issue_id\` varchar(255),
         \`youtrack_issue_url\` varchar(2048),
         \`last_projector_error\` text,
@@ -958,6 +960,8 @@ async function ensureTables() {
         CONSTRAINT \`feedback_report_id\` PRIMARY KEY(\`id\`)
       )
     `)
+    await ensureColumn("feedback_report", "submission_id", "varchar(36)")
+    await ensureColumn("feedback_report", "request_hash", "varchar(64)")
     await ensureIndex("feedback_report", "feedback_report_org_id", ["org_id"])
     await ensureIndex("feedback_report", "feedback_report_user_id", ["user_id"])
     await ensureIndex("feedback_report", "feedback_report_status", ["status"])
@@ -967,6 +971,12 @@ async function ensureTables() {
       ["next_projector_attempt_at"],
     )
     await ensureIndex("feedback_report", "feedback_report_diagnostic_capture_id", ["diagnostic_capture_id"])
+    await ensureIndex(
+      "feedback_report",
+      "feedback_report_org_user_submission_id",
+      ["org_id", "user_id", "submission_id"],
+      true,
+    )
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`feedback_projector_attempt\` (

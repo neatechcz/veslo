@@ -20,6 +20,7 @@ import {
 import type {
   ConversationRunQueueItem,
   ConversationRunQueueStore,
+  ConversationWorkspaceRuntimeOperation,
   ConversationWorkspaceRunEngineOwner,
   ConversationWorkspaceRunReservation,
 } from "../conversation-run-queue-store.js";
@@ -110,11 +111,18 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
   readonly calls: string[] = [];
   readonly registerInputs: Array<Parameters<OrchestratorLifecycleClient["register"]>[0]> = [];
 
+  private withIdleTerminalHandoff(result: LifecycleRunStatusResult | null): LifecycleRunStatusResult | null {
+    if (!result || !["completed", "failed", "aborted"].includes(result.status)) return result;
+    return result.runtimeReadyForSuccessor === undefined
+      ? { ...result, runtimeReadyForSuccessor: true }
+      : result;
+  }
+
   async active(workspaceId: string, conversationId: string): Promise<LifecycleRunStatusResult | null> {
     this.calls.push(`active:${workspaceId}:${conversationId}`);
     if (this.activeError) throw this.activeError;
-    if (this.activeResults.length > 0) return this.activeResults.shift() ?? null;
-    return this.activeResult;
+    if (this.activeResults.length > 0) return this.withIdleTerminalHandoff(this.activeResults.shift() ?? null);
+    return this.withIdleTerminalHandoff(this.activeResult);
   }
 
   async register(
@@ -148,21 +156,28 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     this.calls.push(`markAbortRequested:${workspaceId}:${runId}`);
   }
 
+  async recoverProviderStartTimeout(workspaceId: string, runId: string): Promise<LifecycleRunStatusResult | null> {
+    this.calls.push(`recoverProviderStartTimeout:${workspaceId}:${runId}`);
+    return this.withIdleTerminalHandoff(this.statusResult);
+  }
+
   async status(workspaceId: string, conversationId: string, runId: string): Promise<LifecycleRunStatusResult | null> {
     this.calls.push(`status:${workspaceId}:${conversationId}:${runId}`);
     if (this.statusError) throw this.statusError;
-    return this.statusResult;
+    return this.withIdleTerminalHandoff(this.statusResult);
   }
 }
 
 type SubmittedOpenCodeCall = {
   opencodeMessageId?: string | null;
+  runTrace: { entries: Array<Record<string, unknown>> };
 };
 
 class QueueHarness implements ConversationRunQueueStore {
   private nextId = 1;
   readonly items: ConversationRunQueueItem[] = [];
   readonly reservations = new Map<string, ConversationWorkspaceRunReservation>();
+  readonly runtimeOperations = new Map<string, ConversationWorkspaceRuntimeOperation>();
   readonly enqueueCalls: Array<Parameters<ConversationRunQueueStore["enqueue"]>[0]> = [];
   lostClaimQueueItemId: string | null = null;
 
@@ -340,6 +355,10 @@ class QueueHarness implements ConversationRunQueueStore {
       providerStartAbortPending: previous?.providerStartAbortPending ?? false,
       providerStartAbortDirectory: input.directory ?? previous?.providerStartAbortDirectory ?? null,
       providerStartAbortOpenCodeSessionId: input.opencodeSessionId ?? previous?.providerStartAbortOpenCodeSessionId ?? null,
+      providerStartAbortAttempts: previous?.providerStartAbortAttempts ?? 0,
+      providerStartAbortLastError: previous?.providerStartAbortLastError ?? null,
+      providerStartAbortNextAttemptAt: previous?.providerStartAbortNextAttemptAt ?? null,
+      providerStartAbortDeadlineAt: previous?.providerStartAbortDeadlineAt ?? null,
       terminalizationReason: previous?.terminalizationReason ?? null,
       terminalizationAttempts: previous?.terminalizationAttempts ?? 0,
       terminalizationLastError: previous?.terminalizationLastError ?? null,
@@ -412,6 +431,10 @@ class QueueHarness implements ConversationRunQueueStore {
       providerStartAbortPending: true,
       providerStartAbortDirectory: input.directory,
       providerStartAbortOpenCodeSessionId: input.opencodeSessionId,
+      providerStartAbortAttempts: input.attempts ?? 0,
+      providerStartAbortLastError: input.lastError ?? null,
+      providerStartAbortNextAttemptAt: input.nextAttemptAt ?? null,
+      providerStartAbortDeadlineAt: input.deadlineAt ?? null,
       updatedAt: Date.now(),
     };
     this.reservations.set(key, reservation);
@@ -424,6 +447,69 @@ class QueueHarness implements ConversationRunQueueStore {
 
   listWorkspaceRunReservations() {
     return [...this.reservations.values()];
+  }
+
+  acquireWorkspaceRuntimeOperation(input: Parameters<ConversationRunQueueStore["acquireWorkspaceRuntimeOperation"]>[0]) {
+    const existing = this.runtimeOperations.get(input.workspaceId);
+    if (existing && (existing.state === "granted" || existing.state === "executing") && existing.expiresAt > Date.now()) {
+      return { operation: existing, acquired: false };
+    }
+    const now = Date.now();
+    const operation: ConversationWorkspaceRuntimeOperation = {
+      workspaceId: input.workspaceId,
+      operationId: input.operationId ?? `operation-${this.nextId++}`,
+      kind: input.kind,
+      sourceClass: input.sourceClass,
+      reasonCode: input.reasonCode,
+      state: "granted",
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: input.expiresAt,
+      terminalCode: null,
+    };
+    this.runtimeOperations.set(input.workspaceId, operation);
+    return { operation, acquired: true };
+  }
+
+  getWorkspaceRuntimeOperation(workspaceId: string) {
+    return this.runtimeOperations.get(workspaceId) ?? null;
+  }
+
+  beginWorkspaceRuntimeOperation(workspaceId: string, operationId: string) {
+    const operation = this.runtimeOperations.get(workspaceId);
+    if (!operation || operation.operationId !== operationId || operation.state !== "granted" || operation.expiresAt <= Date.now()) {
+      return null;
+    }
+    const next = { ...operation, state: "executing" as const, updatedAt: Date.now() };
+    this.runtimeOperations.set(workspaceId, next);
+    return next;
+  }
+
+  completeWorkspaceRuntimeOperation(input: Parameters<ConversationRunQueueStore["completeWorkspaceRuntimeOperation"]>[0]) {
+    const operation = this.runtimeOperations.get(input.workspaceId);
+    if (!operation || operation.operationId !== input.operationId || (operation.state !== "granted" && operation.state !== "executing")) {
+      return null;
+    }
+    const next = { ...operation, state: input.state, terminalCode: input.terminalCode ?? null, updatedAt: Date.now() };
+    this.runtimeOperations.set(input.workspaceId, next);
+    return next;
+  }
+
+  expireWorkspaceRuntimeOperations(now = Date.now()) {
+    const expired: ConversationWorkspaceRuntimeOperation[] = [];
+    for (const [workspaceId, operation] of this.runtimeOperations) {
+      if ((operation.state !== "granted" && operation.state !== "executing") || operation.expiresAt > now) continue;
+      const next = { ...operation, state: "outcome_unknown" as const, terminalCode: "lease_expired", updatedAt: now };
+      this.runtimeOperations.set(workspaceId, next);
+      expired.push(next);
+    }
+    return expired;
+  }
+
+  listActiveWorkspaceRuntimeOperations(now = Date.now()) {
+    return [...this.runtimeOperations.values()].filter((operation) =>
+      (operation.state === "granted" || operation.state === "executing") && operation.expiresAt > now
+    );
   }
 }
 
@@ -471,6 +557,7 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
 function controllerHarness(options?: {
   ingestTerminalTranscript?: (input: { runId: string }) => Promise<{ kind: "persisted" | "unchanged" | "incomplete" | "exhausted" } | void>;
   withLifecycle?: boolean;
+  engineOwnerAttachGraceMs?: number;
   submitEngineOwner?: ConversationWorkspaceRunEngineOwner | null;
   startupReservation?: Partial<ConversationWorkspaceRunReservation> & { conversationId: string; runId: string };
 }) {
@@ -597,6 +684,7 @@ function controllerHarness(options?: {
       },
     },
     resolveLifecycleReconcileInitialDelayMs: () => 1_234,
+    resolveEngineOwnerAttachGraceMs: () => options?.engineOwnerAttachGraceMs ?? 80_000,
   });
   return {
     controller,
@@ -1017,6 +1105,15 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     reloadWorkspaceEngineIfIdle: async () => {
       throw new Error("reloadWorkspaceEngineIfIdle should not be called by the shutdown fixture");
     },
+    requestWorkspaceRuntimeOperation: async () => {
+      throw new Error("requestWorkspaceRuntimeOperation should not be called by the shutdown fixture");
+    },
+    beginWorkspaceRuntimeOperation: async () => {
+      throw new Error("beginWorkspaceRuntimeOperation should not be called by the shutdown fixture");
+    },
+    completeWorkspaceRuntimeOperation: async () => {
+      throw new Error("completeWorkspaceRuntimeOperation should not be called by the shutdown fixture");
+    },
     subscribeWorkspaceIdle: () => () => {},
     scheduleQueueDrain: () => {
       throw new Error("scheduleQueueDrain should not be called by the shutdown fixture");
@@ -1095,6 +1192,27 @@ test("submitRun registers inactive local runs before submitting", async () => {
   const submittedMessageId = (submitCalls[0] as SubmittedOpenCodeCall).opencodeMessageId;
   expect(submittedMessageId).toMatch(/^msg_[0-9a-f]{26}$/);
   expect(lifecycle.registerInputs[0]?.opencodeMessageId).toBe(submittedMessageId);
+});
+
+test("submitRun emits an authoritative correlation record only after durable admission", async () => {
+  const input = submitInput({ runId: "run-correlation", clientMessageId: "msg-correlation" });
+  const { controller } = controllerHarness();
+
+  await controller.submitRun(input);
+
+  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:admitted",
+    correlation: {
+      version: 1,
+      authoritativeOperation: { kind: "conversation-run", id: "run-correlation" },
+      causation: { clientMessageId: "msg-correlation", queueItemId: null },
+      scope: { workspaceId: "ws_1", conversationId: "conv-a" },
+      origin: "composer",
+      phase: "admitted",
+      outcome: "accepted",
+      reason: null,
+    },
+  }));
 });
 
 test("submitRun announces the exact prompt run before upstream dispatch", async () => {
@@ -1248,6 +1366,48 @@ test("submitRun maps lifecycle request failures to the existing API error shape"
   }));
 });
 
+test("pre-attachment engine-loss evidence expires without releasing a run", async () => {
+  const owner: ConversationWorkspaceRunEngineOwner = {
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-expired",
+    enginePid: 404,
+    engineStartedAt: 4_000,
+    engineBaseUrl: "http://127.0.0.1:4404",
+  };
+  const harness = controllerHarness({
+    submitEngineOwner: owner,
+    engineOwnerAttachGraceMs: 25,
+  });
+  const { controller, queue, behavior, timers, traceEntries } = harness;
+  behavior.beforeCaptureEngineOwner = () => {
+    controller.notifyEngineLoss({
+      eventId: "loss-before-owner-expiry",
+      workspaceId: "ws_1",
+      engineSlotId: owner.engineSlotId,
+      engineOwnerId: owner.engineOwnerId,
+      enginePid: owner.enginePid,
+      engineStartedAt: owner.engineStartedAt,
+      engineBaseUrl: owner.engineBaseUrl,
+      runIds: ["run-expired"],
+      reason: "engine exited before response headers were persisted",
+    });
+    const expiryTimer = timers.activeTimers().find((timer) => timer.delayMs === 25);
+    expect(expiryTimer).toBeDefined();
+    timers.fire(expiryTimer!.id);
+  };
+
+  await controller.submitRun(submitInput({ runId: "run-expired" }));
+
+  expect(queue.reservations.get("ws_1\0run-expired")).toEqual(
+    expect.objectContaining({ state: "active", ...owner }),
+  );
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:engine-loss-pre-attachment-expired",
+    runId: "run-expired",
+    graceMs: 25,
+  }));
+});
+
 test("submitRun returns the existing queue item for an idempotent client message id", async () => {
   const { controller, lifecycle, queue } = controllerHarness();
   lifecycle.activeResult = { runId: "run-active", status: "running", stale: false };
@@ -1282,18 +1442,21 @@ test("submitRun schedules accepted lifecycle reconciliation after successful Ope
   expect(providerWatchCalls).toEqual([]);
 });
 
-test("submitRun marks lifecycle failed, wakes the queue, and clears active gateway context on submit failure", async () => {
+test("submitRun keeps the reservation through exact runtime handoff after a terminal submit failure", async () => {
   const {
     controller,
     behavior,
     lifecycle,
+    queue,
+    timers,
     activeGatewayCalls,
     providerWatchCalls,
     reconcileCalls,
   } = controllerHarness();
   behavior.submitError = new Error("opencode submit failed");
+  const input = submitInput({ expectAiGatewayStart: true });
 
-  await expect(controller.submitRun(submitInput({ expectAiGatewayStart: true }))).rejects.toThrow(
+  await expect(controller.submitRun(input)).rejects.toThrow(
     "opencode submit failed",
   );
 
@@ -1301,10 +1464,47 @@ test("submitRun marks lifecycle failed, wakes the queue, and clears active gatew
   expect(reconcileCalls).toContainEqual(expect.objectContaining({
     workspaceId: "ws_1",
     conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "upstream-submit-failed-terminalized",
+    delayMs: 0,
+  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+  expect(reconcileCalls).not.toContainEqual(expect.objectContaining({
     reason: "server:conversation-run:queue-drain-scheduled",
   }));
+
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: false,
+    runtimeReadyForSuccessor: false,
+  };
+  const busyHandoffTimer = timers.activeTimers().find((timer) => timer.delayMs === 0);
+  expect(busyHandoffTimer).toBeDefined();
+  timers.fire(busyHandoffTimer!.id);
+  await flushMicrotasks();
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+
+  lifecycle.statusResult = {
+    ...lifecycle.statusResult,
+    runtimeReadyForSuccessor: true,
+  };
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "upstream-submit-failed-runtime-idle",
+  });
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
   expect(providerWatchCalls).toEqual([]);
+  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:admitted",
+    correlation: expect.objectContaining({
+      authoritativeOperation: { kind: "conversation-run", id: "run-reserved" },
+      causation: expect.objectContaining({ clientMessageId: "msg-a" }),
+    }),
+  }));
 });
 
 test("submitRun traces lifecycle markFailed errors without hiding the submit failure", async () => {
@@ -1371,8 +1571,28 @@ test("terminalization retry keeps the reservation until lifecycle termination su
   timers.fire(retryTimer!.id);
   await flushMicrotasks();
 
-  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
   expect(lifecycle.calls.filter((call) => call.startsWith("markFailed:"))).toHaveLength(2);
+  expect(reconcileCalls).toContainEqual(expect.objectContaining({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "terminalization-retry-terminalized",
+    delayMs: 0,
+  }));
+
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: false,
+    runtimeReadyForSuccessor: true,
+  };
+  const handoffTimer = timers.activeTimers().find((timer) => timer.delayMs === 0);
+  expect(handoffTimer).toBeDefined();
+  timers.fire(handoffTimer!.id);
+  await flushMicrotasks();
+
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
   expect(reconcileCalls).toContainEqual(expect.objectContaining({
     workspaceId: "ws_1",
     conversationId: "conv-a",
@@ -1435,6 +1655,12 @@ test("provider-start timeout aborts the stuck OpenCode session before failing an
     reconcileCalls,
   } = controllerHarness();
   behavior.providerStartResult = { started: false, timeoutMs: 25 };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: false,
+    runtimeReadyForSuccessor: true,
+  };
   enqueuePendingRun(queue);
 
   const result = await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
@@ -1454,6 +1680,12 @@ test("provider-start timeout aborts the stuck OpenCode session before failing an
     "markFailed:ws_1:run-reserved:AI gateway provider request did not start within 25ms; OpenCode session was aborted.",
   );
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+
+  const handoffTimer = timers.activeTimers().find((timer) => timer.delayMs === 0);
+  expect(handoffTimer).toBeDefined();
+  timers.fire(handoffTimer!.id);
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
 
   const drainTimer = timers.activeTimers().find((timer) => timer.delayMs === 0);
@@ -1470,6 +1702,79 @@ test("provider-start timeout aborts the stuck OpenCode session before failing an
   }));
 });
 
+test("terminal transcript keeps the reservation until the runtime handoff is idle", async () => {
+  const { controller, lifecycle, queue, timers } = controllerHarness();
+  await controller.submitRun(submitInput());
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+    runtimeReadyForSuccessor: false,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: submitInput().workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "terminal-transcript-before-idle",
+  });
+
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+  expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 1_234 }));
+
+  lifecycle.statusResult = {
+    ...lifecycle.statusResult,
+    runtimeReadyForSuccessor: true,
+  };
+  await controller.reconcileConversationRunLifecycle({
+    workspace: submitInput().workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "terminal-runtime-idle",
+  });
+
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+});
+
+test("provider-start terminal handoff requests one generation-fenced runtime recovery", async () => {
+  const { controller, lifecycle, queue } = controllerHarness();
+  const input = submitInput();
+  await controller.submitRun(input);
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: false,
+    runtimeReadyForSuccessor: false,
+  };
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await controller.reconcileConversationRunLifecycle({
+      workspace: input.workspace,
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "provider-start-timeout-aborted",
+      attempt,
+    });
+  }
+
+  expect(lifecycle.calls.filter((call) => call === "recoverProviderStartTimeout:ws_1:run-reserved")).toHaveLength(1);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+
+  lifecycle.statusResult = {
+    ...lifecycle.statusResult,
+    runtimeReadyForSuccessor: true,
+    engineOwnerState: "lost",
+  };
+  await controller.reconcileConversationRunLifecycle({
+    workspace: input.workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "provider-start-timeout-runtime-recovered",
+  });
+
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+});
+
 test("provider-start timeout retries a failed OpenCode abort without releasing the queue", async () => {
   const { controller, behavior, lifecycle, queue, timers, abortCalls, activeGatewayCalls, reconcileCalls } = controllerHarness();
   behavior.providerStartResult = { started: false, timeoutMs: 25 };
@@ -1482,10 +1787,12 @@ test("provider-start timeout retries a failed OpenCode abort without releasing t
   expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
   expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    reason: "ai-gateway-provider-start-timeout-abort-retry",
-    delayMs: 5_000,
-  }));
+  expect(reconcileCalls.some((call) =>
+    call.reason === "ai-gateway-provider-start-timeout-abort-retry" &&
+    typeof call.delayMs === "number" &&
+    call.delayMs > 4_900 &&
+    call.delayMs <= 5_000,
+  )).toBe(true);
 
   await controller.reconcileConversationRunLifecycle({
     workspace: submitInput().workspace,
@@ -1498,7 +1805,12 @@ test("provider-start timeout retries a failed OpenCode abort without releasing t
   expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
 
   behavior.abortError = null;
-  const retryTimer = timers.activeTimers().find((timer) => timer.delayMs === 5_000);
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "running",
+    stale: false,
+  };
+  const retryTimer = timers.activeTimers().find((timer) => timer.delayMs > 4_900 && timer.delayMs <= 5_000);
   expect(retryTimer).toBeDefined();
   timers.fire(retryTimer!.id);
   for (let index = 0; index < 5; index += 1) await flushMicrotasks();
@@ -1507,7 +1819,42 @@ test("provider-start timeout retries a failed OpenCode abort without releasing t
     "markFailed:ws_1:run-reserved:AI gateway provider request did not start within 25ms; OpenCode session was aborted.",
   );
   expect(abortCalls).toHaveLength(2);
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: false,
+    runtimeReadyForSuccessor: true,
+  };
+  const handoffTimer = timers.activeTimers().find((timer) => timer.delayMs === 0);
+  expect(handoffTimer).toBeDefined();
+  timers.fire(handoffTimer!.id);
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
+});
+
+test("provider-start abort recovery has a durable finite retry budget", async () => {
+  const { controller, behavior, queue, timers, abortCalls } = controllerHarness();
+  behavior.providerStartResult = { started: false, timeoutMs: 25 };
+  behavior.abortError = new Error("OpenCode abort unavailable");
+
+  await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
+
+  for (const delayMs of [5_000, 10_000]) {
+    const retry = timers.activeTimers().find((timer) => timer.delayMs === delayMs);
+    expect(retry).toBeDefined();
+    timers.fire(retry!.id);
+    for (let index = 0; index < 5; index += 1) await flushMicrotasks();
+  }
+
+  expect(abortCalls).toHaveLength(3);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    runId: "run-reserved",
+    providerStartAbortPending: true,
+    providerStartAbortAttempts: 3,
+    providerStartAbortNextAttemptAt: null,
+  }));
+  expect(timers.activeTimers().some((timer) => [5_000, 10_000, 20_000].includes(timer.delayMs))).toBe(false);
 });
 
 test("provider-start timeout releases a run that completed before its abort retry", async () => {
@@ -1579,6 +1926,119 @@ test("guarded workspace reload blocks an admitted run and succeeds after termina
   });
   expect(reloaded).toEqual({ kind: "reloaded" });
   expect(reloads).toBe(1);
+});
+
+test("control-plane rebind remains grantable while a run is reserved", async () => {
+  const { controller, lifecycle } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+
+  await controller.submitRun(submitInput());
+  const granted = await controller.requestWorkspaceRuntimeOperation({
+    workspaceId: "ws_1",
+    operationId: "rebind-a",
+    kind: "rebind_control_plane",
+    sourceClass: "automatic",
+    reasonCode: "sse_invalid_bearer",
+    expiresAt: Date.now() + 10_000,
+  });
+  expect(granted).toEqual(expect.objectContaining({
+    kind: "granted",
+    operation: expect.objectContaining({ operationId: "rebind-a", state: "granted" }),
+  }));
+  expect(await controller.beginWorkspaceRuntimeOperation("ws_1", "rebind-a")).toEqual(
+    expect.objectContaining({ state: "executing" }),
+  );
+});
+
+test("idle-only runtime operation records why an active reservation blocks it", async () => {
+  const { controller, traceEntries } = controllerHarness();
+  await controller.submitRun(submitInput());
+
+  await expect(controller.requestWorkspaceRuntimeOperation({
+    workspaceId: "ws_1",
+    operationId: "reload-a",
+    kind: "reload_workspace_if_idle",
+    sourceClass: "automatic",
+    reasonCode: "test-reload",
+    expiresAt: Date.now() + 10_000,
+  })).resolves.toEqual({ kind: "blocked", reason: "active-runs" });
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:runtime-operation:blocked",
+    workspaceId: "ws_1",
+    operationKind: "reload_workspace_if_idle",
+    reason: "active-runs",
+    reservationCount: 1,
+  }));
+});
+
+test("runtime-operation lease queues new input until completion then permits the server queue", async () => {
+  const { controller, lifecycle, queue, submitCalls } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-next", status: "completed", stale: false, runtimeReadyForSuccessor: true };
+  const granted = await controller.requestWorkspaceRuntimeOperation({
+    workspaceId: "ws_1",
+    operationId: "rebind-a",
+    kind: "rebind_control_plane",
+    sourceClass: "automatic",
+    reasonCode: "sse_invalid_bearer",
+    expiresAt: Date.now() + 10_000,
+  });
+  expect(granted.kind).toBe("granted");
+
+  const queued = await controller.submitRun(submitInput({ runId: "run-next", clientMessageId: "msg-next" }));
+  expect(queued.httpStatus).toBe(202);
+  expect(queue.items).toContainEqual(expect.objectContaining({ reservedRunId: "run-next", state: "pending" }));
+  expect(submitCalls).toEqual([]);
+
+  await controller.beginWorkspaceRuntimeOperation("ws_1", "rebind-a");
+  await controller.completeWorkspaceRuntimeOperation({
+    workspaceId: "ws_1",
+    operationId: "rebind-a",
+    state: "completed",
+    terminalCode: "rebound",
+  });
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(submitCalls).toHaveLength(1);
+  expect(queue.items).toContainEqual(expect.objectContaining({ reservedRunId: "run-next", state: "submitted" }));
+});
+
+test("unknown runtime-operation outcome keeps queued input fenced until a new explicit operation is granted", async () => {
+  const { controller, lifecycle, queue, submitCalls } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-next", status: "completed", stale: false, runtimeReadyForSuccessor: true };
+  const first = await controller.requestWorkspaceRuntimeOperation({
+    workspaceId: "ws_1",
+    operationId: "rebind-expired",
+    kind: "rebind_control_plane",
+    sourceClass: "automatic",
+    reasonCode: "sse_invalid_bearer",
+    expiresAt: Date.now() + 10_000,
+  });
+  expect(first.kind).toBe("granted");
+  await controller.completeWorkspaceRuntimeOperation({
+    workspaceId: "ws_1",
+    operationId: "rebind-expired",
+    state: "outcome_unknown",
+    terminalCode: "lease_expired",
+  });
+
+  const queued = await controller.submitRun(submitInput({ runId: "run-next", clientMessageId: "msg-next" }));
+  expect(queued.httpStatus).toBe(202);
+  await controller.drainConversationQueue("ws_1", "conv-a");
+  expect(submitCalls).toEqual([]);
+  expect(queue.items).toContainEqual(expect.objectContaining({ reservedRunId: "run-next", state: "pending" }));
+
+  const replacement = await controller.requestWorkspaceRuntimeOperation({
+    workspaceId: "ws_1",
+    operationId: "rebind-retry",
+    kind: "rebind_control_plane",
+    sourceClass: "automatic",
+    reasonCode: "sse_invalid_bearer",
+    expiresAt: Date.now() + 10_000,
+  });
+  expect(replacement).toEqual(expect.objectContaining({
+    kind: "granted",
+    operation: expect.objectContaining({ operationId: "rebind-retry", state: "granted" }),
+  }));
 });
 
 test("workspace idle subscribers are notified once when the final run reaches terminal state", async () => {
@@ -2052,7 +2512,7 @@ test("lifecycle reconcile trace records a redacted terminal failure and engine b
 
 test("queue drain submits the next pending item after terminal latest lifecycle", async () => {
   const { controller, lifecycle, queue, submitCalls } = controllerHarness();
-  enqueuePendingRun(queue);
+  const queued = enqueuePendingRun(queue);
   lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
 
   await controller.drainConversationQueue("ws_1", "conv-a");
@@ -2066,6 +2526,16 @@ test("queue drain submits the next pending item after terminal latest lifecycle"
     "status:ws_1:conv-a:latest",
     "register:ws_1:conv-a:run-queued:sess-a:prompt",
   ]);
+  expect(submitCalls).toHaveLength(1);
+  const admittedTrace = (submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries.find(
+    (entry) => entry.event === "server:conversation-run:admitted",
+  );
+  expect(admittedTrace).toMatchObject({
+    correlation: expect.objectContaining({
+      authoritativeOperation: { kind: "conversation-run", id: "run-queued" },
+      causation: expect.objectContaining({ queueItemId: queued.queueItemId, clientMessageId: "msg-queued" }),
+    }),
+  });
 });
 
 test("queue drain does not submit when another controller wins the durable claim", async () => {

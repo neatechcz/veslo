@@ -58,9 +58,10 @@ test("server-owned submit transport fails closed for an unknown local target", (
   );
 });
 
-test("server-owned submit transport rebinds the local server after daemon admission", async () => {
+test("server-owned submit transport verifies the local lifecycle binding after daemon admission", async () => {
   const admissions: Array<Record<string, string>> = [];
   const serverEnsures: Array<Record<string, unknown>> = [];
+  let bindingChecks = 0;
   const ready = await ensureServerOwnedSubmitTransport({
     isTauriRuntime: true,
     targetWorkspace: { workspaceId: "ws-local" },
@@ -72,6 +73,13 @@ test("server-owned submit transport rebinds the local server after daemon admiss
       serverEnsures.push(input);
       return true;
     },
+    inspectControlPlaneBinding: async () => {
+      bindingChecks += 1;
+      return { matches: true, reason: "matched" };
+    },
+    rebindControlPlane: async () => {
+      throw new Error("already-bound transport must not rebind");
+    },
   });
 
   assert.equal(ready, true);
@@ -79,11 +87,12 @@ test("server-owned submit transport rebinds the local server after daemon admiss
     { workspaceId: "ws-local", workspacePath: "C:/work/local" },
   ]);
   assert.deepEqual(serverEnsures, [
-    { requireRuntimeChainReady: false, forceRestart: true },
+    { requireRuntimeChainReady: false },
   ]);
+  assert.equal(bindingChecks, 1);
 });
 
-test("server-owned submit transport waits for cold admission before restarting the server", async () => {
+test("server-owned submit transport waits for cold admission before verifying the server", async () => {
   const order: string[] = [];
   let releaseAdmission!: () => void;
   const admission = new Promise<void>((resolve) => {
@@ -99,8 +108,15 @@ test("server-owned submit transport waits for cold admission before restarting t
       order.push("admission-ready");
     },
     ensureLocalVesloServerRunning: async () => {
-      order.push("server-restart");
+      order.push("server-ensure");
       return true;
+    },
+    inspectControlPlaneBinding: async () => {
+      order.push("binding-check");
+      return { matches: true, reason: "matched" };
+    },
+    rebindControlPlane: async () => {
+      throw new Error("already-bound transport must not rebind");
     },
   });
 
@@ -111,8 +127,72 @@ test("server-owned submit transport waits for cold admission before restarting t
   assert.deepEqual(order, [
     "admission-start",
     "admission-ready",
-    "server-restart",
+    "server-ensure",
+    "binding-check",
   ]);
+});
+
+test("server-owned submit transport repairs a server that started before daemon admission", async () => {
+  const order: string[] = [];
+  let bound = false;
+  const ready = await ensureServerOwnedSubmitTransport({
+    isTauriRuntime: true,
+    targetWorkspace: { workspaceId: "ws-local" },
+    workspaces: [localWorkspace],
+    ensureAdmissionTransport: async () => {
+      order.push("daemon-ready");
+    },
+    ensureLocalVesloServerRunning: async () => {
+      order.push("server-ensure");
+      return true;
+    },
+    inspectControlPlaneBinding: async () => {
+      order.push("binding-check");
+      return { matches: bound, reason: bound ? "matched" : "server-unbound" };
+    },
+    rebindControlPlane: async (workspaceId) => {
+      order.push(`rebind:${workspaceId}`);
+      bound = true;
+      return true;
+    },
+  });
+
+  assert.equal(ready, true);
+  assert.deepEqual(order, [
+    "daemon-ready",
+    "server-ensure",
+    "binding-check",
+    "rebind:ws-local",
+    "server-ensure",
+    "binding-check",
+  ]);
+});
+
+test("server-owned submit transport records the non-secret binding reason when repair is rejected", async () => {
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const ready = await ensureServerOwnedSubmitTransport({
+    isTauriRuntime: true,
+    targetWorkspace: { workspaceId: "ws-local" },
+    workspaces: [localWorkspace],
+    ensureAdmissionTransport: async () => undefined,
+    ensureLocalVesloServerRunning: async () => true,
+    inspectControlPlaneBinding: async () => ({ matches: false, reason: "stale-lifecycle-token" }),
+    rebindControlPlane: async () => false,
+    recordTrace: (event, payload) => traces.push({ event, payload }),
+  });
+
+  assert.equal(ready, false);
+  assert.deepEqual(traces.map(({ event }) => event), [
+    "runtime-readiness:admission-transport:start",
+    "runtime-readiness:admission-transport:daemon-ready",
+    "runtime-readiness:admission-transport:binding-missing",
+    "runtime-readiness:admission-transport:end",
+  ]);
+  assert.deepEqual(traces[2]?.payload, {
+    traceId: null,
+    workspaceId: "ws-local",
+    bindingReason: "stale-lifecycle-token",
+  });
 });
 
 test("admission transport errors expose a stable diagnostic code without raw details", () => {
@@ -148,6 +228,8 @@ test("server-owned submit transport does not ensure the server when admission da
       serverEnsures += 1;
       return true;
     },
+    inspectControlPlaneBinding: async () => ({ matches: true, reason: "matched" }),
+    rebindControlPlane: async () => true,
     recordTrace: (event, payload) => traces.push({ event, payload }),
   });
 

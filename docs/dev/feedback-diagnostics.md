@@ -11,11 +11,19 @@ Feedback diagnostics are a user-opted-in retrospective attachment. They are not 
 - The desktop keeps the most recent ten minutes in a redacted, disk-backed ring with a 50 MiB total limit.
 - When the user attaches diagnostics, desktop creates a local snapshot first.
 - The feedback report is stored in Den before that snapshot is queued for delivery.
-- The snapshot is uploaded to Den separately in bounded batches of at most 1,000 events or 512 KiB.
+- A feedback POST carries a stable client submission hint. Den assigns the
+  canonical feedback ID after durable storage; replaying the same hint with
+  the same canonical request returns that original feedback, while a changed
+  request is rejected rather than silently creating a second report.
+- While the feedback modal retries an outcome-unknown submission, it retains
+  that hint, the original runtime context, screenshot result, and any created
+  diagnostic capture ID so the retry is the same canonical request rather than
+  a new report.
+- The snapshot is uploaded to Den separately in bounded batches of at most 1,000 events or 2 MiB. A durable queue wake starts feedback delivery immediately rather than waiting for the periodic diagnostics flush.
 - Den stores the events in the encrypted debug-log store and links them to the feedback report through `diagnosticCaptureId`.
 - Feedback persistence does not create or project a YouTrack issue.
 
-The native desktop queue is durable. The feedback modal remains in its attachment-delivery state until native status confirms `uploaded`, `uploaded_with_truncation`, or a terminal delivery failure. Keep Veslo open while it is still uploading; a failed or unavailable status is not a successful attachment.
+The native desktop queue is durable. The feedback modal remains in its attachment-delivery state until native status confirms `uploaded`, `uploaded_with_truncation`, or a terminal delivery failure. Keep Veslo open while it is still uploading; a failed or unavailable status is not a successful attachment. If desktop stops after Den stored feedback but before native delivery was queued, the next desktop start performs an authenticated lookup for that exact capture ID and queues it only when Den confirms the same signed-in user and organization own the feedback. A temporarily unavailable lookup is retried with bounded backoff. An unlinked local snapshot is never uploaded or polled indefinitely.
 
 ## Retrieve One Feedback Capture
 
@@ -57,7 +65,9 @@ This prevents one investigation from replacing another. The directory is intenti
 
 ## Interpreting the Summary
 
-Start with the time window, event count, sources, and named signals. Then correlate anomalies with `runId`, `conversationId`, and `clientMessageId` in the full NDJSON only when the compact summary is insufficient.
+Start with the time window, event count, sources, named signals, and the `Operations` line. The export always includes the durable feedback operation and its capture relation. Newer server traces can additionally contribute an authoritative admitted conversation run, with its queue row and client-message causation; older traces continue to use the bounded legacy run summary.
+
+The first version of the correlation record is diagnostic metadata only. Lifecycle traces name only a server-admitted `conversation-run`; the feedback operation is derived by the export from Den's durable feedback row and its capture link. `queueItemId`, `clientMessageId`, capture ID, trace ID, request ID, and client submission IDs are causation or transport hints, never permission to admit, retry, release, or terminalize work. A native capture summary intentionally has no authoritative operation before Den has durably stored the linked feedback. The record has an allowlisted scope, phase, outcome, and reason, and must never carry prompt text, feedback text, paths, tokens, or provider payloads. A malformed record is discarded and counted as `correlation_malformed` without retaining its payload.
 
 The per-run section is intentionally a bounded convenience summary. It tracks at most 2,000 distinct `runId` values recognized in structured Veslo traces. It does not cap, delete, or omit raw stored events. If the summary says that further observations were omitted, use the full NDJSON export for the complete context; the number is observations after the summary capacity was reached, not a count of distinct omitted runs.
 
@@ -67,6 +77,7 @@ The per-run section is intentionally a bounded convenience summary. It tracks at
 | --- | --- |
 | `Diagnostics: no diagnostic capture was attached` | The feedback was valid but no snapshot was attached. Investigate regular application logs instead. |
 | `diagnostics_unavailable` in the feedback UI | The feedback was saved, but a local snapshot could not be created or queued. It is not recoverable from the feedback export. |
+| Feedback POST timed out or lost its response | The app checks the exact capture ID. If Den already stored it, native delivery begins; otherwise the local snapshot remains unqueued and startup recovery checks it again. A temporary lookup outage uses bounded native backoff; an explicit unlinked result does not create a polling loop. |
 | UI remains on attachment delivery | The queue is still pending. Keep Veslo open; do not call it delivered until status says `uploaded` or `uploaded_with_truncation`. |
 | `uploaded_with_truncation` | The attachment reached the 50 MiB local snapshot limit. The available events are valid but the earliest retained context may be incomplete. |
 | Helper cannot connect or returns invalid JSON | Check the owned-server deployment and operator SSH configuration described in `docs/dev/veslo-application-logs.md`; do not work around the helper by copying database credentials or encryption keys locally. |

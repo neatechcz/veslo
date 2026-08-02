@@ -42,6 +42,19 @@ export type WorkspaceClientContext = {
   };
 };
 
+export type WorkspaceRuntimeOperation = {
+  workspaceId: string;
+  operationId: string;
+  kind: "repair_admission_transport" | "rebind_control_plane" | "reload_workspace_if_idle";
+  sourceClass: "automatic" | "user";
+  reasonCode: string;
+  state: "granted" | "executing" | "completed" | "blocked" | "failed" | "outcome_unknown";
+  createdAt: number;
+  updatedAt: number;
+  expiresAt: number;
+  terminalCode: string | null;
+};
+
 export function createWorkspaceClient(context: WorkspaceClientContext) {
   const { baseUrl, token, hostToken, requestJson, timeouts } = context;
 
@@ -177,7 +190,12 @@ export function createWorkspaceClient(context: WorkspaceClientContext) {
     },
 
     reloadEngine: (workspaceId: string, options?: { ifIdle?: boolean; ifRunning?: boolean }) =>
-      requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `${workspacePath(workspaceId)}/engine/reload`, {
+      requestJson<{
+        ok: boolean;
+        reloadedAt?: number;
+        reloaded?: boolean;
+        skipped?: "not-running" | "starting" | null;
+      }>(baseUrl, `${workspacePath(workspaceId)}/engine/reload`, {
         token,
         hostToken,
         method: "POST",
@@ -188,6 +206,35 @@ export function createWorkspaceClient(context: WorkspaceClientContext) {
           },
         } : {}),
       }),
+
+    requestControlPlaneRebind: (workspaceId: string, reasonCode?: string) =>
+      requestJson<{ ok: boolean; operation: WorkspaceRuntimeOperation }>(
+        baseUrl,
+        `${workspacePath(workspaceId)}/runtime-operations/control-plane-rebind`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          ...(reasonCode ? { body: { reasonCode } } : {}),
+        },
+      ),
+
+    beginRuntimeOperation: (workspaceId: string, operationId: string) =>
+      requestJson<{ ok: boolean; operation: WorkspaceRuntimeOperation }>(
+        baseUrl,
+        `${workspacePath(workspaceId)}/runtime-operations/${encodeURIComponent(operationId)}/begin`,
+        { token, hostToken, method: "POST" },
+      ),
+
+    completeRuntimeOperation: (
+      workspaceId: string,
+      operationId: string,
+      input: { state: "completed" | "failed" | "outcome_unknown"; terminalCode?: string },
+    ) => requestJson<{ ok: boolean; operation: WorkspaceRuntimeOperation }>(
+      baseUrl,
+      `${workspacePath(workspaceId)}/runtime-operations/${encodeURIComponent(operationId)}/complete`,
+      { token, hostToken, method: "POST", body: input },
+    ),
 
     listAudit: (workspaceId: string, limit = 50) =>
       requestJson<{ items: VesloAuditEntry[] }>(baseUrl, `${workspacePath(workspaceId)}/audit?limit=${limit}`, {

@@ -482,6 +482,8 @@ export const FeedbackReportTable = mysqlTable(
     screenshot_bytes: int("screenshot_bytes", { unsigned: true }),
     screenshot_data: longtext("screenshot_data"),
     diagnostic_capture_id: varchar("diagnostic_capture_id", { length: 36 }),
+    submission_id: varchar("submission_id", { length: 36 }),
+    request_hash: varchar("request_hash", { length: 64 }),
     youtrack_issue_id: varchar("youtrack_issue_id", { length: 255 }),
     youtrack_issue_url: varchar("youtrack_issue_url", { length: 2048 }),
     last_projector_error: text("last_projector_error"),
@@ -497,6 +499,11 @@ export const FeedbackReportTable = mysqlTable(
     index("feedback_report_status").on(table.status),
     index("feedback_report_next_projector_attempt_at").on(table.next_projector_attempt_at),
     index("feedback_report_diagnostic_capture_id").on(table.diagnostic_capture_id),
+    uniqueIndex("feedback_report_org_user_submission_id").on(
+      table.org_id,
+      table.user_id,
+      table.submission_id,
+    ),
   ],
 )
 

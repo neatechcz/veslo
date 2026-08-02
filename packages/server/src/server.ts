@@ -1733,6 +1733,8 @@ async function fetchOpencodeJson(
     /** Server-owned authorization binding paired with the runtime skill view. */
     authorizationRevision?: string | null;
     managedSkillStoreRoot?: string | null;
+    /** Exact run control must use the attached runtime and may not start or restage one. */
+    requireRunningEngine?: boolean;
     orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
     onAttemptStart?: (input: { executionRoute: "direct" | "orchestrator" }) => void;
     onAttemptFailure?: (input: { executionRoute: "direct" | "orchestrator"; error: unknown }) => void;
@@ -1787,6 +1789,9 @@ async function fetchOpencodeJson(
   const managedSkillStoreRoot = init.managedSkillStoreRoot?.trim() ?? "";
   if (managedSkillStoreRoot && isWorkspaceOpencodeProxyUrl(url, workspace.id)) {
     headers.set(VESLO_MANAGED_SKILL_STORE_ROOT_HEADER, managedSkillStoreRoot);
+  }
+  if (init.requireRunningEngine === true && usesOrchestratorWorkspaceProxy) {
+    headers.set("x-veslo-engine-if-running", "1");
   }
 
   const directoryOverride = init.directory?.trim() ?? "";
@@ -6216,14 +6221,19 @@ function createRoutes(
         null,
       createBackgroundRunTrace: createBackgroundConversationRunTracer,
       submitOpenCode: submitConversationRunToOpenCode,
-      abortOpenCode: async ({ runTrace, workspace, target }) => {
+      abortOpenCode: async ({ runTrace, workspace, target, runId }) => {
         const abortQuery = new URLSearchParams();
         abortQuery.set("directory", target.directory);
         return fetchOpencodeJsonWithOrchestratorFallback(
           config,
           { ...workspace, directory: target.directory },
           `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
-          { method: "POST", sendTraceId: runTrace.traceId },
+          {
+            method: "POST",
+            sendTraceId: runTrace.traceId,
+            conversationRunId: runId,
+            requireRunningEngine: true,
+          },
         );
       },
       abortActiveGatewayProxyRequests: abortActiveAiGatewayProxyRequests,
@@ -6241,6 +6251,8 @@ function createRoutes(
         resolveConversationRunLifecycleReconcilePollMs,
       resolveLifecycleReconcileMaxAttempts:
         resolveConversationRunLifecycleReconcileMaxAttempts,
+      resolveEngineOwnerAttachGraceMs: () =>
+        resolveOpencodeProxyHeadersTimeoutMs() + 5_000,
       ingestTerminalTranscript: async ({
         workspace,
         directory,
@@ -6412,6 +6424,12 @@ function createRoutes(
     reloadOpencodeEngine,
     reloadWorkspaceEngineIfIdle:
       conversationRunLifecycleController.reloadWorkspaceEngineIfIdle,
+    requestWorkspaceRuntimeOperation:
+      conversationRunLifecycleController.requestWorkspaceRuntimeOperation,
+    beginWorkspaceRuntimeOperation:
+      conversationRunLifecycleController.beginWorkspaceRuntimeOperation,
+    completeWorkspaceRuntimeOperation:
+      conversationRunLifecycleController.completeWorkspaceRuntimeOperation,
     exportWorkspace,
     importWorkspace,
   });

@@ -535,6 +535,29 @@ export async function runtimeEnsureAdmissionTransport(input: {
   });
 }
 
+/** Observes whether the server uses the current admission daemon credentials. */
+export type RuntimeControlPlaneBindingStatus = {
+  matches: boolean;
+  reason: string;
+};
+
+export async function runtimeControlPlaneBindingMatches(input: {
+  workspacePath: string;
+}): Promise<RuntimeControlPlaneBindingStatus> {
+  return invoke<RuntimeControlPlaneBindingStatus>("runtime_control_plane_binding_matches", input);
+}
+
+/** Rebinds only the local Veslo server control plane; it never recreates an engine. */
+export async function runtimeRebindControlPlane(input: {
+  workspaceId?: string | null;
+  workspacePath: string;
+}): Promise<EngineInfo> {
+  return invoke<EngineInfo>("runtime_rebind_control_plane", {
+    workspaceId: input.workspaceId ?? null,
+    workspacePath: input.workspacePath,
+  });
+}
+
 export async function runtimePrepareWorkspace(input: {
   projectDir: string;
   workspaceId?: string | null;

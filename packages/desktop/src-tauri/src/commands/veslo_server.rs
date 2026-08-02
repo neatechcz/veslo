@@ -340,12 +340,13 @@ pub fn veslo_server_e2e_kill_child(
     Ok(VesloServerManager::snapshot_locked(&mut state))
 }
 
-#[tauri::command]
-pub fn veslo_server_restart(
-    app: AppHandle,
-    manager: State<VesloServerManager>,
-    engine_manager: State<EngineManager>,
-    opencode_router_manager: State<OpenCodeRouterManager>,
+/// Rebinds only the Veslo server control plane to the current orchestrator
+/// lifecycle credentials. It deliberately does not stop or recreate an engine.
+pub fn rebind_veslo_server_control_plane(
+    app: &AppHandle,
+    manager: &VesloServerManager,
+    engine_manager: &EngineManager,
+    opencode_router_manager: &OpenCodeRouterManager,
 ) -> Result<VesloServerInfo, String> {
     let (
         engine_workspace_path,
@@ -368,7 +369,7 @@ pub fn veslo_server_restart(
     let engine_workspace_path = engine_workspace_path
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty());
-    let workspace_state = load_workspace_state(&app)?;
+    let workspace_state = load_workspace_state(app)?;
     let workspace_paths = local_workspace_paths_for_server_restart(
         &workspace_state,
         engine_workspace_path.as_deref(),
@@ -425,8 +426,8 @@ pub fn veslo_server_restart(
     };
 
     start_veslo_server(
-        &app,
-        &manager,
+        app,
+        manager,
         &workspace_paths,
         opencode_url.as_deref(),
         opencode_username.as_deref(),
@@ -436,6 +437,16 @@ pub fn veslo_server_restart(
         lifecycle_config.as_ref().map(|(_, token)| token.as_str()),
         None,
     )
+}
+
+#[tauri::command]
+pub fn veslo_server_restart(
+    app: AppHandle,
+    manager: State<VesloServerManager>,
+    engine_manager: State<EngineManager>,
+    opencode_router_manager: State<OpenCodeRouterManager>,
+) -> Result<VesloServerInfo, String> {
+    rebind_veslo_server_control_plane(&app, &manager, &engine_manager, &opencode_router_manager)
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { buildRemoteCommand, buildRemoteProgram, feedbackDiagnosticArtifactName, formatReport, parseArgs, summarizeDiagnosticLine, writeReportOutput } from "./feedback-diagnostic-report.mjs";
+import { buildRemoteCommand, buildRemoteProgram, feedbackDiagnosticArtifactName, formatReport, normalizeOperationCorrelation, parseArgs, summarizeDiagnosticLine, writeReportOutput } from "./feedback-diagnostic-report.mjs";
 
 test("feedback diagnostic report defaults to the latest feedback without exposing text", () => {
   assert.deepEqual(parseArgs([]), {
@@ -47,6 +47,27 @@ test("feedback diagnostic report summarizes provider start timeout without retur
   });
 });
 
+test("feedback diagnostic report accepts only the versioned allowlisted operation correlation", () => {
+  assert.deepEqual(normalizeOperationCorrelation({
+    version: 1,
+    authoritativeOperation: { kind: "conversation-run", id: "run_1" },
+    causation: { clientMessageId: "msg_1", queueItemId: "queue_1", captureId: "capture_1" },
+    scope: { workspaceId: "workspace_1", conversationId: "conversation_1" },
+    phase: "admitted",
+    outcome: "accepted",
+    reason: null,
+  }), {
+    version: 1,
+    authoritativeOperation: { kind: "conversation-run", id: "run_1" },
+    causation: { clientMessageId: "msg_1", queueItemId: "queue_1", captureId: "capture_1" },
+    scope: { workspaceId: "workspace_1", conversationId: "conversation_1" },
+    phase: "admitted",
+    outcome: "accepted",
+    reason: null,
+  });
+  assert.equal(normalizeOperationCorrelation({ version: 1, authoritativeOperation: { kind: "feedback", id: "fb_1" } }), null);
+});
+
 test("feedback diagnostic report uses one constrained Den read command", () => {
   const command = buildRemoteCommand({
     feedbackId: null,
@@ -74,6 +95,17 @@ test("feedback diagnostic report hides feedback text unless explicitly requested
   const defaultOutput = formatReport(report, false);
   assert.doesNotMatch(defaultOutput, /private title|private description/);
   assert.match(formatReport(report, true), /private title[\s\S]*private description/);
+});
+
+test("feedback diagnostic report prints authoritative operation groups when present", () => {
+  const output = formatReport({
+    feedback: { id: "fb_1", status: "stored", submittedAt: null, screenshotStatus: "captured" },
+    diagnostics: {
+      eventCount: 1, payloadBytes: 1, firstEventAt: null, lastEventAt: null, sources: {}, signals: {}, runs: [], runsTruncated: false,
+      operations: [{ operation: { kind: "feedback", id: "fb_1" }, events: 1 }], anomalies: [],
+    },
+  }, false);
+  assert.match(output, /Operations: feedback:fb_1=1\./);
 });
 
 test("feedback diagnostic report writes to an explicit path and creates its parent directory", async () => {
@@ -123,4 +155,6 @@ test("feedback diagnostic report streams full event rows instead of retaining th
   assert.doesNotMatch(remoteProgram, /const rows = await query\(connection, "SELECT event_timestamp/);
   assert.match(remoteProgram, /diagnostics\.runs\.size >= 2000/);
   assert.match(remoteProgram, /runsTruncated: diagnostics\.omittedRunObservations > 0/);
+  assert.match(remoteProgram, /malformedCorrelationEvents/);
+  assert.match(remoteProgram, /correlation_malformed/);
 });

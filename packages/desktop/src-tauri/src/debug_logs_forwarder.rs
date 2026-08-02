@@ -3,7 +3,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -108,6 +108,7 @@ pub struct DesktopDiagnosticsOwner {
     sequence: AtomicU64,
     user_capture: UserDiagnosticCapture,
     recent_diagnostic_ring: RecentDiagnosticRing,
+    delivery_wake: Arc<(Mutex<u64>, Condvar)>,
 }
 
 pub type DebugLogsForwarder = DesktopDiagnosticsOwner;
@@ -487,6 +488,7 @@ impl DesktopDiagnosticsOwner {
             sequence: AtomicU64::new(0),
             user_capture: UserDiagnosticCapture::new(spool_dir.clone()),
             recent_diagnostic_ring: RecentDiagnosticRing::new(spool_dir),
+            delivery_wake: Arc::new((Mutex::new(0), Condvar::new())),
         }
     }
 
@@ -581,7 +583,16 @@ impl DesktopDiagnosticsOwner {
     ) -> Result<UserDiagnosticCaptureStatus, String> {
         self.user_capture
             .queue_feedback_snapshot_for_delivery(capture_id)?;
+        self.wake_delivery();
         Ok(self.user_diagnostic_capture_status())
+    }
+
+    fn wake_delivery(&self) {
+        let (generation, wake) = &*self.delivery_wake;
+        if let Ok(mut generation) = generation.lock() {
+            *generation = generation.saturating_add(1);
+            wake.notify_one();
+        }
     }
 
     pub fn discard_feedback_diagnostic_snapshot(
@@ -1202,8 +1213,19 @@ pub fn spawn_flush_task(
     app: AppHandle,
     flush_interval: Duration,
 ) {
+    let delivery_wake = forwarder.delivery_wake.clone();
     std::thread::spawn(move || loop {
-        std::thread::sleep(flush_interval);
+        let (generation, wake) = &*delivery_wake;
+        let observed = match generation.lock() {
+            Ok(generation) => *generation,
+            Err(_) => 0,
+        };
+        if let Ok(generation) = generation.lock() {
+            let _ =
+                wake.wait_timeout_while(generation, flush_interval, |current| *current == observed);
+        } else {
+            std::thread::sleep(flush_interval);
+        }
 
         if let Err(error) = forwarder.rotate_pending() {
             eprintln!("[debug-logs-forwarder] rotate error: {error}");

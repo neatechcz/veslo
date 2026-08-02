@@ -4,6 +4,7 @@ use crate::commands::opencode_router::opencodeRouter_start;
 use crate::commands::orchestrator::{
     reconcile_orchestrator_workspaces, RuntimeSkillBindingInput, WorkspaceActivationTrace,
 };
+use crate::commands::veslo_server::rebind_veslo_server_control_plane;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
@@ -22,7 +23,8 @@ use crate::types::{
 };
 use crate::utils::truncate_output;
 use crate::veslo_server::{
-    manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
+    control_plane_binding_matches, control_plane_binding_reason, manager::VesloServerManager,
+    persisted_veslo_server_plugin_state_path, start_veslo_server,
 };
 use crate::workspace::server_client::reconcile_server_workspaces;
 use crate::workspace::validation::{validate_workspace_path, ValidationMode};
@@ -57,6 +59,13 @@ pub struct WorkspaceRuntimePrepareResult {
     pub action: String,
     pub reason: String,
     pub engine: EngineInfo,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeControlPlaneBindingStatus {
+    pub matches: bool,
+    pub reason: String,
 }
 
 fn workspace_runtime_prepare_action(
@@ -771,7 +780,9 @@ fn wait_for_admission_transport_proxy_descriptor(
             return Ok(engine);
         }
         if started.elapsed() >= timeout {
-            return Err("Admission transport started without a workspace proxy descriptor.".to_string());
+            return Err(
+                "Admission transport started without a workspace proxy descriptor.".to_string(),
+            );
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -868,6 +879,118 @@ pub async fn runtime_ensure_admission_transport(
     })
     .await
     .map_err(|error| format!("Admission transport task failed: {error}"))?
+}
+
+/// Reports whether the running Veslo server has the exact lifecycle
+/// credentials of the admission daemon that `runtime_ensure_admission_transport`
+/// has made ready. It makes no lifecycle decision and never restarts a process.
+#[tauri::command]
+pub async fn runtime_control_plane_binding_matches(
+    app: AppHandle,
+    veslo_manager: State<'_, VesloServerManager>,
+    workspace_path: String,
+) -> Result<RuntimeControlPlaneBindingStatus, String> {
+    let veslo_state = veslo_manager.inner.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
+        let data_dir = orchestrator::resolve_orchestrator_data_dir();
+        let daemon_url = orchestrator::resolve_orchestrator_status(&data_dir, None)
+            .daemon
+            .map(|daemon| format!("http://127.0.0.1:{}", daemon.port));
+        let lifecycle_token = orchestrator::read_orchestrator_auth(&data_dir)
+            .and_then(|auth| auth.lifecycle_token)
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty());
+        let Some(daemon_url) = daemon_url else {
+            return Ok(RuntimeControlPlaneBindingStatus {
+                matches: false,
+                reason: "admission-daemon-unavailable".to_string(),
+            });
+        };
+        let Some(lifecycle_token) = lifecycle_token else {
+            return Ok(RuntimeControlPlaneBindingStatus {
+                matches: false,
+                reason: "lifecycle-credentials-missing".to_string(),
+            });
+        };
+        let state = veslo_state
+            .lock()
+            .map_err(|_| "Veslo server mutex poisoned".to_string())?;
+        let matches = control_plane_binding_matches(&state, &daemon_url, &lifecycle_token);
+        Ok(RuntimeControlPlaneBindingStatus {
+            matches,
+            reason: control_plane_binding_reason(&state, &daemon_url, &lifecycle_token).to_string(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Control-plane binding probe failed: {error}"))?
+}
+
+/// Rebinds the Veslo server to the current admission daemon credentials. The
+/// server has already granted the workspace operation before this IPC command
+/// is called, so native code never decides whether an active run may be
+/// interrupted. This command only starts missing transport and recreates the
+/// Veslo server process when its lifecycle configuration is stale.
+#[tauri::command]
+pub async fn runtime_rebind_control_plane(
+    app: AppHandle,
+    manager: State<'_, EngineManager>,
+    orchestrator_manager: State<'_, OrchestratorManager>,
+    veslo_manager: State<'_, VesloServerManager>,
+    opencode_router_manager: State<'_, OpenCodeRouterManager>,
+    workspace_id: Option<String>,
+    workspace_path: String,
+) -> Result<EngineInfo, String> {
+    let start_queue = manager.start_queue.clone();
+    let engine_state = manager.inner.clone();
+    let orchestrator_state = orchestrator_manager.inner.clone();
+    let veslo_state = veslo_manager.inner.clone();
+    let veslo_start_queue = veslo_manager.start_queue.clone();
+    let router_state = opencode_router_manager.inner.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let workspace_path =
+            validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+                .to_string_lossy()
+                .to_string();
+        let _start_permit = start_queue
+            .lock()
+            .map_err(|_| "engine start queue mutex poisoned".to_string())?;
+        let orchestrator_manager = OrchestratorManager {
+            inner: orchestrator_state.clone(),
+        };
+        let veslo_manager = VesloServerManager {
+            inner: veslo_state,
+            start_queue: veslo_start_queue,
+        };
+        let opencode_router_manager = OpenCodeRouterManager {
+            inner: router_state,
+        };
+        start_admission_transport_daemon(
+            &app,
+            &orchestrator_manager,
+            &veslo_manager,
+            &workspace_path,
+        )?;
+        rebind_veslo_server_control_plane(
+            &app,
+            &veslo_manager,
+            &EngineManager {
+                inner: engine_state.clone(),
+                start_queue: start_queue.clone(),
+            },
+            &opencode_router_manager,
+        )?;
+        wait_for_admission_transport_proxy_descriptor(
+            engine_state,
+            orchestrator_state,
+            workspace_id,
+            workspace_path,
+        )
+    })
+    .await
+    .map_err(|error| format!("Control-plane rebind task failed: {error}"))?
 }
 
 #[tauri::command]

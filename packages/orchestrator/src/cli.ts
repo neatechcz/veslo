@@ -5593,7 +5593,11 @@ async function runRouterDaemon(args: ParsedArgs) {
     };
     const lifecycleRunPayload = (
       record: RunRecord,
-      extra: { stale?: boolean; noProgressSeconds?: number | null } = {},
+      extra: {
+        stale?: boolean;
+        noProgressSeconds?: number | null;
+        runtimeReadyForSuccessor?: boolean | null;
+      } = {},
     ) => {
       const { lastProgressSignature: _lastProgressSignature, ...publicRecord } = record;
       return {
@@ -6189,6 +6193,76 @@ async function runRouterDaemon(args: ParsedArgs) {
             send(200, lifecycleRunPayload(record));
             return;
           }
+          if (parts[4] === "recover-provider-start-timeout") {
+            const reconciled = await runRegistry.get(workspace.id, runId);
+            if (!reconciled) {
+              send(404, { error: "run not found" });
+              return;
+            }
+            const record = reconciled.record;
+            const exactOwnerIsAttached =
+              record.engineOwnerState === "attached" &&
+              Boolean(record.engineOwnerId) &&
+              record.enginePid !== null &&
+              record.engineStartedAt !== null &&
+              Boolean(record.engineBaseUrl);
+            if (
+              !isTerminalRunStatus(record.status) ||
+              reconciled.runtimeReadyForSuccessor === true ||
+              !exactOwnerIsAttached
+            ) {
+              send(409, { error: "provider_start_recovery_not_needed" });
+              return;
+            }
+            const recordOwner: RunEngineOwner = {
+              engineSlotId: record.engineSlotId,
+              engineOwnerId: record.engineOwnerId,
+              engineOwnerState: "attached",
+              enginePid: record.enginePid,
+              engineStartedAt: record.engineStartedAt,
+              engineBaseUrl: record.engineBaseUrl,
+            };
+            const activePeers = runStore.activeForEngineOwner(record.engineOwnerId!)
+              .filter((candidate) => candidate.runId !== record.runId);
+            if (activePeers.length > 0) {
+              send(409, {
+                error: "provider_start_recovery_blocked_active_runs",
+                activeRunId: activePeers[0]?.runId ?? null,
+              });
+              return;
+            }
+            const currentOwner = runEngineOwnerFromEngine(pool.get(workspace.id));
+            const ownerMatchesCurrentEngine =
+              currentOwner.engineOwnerId === recordOwner.engineOwnerId &&
+              currentOwner.enginePid === recordOwner.enginePid &&
+              currentOwner.engineStartedAt === recordOwner.engineStartedAt &&
+              currentOwner.engineBaseUrl === recordOwner.engineBaseUrl;
+            if (currentOwner.engineOwnerId && !ownerMatchesCurrentEngine) {
+              send(409, { error: "provider_start_recovery_owner_changed" });
+              return;
+            }
+            if (ownerMatchesCurrentEngine) {
+              await pool.suspend(workspace.id, "provider-start-timeout-recovery");
+            }
+            const recovered = runRegistry.markTerminalRunEngineLost({
+              workspaceId: workspace.id,
+              runId,
+              ...recordOwner,
+            });
+            if (!recovered) {
+              send(409, { error: "provider_start_recovery_transition_rejected" });
+              return;
+            }
+            traceRuntime("orchestrator:run-lifecycle:provider-start-timeout-recovered", {
+              workspaceId: workspace.id,
+              runId,
+              engineOwnerId: recordOwner.engineOwnerId,
+              enginePid: recordOwner.enginePid,
+              engineWasRunning: ownerMatchesCurrentEngine,
+            });
+            send(200, lifecycleRunPayload(recovered, { runtimeReadyForSuccessor: true }));
+            return;
+          }
         }
 
         send(404, { error: "not found" });
@@ -6228,6 +6302,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(200, lifecycleRunPayload(active.record, {
             stale: active.stale,
             noProgressSeconds: active.noProgressSeconds,
+            runtimeReadyForSuccessor: active.runtimeReadyForSuccessor,
           }));
           return;
         }
@@ -6255,6 +6330,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         send(200, lifecycleRunPayload(reconciled.record, {
           stale: reconciled.stale,
           noProgressSeconds: reconciled.noProgressSeconds,
+          runtimeReadyForSuccessor: reconciled.runtimeReadyForSuccessor,
         }));
         return;
       }
@@ -6339,6 +6415,11 @@ async function runRouterDaemon(args: ParsedArgs) {
         // instance. Blocking it would turn a safe deferred update into a
         // permanent drain and violate abort isolation.
         const directoryRefreshBypass = proxyMethod === "POST" && /\/abort\/?$/.test(restPath);
+        // A lifecycle abort for an already admitted run is control traffic, not
+        // a new skill admission. It must use that run's attached engine as-is:
+        // staging config or resolving a newer skill view can reject the abort
+        // with skill_view_busy and leave the original run stuck forever.
+        const exactRunControl = directoryRefreshBypass && Boolean(conversationRunId);
         let proxyTarget: Awaited<ReturnType<typeof resolveOpencodeProxyTarget>>;
         let pooledSkillResolution: Awaited<
           ReturnType<typeof resolveOrdinaryPooledSkillBinding>
@@ -6393,7 +6474,8 @@ async function runRouterDaemon(args: ParsedArgs) {
             workspaceTopology === "pooled-per-workspace" &&
             proxyMethod !== "GET" &&
             proxyMethod !== "HEAD" &&
-            !requireRunningEngine
+            !requireRunningEngine &&
+            !exactRunControl
           ) {
             pooledSkillResolution = await resolveOrdinaryPooledSkillBinding({
               workspaceId: ws.id,
@@ -6414,7 +6496,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           proxyTarget = await resolveOpencodeProxyTarget({
             topology: workspaceTopology,
             method: proxyMethod,
-            allowEngineStart: !requireRunningEngine,
+            allowEngineStart: !requireRunningEngine && !exactRunControl,
             workspaceId: ws.id,
             workspacePath: ws.path,
             pooledEngine: pool,
@@ -6718,7 +6800,8 @@ async function runRouterDaemon(args: ParsedArgs) {
         if (
           workspaceTopology !== "shared-directory-scoped" &&
           proxyMethod !== "GET" &&
-          proxyMethod !== "HEAD"
+          proxyMethod !== "HEAD" &&
+          !exactRunControl
         ) {
           const syncStartedAt = Date.now();
           await syncWorkspaceOpencodeConfigToConfigDir(proxyTarget.directory, engine.configDir);

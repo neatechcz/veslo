@@ -7,7 +7,6 @@ import { fetchJson } from "./http";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import {
   createFeedbackDiagnosticSnapshot,
-  discardFeedbackDiagnosticSnapshot,
   queueFeedbackDiagnosticSnapshotForDelivery,
   type UserDiagnosticCaptureStatus,
 } from "./tauri";
@@ -62,7 +61,12 @@ type SubmitFeedbackReportArgs = {
   title: string;
   description: string;
   context: FeedbackRuntimeContext;
+  submissionId?: string;
   attachDiagnostics?: boolean;
+  diagnosticCaptureId?: string;
+  onDiagnosticSnapshotCreated?: (captureId: string) => void;
+  screenshot?: FeedbackCaptureResult;
+  onFeedbackRequestPrepared?: (screenshot: FeedbackCaptureResult) => void;
   captureSurface?: () => Promise<FeedbackCaptureResult>;
   fetchImpl?: FetchLike;
 };
@@ -95,11 +99,17 @@ type FeedbackRequestBody = {
   screenshotDataUrl: string | null;
   screenshotMimeType: string | null;
   diagnosticCaptureId: string | null;
+  submissionId: string;
 };
 
 type FeedbackSubmitResponse = {
   feedbackId?: unknown;
   status?: unknown;
+};
+
+type FeedbackDiagnosticCaptureLookupResponse = {
+  linked?: unknown;
+  feedbackId?: unknown;
 };
 
 const resolveFetch = (): FetchLike =>
@@ -160,6 +170,7 @@ function buildFeedbackRequestBody(args: {
   orgId: string;
   orgName: string | null;
   diagnosticCaptureId: string | null;
+  submissionId: string;
 }): FeedbackRequestBody {
   return {
     title: args.title.trim(),
@@ -173,6 +184,7 @@ function buildFeedbackRequestBody(args: {
     screenshotDataUrl: args.screenshot.dataUrl,
     screenshotMimeType: args.screenshot.mimeType,
     diagnosticCaptureId: args.diagnosticCaptureId,
+    submissionId: args.submissionId,
   };
 }
 
@@ -189,6 +201,32 @@ function normalizeFeedbackSubmitResult(response: FeedbackSubmitResponse): Omit<S
   };
 }
 
+async function recoverFeedbackDiagnosticAttachment(args: {
+  captureId: string;
+  auth: NonNullable<ReturnType<typeof readDenAuth>>;
+  fetchImpl: FetchLike;
+}): Promise<Omit<SubmitFeedbackReportResult, "diagnosticAttachment"> | null> {
+  try {
+    const baseUrl = args.auth.denApiBase.replace(/\/+$/, "");
+    const lookup = await fetchJson<FeedbackDiagnosticCaptureLookupResponse>(
+      `${baseUrl}/v1/feedback/diagnostic-captures/${encodeURIComponent(args.captureId)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${args.auth.token}`,
+          "x-veslo-org-id": args.auth.orgId,
+        },
+        timeoutMs: FEEDBACK_SUBMIT_TIMEOUT_MS,
+        fetchImpl: args.fetchImpl,
+      },
+    );
+    if (lookup.linked !== true) return null;
+    return normalizeFeedbackSubmitResult(lookup);
+  } catch {
+    return null;
+  }
+}
+
 export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Promise<SubmitFeedbackReportResult> {
   const auth = readDenAuth();
   if (!auth?.token || !auth.denApiBase) {
@@ -196,24 +234,31 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
   }
 
   const diagnosticsRequested = args.attachDiagnostics === true;
-  let diagnosticCaptureId: string | null = null;
-  if (diagnosticsRequested && isTauriRuntime()) {
+  let diagnosticCaptureId = diagnosticsRequested ? args.diagnosticCaptureId?.trim() || null : null;
+  if (diagnosticsRequested && !diagnosticCaptureId && isTauriRuntime()) {
     try {
-      diagnosticCaptureId = (await createFeedbackDiagnosticSnapshot()).captureId;
+      const capture = await createFeedbackDiagnosticSnapshot();
+      const captureId = capture.captureId?.trim() || null;
+      diagnosticCaptureId = captureId;
+      if (captureId) args.onDiagnosticSnapshotCreated?.(captureId);
     } catch {
       // Feedback stays available even when local diagnostics cannot be attached.
     }
   }
+  const submissionId = args.submissionId ?? diagnosticCaptureId ?? globalThis.crypto.randomUUID();
 
-  let screenshot: FeedbackCaptureResult;
-  try {
-    screenshot = await (args.captureSurface ?? (() => captureFeedbackSurface()))();
-  } catch {
-    screenshot = {
-      status: "failed",
-      dataUrl: null,
-      mimeType: null,
-    };
+  let screenshot = args.screenshot;
+  if (!screenshot) {
+    try {
+      screenshot = await (args.captureSurface ?? (() => captureFeedbackSurface()))();
+    } catch {
+      screenshot = {
+        status: "failed",
+        dataUrl: null,
+        mimeType: null,
+      };
+    }
+    args.onFeedbackRequestPrepared?.(screenshot);
   }
 
   const requestBody = buildFeedbackRequestBody({
@@ -226,9 +271,11 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
     orgId: auth.orgId,
     orgName: normalizeOptional(auth.org.name),
     diagnosticCaptureId,
+    submissionId,
   });
 
   const url = `${auth.denApiBase.replace(/\/+$/, "")}/v1/feedback`;
+  const fetchImpl = args.fetchImpl ?? resolveFetch();
   try {
     const result = await fetchJson<FeedbackSubmitResponse>(url, {
       method: "POST",
@@ -238,7 +285,7 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
         "x-veslo-org-id": auth.orgId,
       },
       timeoutMs: FEEDBACK_SUBMIT_TIMEOUT_MS,
-      fetchImpl: args.fetchImpl ?? resolveFetch(),
+      fetchImpl,
     });
     const normalized = normalizeFeedbackSubmitResult(result);
     if (!diagnosticsRequested) {
@@ -274,10 +321,23 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
     }
   } catch (error) {
     if (diagnosticCaptureId) {
-      try {
-        await discardFeedbackDiagnosticSnapshot(diagnosticCaptureId);
-      } catch {
-        // A failed cleanup must not hide the feedback submission error.
+      const recovered = await recoverFeedbackDiagnosticAttachment({
+        captureId: diagnosticCaptureId,
+        auth,
+        fetchImpl,
+      });
+      if (recovered) {
+        try {
+          const capture = await queueFeedbackDiagnosticSnapshotForDelivery(diagnosticCaptureId);
+          if (capture.captureId === diagnosticCaptureId) {
+            return {
+              ...recovered,
+              diagnosticAttachment: { status: "tracking", captureId: diagnosticCaptureId, capture },
+            };
+          }
+        } catch {
+          return { ...recovered, diagnosticAttachment: { status: "unavailable" } };
+        }
       }
     }
     throw normalizeFeedbackSubmitError(error, auth.denApiBase.replace(/\/+$/, ""));

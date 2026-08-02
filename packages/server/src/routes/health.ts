@@ -32,6 +32,9 @@ export type RuntimeChainStatus =
 export type RuntimeChainPayload = {
   status: RuntimeChainStatus;
   checkedAt: number;
+  lifecycle: {
+    configured: boolean;
+  };
   orchestrator: {
     configured: boolean;
     daemonUrl: string | null;
@@ -124,9 +127,13 @@ export async function resolveRuntimeChainPayload(
 ): Promise<RuntimeChainPayload> {
   const checkedAt = Date.now();
   const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") || null;
+  const lifecycleConfigured = Boolean(
+    daemonUrl && config.orchestratorLifecycleToken?.trim(),
+  );
   const base: RuntimeChainPayload = {
     status: "server_running",
     checkedAt,
+    lifecycle: { configured: lifecycleConfigured },
     orchestrator: {
       configured: Boolean(daemonUrl),
       daemonUrl,

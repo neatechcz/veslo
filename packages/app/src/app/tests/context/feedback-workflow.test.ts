@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createRoot } from "solid-js";
 
-import { createFeedbackWorkflow } from "../../context/feedback-workflow.js";
+import { createFeedbackWorkflow, type FeedbackSubmitInput } from "../../context/feedback-workflow.js";
 import type { SubmitFeedbackReportResult } from "../../lib/feedback.js";
 import type { UserDiagnosticCaptureStatus } from "../../lib/tauri.js";
 
@@ -109,14 +109,21 @@ test("feedback workflow submits route, app, workspace, runtime, and platform con
           submitted.push(input);
           return okResult;
         },
+        createSubmissionId: () => "00000000-0000-4000-8000-000000000001",
         reportError: () => {},
         stringifyError: String,
       });
 
       await workflow.persistFeedback({ title: " Bug title ", description: " Details " });
 
-      assert.deepEqual(submitted, [
-        {
+      assert.equal(submitted.length, 1);
+      const firstSubmission = submitted[0] as FeedbackSubmitInput;
+      const {
+        onDiagnosticSnapshotCreated,
+        onFeedbackRequestPrepared,
+        ...firstSubmissionPayload
+      } = firstSubmission;
+      assert.deepEqual(firstSubmissionPayload, {
           title: " Bug title ",
           description: " Details ",
           context: {
@@ -133,8 +140,10 @@ test("feedback workflow submits route, app, workspace, runtime, and platform con
             appVersion: "2026.6.26",
             platform: "Windows",
           },
-        },
-      ]);
+          submissionId: "00000000-0000-4000-8000-000000000001",
+      });
+      assert.equal(typeof onDiagnosticSnapshotCreated, "function");
+      assert.equal(typeof onFeedbackRequestPrepared, "function");
       assert.equal(workflow.feedbackSubmitSuccessFeedbackId(), "fb_1");
       assert.equal(workflow.feedbackSubmitting(), false);
     } finally {
@@ -185,6 +194,61 @@ test("feedback workflow ignores duplicate submit while busy", async () => {
 
       assert.equal(workflow.feedbackSubmitting(), false);
       assert.equal(workflow.feedbackSubmitSuccessFeedbackId(), "fb_1");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("feedback workflow retains the submission key and snapshot identity for an unchanged retry after an unknown outcome", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const submitted: FeedbackSubmitInput[] = [];
+      let attempts = 0;
+      const workflow = createFeedbackWorkflow({
+        buildContext: () => ({
+          view: "dashboard",
+          pathname: "/dashboard",
+          tab: "scheduled",
+          settingsTab: "general",
+          selectedSessionId: null,
+          activeWorkspaceId: "ws_1",
+          vesloServerWorkspaceId: null,
+          activeWorkspaceType: "local",
+          activeWorkspaceRoot: "/repo",
+          locale: "en",
+          appVersion: "2026.6.26",
+          platform: "Windows",
+        }),
+        submitFeedbackReport: async (input) => {
+          submitted.push(input);
+          attempts += 1;
+          if (attempts === 1) input.onDiagnosticSnapshotCreated?.("00000000-0000-4000-8000-000000000003");
+          if (attempts === 1) input.onFeedbackRequestPrepared?.({
+            status: "captured",
+            dataUrl: "data:image/jpeg;base64,stable",
+            mimeType: "image/jpeg",
+          });
+          if (attempts === 1) throw new Error("feedback outcome unknown");
+          return okResult;
+        },
+        createSubmissionId: () => "00000000-0000-4000-8000-000000000002",
+        reportError: () => {},
+        stringifyError: String,
+      });
+
+      await assert.rejects(workflow.persistFeedback({ title: "Bug", description: "Details", attachDiagnostics: true }));
+      await workflow.persistFeedback({ title: "Bug", description: "Details", attachDiagnostics: true });
+
+      assert.equal(submitted.length, 2);
+      assert.equal(submitted[0]?.submissionId, "00000000-0000-4000-8000-000000000002");
+      assert.equal(submitted[1]?.submissionId, submitted[0]?.submissionId);
+      assert.equal(submitted[1]?.diagnosticCaptureId, "00000000-0000-4000-8000-000000000003");
+      assert.deepEqual(submitted[1]?.screenshot, {
+        status: "captured",
+        dataUrl: "data:image/jpeg;base64,stable",
+        mimeType: "image/jpeg",
+      });
     } finally {
       dispose();
     }

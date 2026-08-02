@@ -197,6 +197,46 @@ describe("run registry", () => {
     expect(reconciled?.record.abortRequested).toBe(true);
   });
 
+  test("terminal transcript keeps admission closed until its exact session is idle", async () => {
+    let probe: RunProbeResult = { active: true, waitReason: "assistant_message_open" };
+    const { registry } = createRegistry(() => probe);
+    await registry.register(input);
+    registry.markFailed("ws-a", "run-a", "provider-start timeout");
+
+    const terminalButBusy = await registry.get("ws-a", "run-a");
+    expect(terminalButBusy?.record.status).toBe("failed");
+    expect(terminalButBusy?.runtimeReadyForSuccessor).toBe(false);
+    await expect(registry.register({ ...input, runId: "run-b" })).rejects.toThrow(RunAlreadyActiveError);
+
+    probe = { active: false, waitReason: "session_idle" };
+    expect((await registry.get("ws-a", "run-a"))?.runtimeReadyForSuccessor).toBe(true);
+    await expect(registry.register({ ...input, runId: "run-b" })).resolves.toMatchObject({ runId: "run-b" });
+  });
+
+  test("marks only the exact terminal engine owner lost for provider-start recovery", async () => {
+    const { registry } = createRegistry(() => ({ active: true, waitReason: "assistant_message_open" }));
+    const owner = {
+      engineSlotId: "ws-a",
+      engineOwnerId: "engine-a",
+      enginePid: 101,
+      engineStartedAt: 1_000,
+      engineBaseUrl: "http://127.0.0.1:4101",
+    };
+    await registry.register({ ...input, ...owner });
+    registry.attachEngineOwner("ws-a", "run-a", owner);
+    registry.markFailed("ws-a", "run-a", "provider-start timeout");
+
+    const recovered = registry.markTerminalRunEngineLost({
+      workspaceId: "ws-a",
+      runId: "run-a",
+      ...owner,
+    });
+    expect(recovered).toMatchObject({ status: "failed", engineOwnerState: "lost" });
+    expect((await registry.get("ws-a", "run-a"))?.runtimeReadyForSuccessor).toBe(true);
+
+    await expect(registry.register({ ...input, runId: "run-b" })).resolves.toMatchObject({ runId: "run-b" });
+  });
+
   test("stable assistant error terminalizes as failed and releases the reservation", async () => {
     const { registry } = createRegistry(() => ({
       active: false,
@@ -291,11 +331,14 @@ describe("run registry", () => {
     expect(store.get("ws-a", "run-a")?.status).toBe("completed");
   });
 
-  test("markAborted terminalizes the run and releases the active lock", async () => {
-    const { registry } = createRegistry(() => ({ active: true }));
+  test("markAborted keeps admission closed until the runtime becomes idle", async () => {
+    let active = true;
+    const { registry } = createRegistry(() => ({ active }));
     await registry.register(input);
 
     const aborted = registry.markAborted("ws-a", "run-a", "user abort reconciled");
+    await expect(registry.register({ ...input, runId: "run-b" })).rejects.toThrow(RunAlreadyActiveError);
+    active = false;
     const next = await registry.register({ ...input, runId: "run-b" });
 
     expect(aborted?.status).toBe("aborted");
@@ -303,6 +346,31 @@ describe("run registry", () => {
     expect(aborted?.error).toBe("user abort reconciled");
     expect(typeof aborted?.completedAt).toBe("number");
     expect(next.runId).toBe("run-b");
+  });
+
+  test("confirmed engine loss opens a terminal handoff without probing a replacement engine", async () => {
+    let probes = 0;
+    const { registry } = createRegistry(() => {
+      probes += 1;
+      return { active: true };
+    });
+    await registry.register(input);
+    await registry.attachEngineOwner("ws-a", "run-a", {
+      engineOwnerId: "owner-a",
+      enginePid: 41,
+      engineStartedAt: 100,
+      engineBaseUrl: "http://127.0.0.1:4100",
+    });
+    registry.markEngineLost({
+      engineOwnerId: "owner-a",
+      enginePid: 41,
+      engineStartedAt: 100,
+      engineBaseUrl: "http://127.0.0.1:4100",
+      error: "engine exited",
+    });
+
+    await expect(registry.register({ ...input, runId: "run-b" })).resolves.toMatchObject({ runId: "run-b" });
+    expect(probes).toBe(0);
   });
 
   test("markEngineLost terminalizes only active runs from the lost engine generation", async () => {

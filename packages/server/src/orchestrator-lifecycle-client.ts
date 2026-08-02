@@ -14,6 +14,12 @@ export type LifecycleRunStatusResult = {
   runId: string;
   status: LifecycleRunStatus;
   stale: boolean;
+  /**
+   * A terminal transcript alone is not permission to admit its successor.
+   * `false` means the exact OpenCode session is still busy; `true` means the
+   * orchestrator observed it idle after the terminal result.
+   */
+  runtimeReadyForSuccessor?: boolean | null;
   engineSlotId?: string | null;
   engineOwnerId?: string | null;
   engineOwnerState?: "pending" | "attached" | "lost" | null;
@@ -119,6 +125,11 @@ export type OrchestratorLifecycleClient = {
   markFailed(workspaceId: string, runId: string, error: string): Promise<void>;
   markAborted(workspaceId: string, runId: string, error?: string): Promise<void>;
   markAbortRequested(workspaceId: string, runId: string): Promise<void>;
+  /**
+   * Last-resort recovery for one terminal provider-start timeout whose exact
+   * OpenCode session stayed busy after a successful abort acknowledgement.
+   */
+  recoverProviderStartTimeout(workspaceId: string, runId: string): Promise<LifecycleRunStatusResult | null>;
   status(
     workspaceId: string,
     conversationId: string,
@@ -225,6 +236,11 @@ export function createOrchestratorLifecycleClient(options: {
       status: record.status as LifecycleRunStatus,
       stale: record.stale === true,
     };
+    if (record.runtimeReadyForSuccessor === true || record.runtimeReadyForSuccessor === false) {
+      result.runtimeReadyForSuccessor = record.runtimeReadyForSuccessor;
+    } else if (record.runtimeReadyForSuccessor === null) {
+      result.runtimeReadyForSuccessor = null;
+    }
     if (typeof record.engineSlotId === "string") result.engineSlotId = record.engineSlotId;
     else if (record.engineSlotId === null) result.engineSlotId = null;
     if (typeof record.engineOwnerId === "string") result.engineOwnerId = record.engineOwnerId;
@@ -326,6 +342,11 @@ export function createOrchestratorLifecycleClient(options: {
         `/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}/abort-requested`,
         {},
       );
+    },
+
+    async recoverProviderStartTimeout(workspaceId, runId) {
+      const path = `/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}/recover-provider-start-timeout`;
+      return parseLifecycleRunPayload(path, await post(path, {}));
     },
 
     async status(workspaceId, conversationId, runIdOrLatest) {

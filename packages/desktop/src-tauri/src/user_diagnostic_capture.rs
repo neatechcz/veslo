@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Lines, Write};
+use std::io::{BufRead, BufReader, BufWriter, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,6 +16,14 @@ const FEEDBACK_SNAPSHOT_MAX_BYTES: u64 = 50 * 1024 * 1024;
 const CAPTURE_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
 const MAX_BATCH_BYTES: usize = 512 * 1024;
 const MAX_BATCH_EVENTS: usize = 1_000;
+// Feedback snapshots may be much larger than an interactive support capture.
+// Den accepts up to 10 MiB, so 2 MiB keeps enough headroom while cutting the
+// request count for a full 50 MiB snapshot by roughly four.
+const FEEDBACK_BATCH_MAX_BYTES: usize = 2 * 1024 * 1024;
+// The request envelope is small and fixed. Keeping this headroom lets the
+// streaming packer avoid serializing every growing candidate just to discover
+// whether the next event still fits.
+const BATCH_REQUEST_OVERHEAD_BYTES: usize = 2 * 1024;
 const MAX_RETRY_DELAY_MS: u64 = 5 * 60 * 1000;
 const PRODUCTION_DEN_API_BASE: &str = "https://api.veslo.work";
 const STAGING_DEN_API_BASE: &str = "https://api.staging.veslo.work";
@@ -118,6 +126,18 @@ struct PreparedBatch {
     body: Vec<u8>,
 }
 
+struct FeedbackAttachmentRecovery {
+    capture_id: String,
+    attempts: u32,
+    next_attempt_at: u64,
+}
+
+enum FeedbackAttachmentLink {
+    Linked,
+    Unlinked,
+    Unavailable,
+}
+
 pub struct UserDiagnosticCapture {
     spool_dir: PathBuf,
     journal_path: PathBuf,
@@ -125,6 +145,12 @@ pub struct UserDiagnosticCapture {
     // Delivery confirmation is useful in the running UI, but it must not be
     // restored after a desktop restart once every event was accepted.
     recently_completed: Mutex<Option<CaptureRecord>>,
+    // A feedback record may have reached Den immediately before the desktop
+    // stopped, leaving the local attachment in `ready`. On the next boot, do
+    // one authenticated lookup for that exact capture before deciding whether
+    // native delivery may begin. This is deliberately ephemeral so an
+    // unlinked draft never creates a polling loop.
+    feedback_attachment_recovery: Mutex<Option<FeedbackAttachmentRecovery>>,
     // Serializes every read/write/rewrite of a capture queue with capture appends.
     queue_lock: Mutex<()>,
 }
@@ -296,6 +322,7 @@ impl UserDiagnosticCapture {
             journal_path: journal_path.clone(),
             journal: Mutex::new(load_journal(&journal_path)),
             recently_completed: Mutex::new(None),
+            feedback_attachment_recovery: Mutex::new(None),
             queue_lock: Mutex::new(()),
         };
         {
@@ -330,6 +357,23 @@ impl UserDiagnosticCapture {
                     capture.mark_undeliverable(&record.capture_id, "summary_write_failed");
                 }
                 let _ = capture.persist();
+            }
+            let recovery_capture_id = capture.journal.lock().ok().and_then(|journal| {
+                journal
+                    .latest
+                    .as_ref()
+                    .filter(|record| {
+                        record.kind == "feedback-attachment"
+                            && matches!(record.state.as_str(), "ready" | "ready_with_truncation")
+                    })
+                    .map(|record| record.capture_id.clone())
+            });
+            if let Ok(mut recovery) = capture.feedback_attachment_recovery.lock() {
+                *recovery = recovery_capture_id.map(|capture_id| FeedbackAttachmentRecovery {
+                    capture_id,
+                    attempts: 0,
+                    next_attempt_at: 0,
+                });
             }
         }
         capture
@@ -430,6 +474,18 @@ impl UserDiagnosticCapture {
         let serialized = self.serialize_event(record, "Veslo user capture", "diagnostic", None, 0, serde_json::json!({
             "eventType": "user-capture:summary", "captureId": record.capture_id, "state": record.state,
             "captureKind": record.kind,
+            // A capture is attachment causation, not a feedback operation. The
+            // authoritative feedback id is created later by Den, so native
+            // diagnostics must not invent one before the durable write.
+            "correlation": {
+                "version": 1,
+                "authoritativeOperation": serde_json::Value::Null,
+                "causation": { "captureId": record.capture_id },
+                "scope": { "workspaceId": record.workspace_id },
+                "phase": "diagnostic-capture",
+                "outcome": record.state,
+                "reason": record.terminal_reason,
+            },
             "capturedEvents": record.captured_events, "capturedBytes": record.captured_bytes,
             "droppedRetention": record.dropped_retention, "droppedBudget": record.dropped_budget,
             "droppedDelivery": record.dropped_delivery, "droppedIdentity": record.dropped_identity,
@@ -574,7 +630,30 @@ impl UserDiagnosticCapture {
             if previous.kind == "feedback-attachment"
                 && matches!(previous.state.as_str(), "ready" | "ready_with_truncation")
             {
-                self.discard_feedback_snapshot_locked(&previous.capture_id)?;
+                if previous.user_id != context.user_id || previous.org_id != context.org_id {
+                    return Err(
+                        "The previous diagnostic feedback attachment belongs to another account"
+                            .to_string(),
+                    );
+                }
+                match feedback_attachment_link_status(context, &previous.capture_id) {
+                    FeedbackAttachmentLink::Linked => {
+                        self.update_latest(&previous.capture_id, |latest| {
+                            latest.state = "queued".to_string()
+                        });
+                        self.persist()?;
+                        return Err("The previous feedback attachment is already linked and is being uploaded".to_string());
+                    }
+                    FeedbackAttachmentLink::Unlinked => {
+                        self.discard_feedback_snapshot_locked(&previous.capture_id)?;
+                    }
+                    FeedbackAttachmentLink::Unavailable => {
+                        return Err(
+                            "Could not verify the previous feedback attachment; it was kept safely"
+                                .to_string(),
+                        );
+                    }
+                }
             } else if previous.state == "active" || previous.pending_events > 0 {
                 return Err("The previous diagnostic capture is still active or queued".to_string());
             }
@@ -612,14 +691,55 @@ impl UserDiagnosticCapture {
         self.persist()?;
 
         let capture_id = record.capture_id.clone();
+        let snapshot_path = queue_path(&self.spool_dir, &capture_id);
+        let snapshot_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&snapshot_path)
+            .map_err(|error| error.to_string());
+        let mut snapshot_file = match snapshot_file {
+            Ok(file) => BufWriter::new(file),
+            Err(error) => {
+                self.mark_undeliverable(&capture_id, "snapshot_write_failed");
+                let _ = self.persist();
+                return Err(error);
+            }
+        };
+        let mut captured_events = 0_u64;
+        let mut captured_bytes = 0_u64;
+        let mut dropped_budget = 0_u64;
         let streamed = ring.for_each_recent(|event| {
-            self.append_feedback_snapshot_event(&capture_id, event);
+            let serialized = match self.serialize_event_at(
+                &record,
+                &event.source,
+                &event.stream,
+                event.level.as_deref(),
+                event.sequence_no,
+                (event.timestamp_ms as u128).saturating_mul(1_000_000),
+                serde_json::json!({ "line": event.line }),
+            ) {
+                Ok(value) => value,
+                Err(_) => return Ok(()),
+            };
+            let event_bytes = (serialized.len() + 1) as u64;
+            if captured_bytes.saturating_add(event_bytes) > record.max_bytes {
+                dropped_budget += 1;
+                return Ok(());
+            }
+            writeln!(snapshot_file, "{serialized}").map_err(|error| error.to_string())?;
+            captured_events += 1;
+            captured_bytes += event_bytes;
             Ok(())
         });
         if let Err(error) = streamed {
             self.mark_undeliverable(&capture_id, "snapshot_read_failed");
             let _ = self.persist();
             return Err(error);
+        }
+        if let Err(error) = snapshot_file.flush() {
+            self.mark_undeliverable(&capture_id, "snapshot_write_failed");
+            let _ = self.persist();
+            return Err(error.to_string());
         }
 
         if self
@@ -630,13 +750,16 @@ impl UserDiagnosticCapture {
             .is_some()
         {
             self.update_latest(&capture_id, |latest| {
-                latest.state = if latest.dropped_budget > 0 {
+                latest.captured_events = captured_events;
+                latest.captured_bytes = captured_bytes;
+                latest.pending_events = captured_events;
+                latest.dropped_budget = dropped_budget;
+                latest.state = if dropped_budget > 0 {
                     "ready_with_truncation".to_string()
                 } else {
                     "ready".to_string()
                 };
-                latest.terminal_reason =
-                    (latest.dropped_budget > 0).then(|| "byte_limit".to_string());
+                latest.terminal_reason = (dropped_budget > 0).then(|| "byte_limit".to_string());
             });
             let summary = self
                 .journal
@@ -654,45 +777,6 @@ impl UserDiagnosticCapture {
         self.persist()?;
         drop(_queue);
         Ok(self.status())
-    }
-
-    fn append_feedback_snapshot_event(&self, capture_id: &str, event: RecentDiagnosticEvent) {
-        let record = self
-            .journal
-            .lock()
-            .ok()
-            .and_then(|journal| journal.latest.clone())
-            .filter(|record| record.capture_id == capture_id && record.state == "snapshotting");
-        let Some(record) = record else {
-            return;
-        };
-        let serialized = match self.serialize_event_at(
-            &record,
-            &event.source,
-            &event.stream,
-            event.level.as_deref(),
-            event.sequence_no,
-            (event.timestamp_ms as u128).saturating_mul(1_000_000),
-            serde_json::json!({ "line": event.line }),
-        ) {
-            Ok(value) => value,
-            Err(_) => return,
-        };
-        let event_bytes = (serialized.len() + 1) as u64;
-        if record.captured_bytes.saturating_add(event_bytes) > record.max_bytes {
-            self.update_latest(capture_id, |latest| latest.dropped_budget += 1);
-            return;
-        }
-        if self
-            .append_serialized_unlocked(&record, &serialized)
-            .is_ok()
-        {
-            self.update_latest(capture_id, |latest| {
-                latest.captured_events += 1;
-                latest.captured_bytes += event_bytes;
-                latest.pending_events += 1;
-            });
-        }
     }
 
     pub fn queue_feedback_snapshot_for_delivery(&self, capture_id: &str) -> Result<(), String> {
@@ -714,6 +798,44 @@ impl UserDiagnosticCapture {
         }
         self.update_latest(capture_id, |latest| latest.state = "queued".to_string());
         self.persist()
+    }
+
+    fn feedback_attachment_recovery_due(&self, capture_id: &str) -> bool {
+        self.feedback_attachment_recovery
+            .lock()
+            .ok()
+            .and_then(|recovery| {
+                recovery.as_ref().map(|recovery| {
+                    recovery.capture_id == capture_id && now_ms() >= recovery.next_attempt_at
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    fn clear_feedback_attachment_recovery(&self, capture_id: &str) {
+        let Ok(mut recovery) = self.feedback_attachment_recovery.lock() else {
+            return;
+        };
+        if recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.capture_id == capture_id)
+        {
+            *recovery = None;
+        }
+    }
+
+    fn retry_feedback_attachment_recovery(&self, capture_id: &str) {
+        let Ok(mut recovery) = self.feedback_attachment_recovery.lock() else {
+            return;
+        };
+        let Some(recovery) = recovery
+            .as_mut()
+            .filter(|recovery| recovery.capture_id == capture_id)
+        else {
+            return;
+        };
+        recovery.attempts = recovery.attempts.saturating_add(1);
+        recovery.next_attempt_at = now_ms().saturating_add(retry_delay_ms(recovery.attempts));
     }
 
     pub fn discard_feedback_snapshot(&self, capture_id: &str) -> Result<(), String> {
@@ -985,6 +1107,8 @@ impl UserDiagnosticCapture {
         };
         let mut lines = BufReader::new(file).lines();
         let mut buffered = Vec::<serde_json::Value>::new();
+        let mut buffered_ids = std::collections::HashSet::<String>::new();
+        let mut buffered_bytes = 0_usize;
         let mut delivered = 0_u64;
 
         loop {
@@ -1011,58 +1135,105 @@ impl UserDiagnosticCapture {
                 None => None,
             };
 
-            let mut candidate = buffered.clone();
             if let Some(event) = event {
-                candidate.push(event);
-            }
-            if candidate.is_empty() {
-                break;
-            }
-            if let Err(reason) = validate_delivery_events(&candidate) {
-                self.reject_delivery(&record.capture_id, path, candidate.len() as u64, reason);
-                return;
-            }
-            let prepared = match prepare_batch(context, &record.capture_id, candidate.clone()) {
-                Ok(prepared) => prepared,
-                Err(reason) => {
-                    self.reject_delivery(&record.capture_id, path, candidate.len() as u64, reason);
+                if let Err(reason) = validate_delivery_events(std::slice::from_ref(&event)) {
+                    self.reject_delivery(
+                        &record.capture_id,
+                        path,
+                        buffered.len() as u64 + 1,
+                        reason,
+                    );
                     return;
                 }
-            };
-            let should_send = is_final
-                || candidate.len() > MAX_BATCH_EVENTS
-                || prepared.body.len() > MAX_BATCH_BYTES;
-            if !should_send {
-                buffered = candidate;
-                continue;
-            }
-
-            let (batch, remainder, failure_remaining) = if !is_final
-                && (candidate.len() > MAX_BATCH_EVENTS || prepared.body.len() > MAX_BATCH_BYTES)
-            {
-                let batch = match prepare_batch(context, &record.capture_id, buffered.clone()) {
-                    Ok(batch) => batch,
-                    Err(reason) => {
+                let event_id = event_id(&event).expect("validated event ID").to_string();
+                if !buffered_ids.insert(event_id) {
+                    self.reject_delivery(
+                        &record.capture_id,
+                        path,
+                        buffered.len() as u64 + 1,
+                        "queue_duplicate_event_id",
+                    );
+                    return;
+                }
+                let event_bytes = match serde_json::to_vec(&event) {
+                    Ok(value) => value.len().saturating_add(1),
+                    Err(_) => {
                         self.reject_delivery(
                             &record.capture_id,
                             path,
-                            candidate.len() as u64,
-                            reason,
+                            buffered.len() as u64 + 1,
+                            "queue_event_unserializable",
                         );
                         return;
                     }
                 };
-                let next = candidate.last().cloned().into_iter().collect();
-                (batch, next, candidate)
-            } else {
-                (prepared, Vec::new(), candidate)
-            };
+                buffered_bytes = buffered_bytes.saturating_add(event_bytes);
+                buffered.push(event);
+            }
+            if buffered.is_empty() {
+                break;
+            }
+
+            let should_send = is_final
+                || buffered.len() > MAX_BATCH_EVENTS
+                || buffered_bytes.saturating_add(BATCH_REQUEST_OVERHEAD_BYTES)
+                    > FEEDBACK_BATCH_MAX_BYTES;
+            if !should_send {
+                continue;
+            }
+
+            let mut remainder = Vec::new();
+            if !is_final
+                && (buffered.len() > MAX_BATCH_EVENTS
+                    || buffered_bytes.saturating_add(BATCH_REQUEST_OVERHEAD_BYTES)
+                        > FEEDBACK_BATCH_MAX_BYTES)
+                && buffered.len() > 1
+            {
+                let last = buffered.pop().expect("checked buffered event");
+                remainder.push(last);
+            }
+            let mut batch =
+                match prepare_batch(context, &record.capture_id, std::mem::take(&mut buffered)) {
+                    Ok(prepared) => prepared,
+                    Err(reason) => {
+                        self.reject_delivery(&record.capture_id, path, 1, reason);
+                        return;
+                    }
+                };
+            // The conservative size estimate above avoids this loop for normal
+            // input. It remains as an exact guard for future envelope changes.
+            while batch.body.len() > FEEDBACK_BATCH_MAX_BYTES && batch.events.len() > 1 {
+                let mut events = batch.events;
+                let last = events.pop().expect("checked multi-event batch");
+                remainder.insert(0, last);
+                batch = match prepare_batch(context, &record.capture_id, events) {
+                    Ok(prepared) => prepared,
+                    Err(reason) => {
+                        self.reject_delivery(&record.capture_id, path, 1, reason);
+                        return;
+                    }
+                };
+            }
             match poster(context, &batch) {
                 Ok(()) => {
                     delivered += batch.events.len() as u64;
                     buffered = remainder;
+                    buffered_ids.clear();
+                    buffered_bytes = 0;
+                    for event in &buffered {
+                        let id = event_id(event).expect("validated event ID").to_string();
+                        buffered_ids.insert(id);
+                        buffered_bytes = buffered_bytes.saturating_add(
+                            serde_json::to_vec(event)
+                                .expect("validated serializable event")
+                                .len()
+                                .saturating_add(1),
+                        );
+                    }
                 }
                 Err(PostBatchError::Rejected) => {
+                    let mut failure_remaining = batch.events;
+                    failure_remaining.extend(remainder);
                     let dropped = self
                         .write_feedback_remaining_unlocked(path, &failure_remaining, &mut lines)
                         .unwrap_or(failure_remaining.len() as u64);
@@ -1079,6 +1250,8 @@ impl UserDiagnosticCapture {
                     return;
                 }
                 Err(PostBatchError::Retryable) => {
+                    let mut failure_remaining = batch.events;
+                    failure_remaining.extend(remainder);
                     let remaining = match self.write_feedback_remaining_unlocked(
                         path,
                         &failure_remaining,
@@ -1118,7 +1291,10 @@ impl UserDiagnosticCapture {
     }
 
     pub fn flush(&self, context: Option<CaptureCloudContext>) {
-        self.flush_with_poster(context, post_batch);
+        let agent = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(5))
+            .build();
+        self.flush_with_poster(context, |context, batch| post_batch(&agent, context, batch));
     }
 
     fn reject_delivery(&self, capture_id: &str, path: &Path, dropped: u64, reason: &str) {
@@ -1146,11 +1322,41 @@ impl UserDiagnosticCapture {
             .lock()
             .ok()
             .and_then(|journal| journal.latest.clone());
-        let Some(record) = record else {
+        let Some(mut record) = record else {
             return;
         };
         if record.kind == "feedback-attachment" && record.state != "queued" {
-            return;
+            if matches!(record.state.as_str(), "ready" | "ready_with_truncation")
+                && context.as_ref().is_some_and(|context| {
+                    context.user_id == record.user_id
+                        && context.org_id == record.org_id
+                        && is_allowed_den_api_base(&context.den_api_base)
+                })
+                && self.feedback_attachment_recovery_due(&record.capture_id)
+            {
+                match feedback_attachment_link_status(
+                    context.as_ref().expect("checked capture cloud context"),
+                    &record.capture_id,
+                ) {
+                    FeedbackAttachmentLink::Linked => {
+                        self.update_latest(&record.capture_id, |latest| {
+                            latest.state = "queued".to_string()
+                        });
+                        let _ = self.persist();
+                        self.clear_feedback_attachment_recovery(&record.capture_id);
+                        record.state = "queued".to_string();
+                    }
+                    FeedbackAttachmentLink::Unlinked => {
+                        self.clear_feedback_attachment_recovery(&record.capture_id);
+                    }
+                    FeedbackAttachmentLink::Unavailable => {
+                        self.retry_feedback_attachment_recovery(&record.capture_id);
+                    }
+                }
+            }
+            if record.state != "queued" {
+                return;
+            }
         }
         let path = queue_path(&self.spool_dir, &record.capture_id);
         if !path.exists() {
@@ -1342,14 +1548,16 @@ impl UserDiagnosticCapture {
     }
 }
 
-fn post_batch(context: &CaptureCloudContext, batch: &PreparedBatch) -> Result<(), PostBatchError> {
+fn post_batch(
+    agent: &ureq::Agent,
+    context: &CaptureCloudContext,
+    batch: &PreparedBatch,
+) -> Result<(), PostBatchError> {
     let url = format!(
         "{}/v1/desktop-diagnostics",
         context.den_api_base.trim_end_matches('/')
     );
-    let response = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
+    let response = agent
         .post(&url)
         .set("Content-Type", "application/json")
         .set("Authorization", &format!("Bearer {}", context.token))
@@ -1363,6 +1571,39 @@ fn post_batch(context: &CaptureCloudContext, batch: &PreparedBatch) -> Result<()
             Err(PostBatchError::Rejected)
         }
         _ => Err(PostBatchError::Retryable),
+    }
+}
+
+#[derive(Deserialize)]
+struct FeedbackAttachmentLookupResponse {
+    linked: bool,
+}
+
+fn feedback_attachment_link_status(
+    context: &CaptureCloudContext,
+    capture_id: &str,
+) -> FeedbackAttachmentLink {
+    let url = format!(
+        "{}/v1/feedback/diagnostic-captures/{capture_id}",
+        context.den_api_base.trim_end_matches('/')
+    );
+    let response = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .get(&url)
+        .set("Authorization", &format!("Bearer {}", context.token))
+        .set("x-veslo-org-id", &context.org_id)
+        .call();
+    match response {
+        Ok(response) if (200..300).contains(&response.status()) => {
+            match response.into_json::<FeedbackAttachmentLookupResponse>() {
+                Ok(body) if body.linked => FeedbackAttachmentLink::Linked,
+                Ok(_) => FeedbackAttachmentLink::Unlinked,
+                Err(_) => FeedbackAttachmentLink::Unavailable,
+            }
+        }
+        Err(ureq::Error::Status(404, _)) => FeedbackAttachmentLink::Unavailable,
+        _ => FeedbackAttachmentLink::Unavailable,
     }
 }
 
@@ -1634,13 +1875,108 @@ mod tests {
             .unwrap();
         capture.flush_with_poster(Some(context()), |_, batch| {
             post_calls += 1;
-            assert!(batch.body.len() <= MAX_BATCH_BYTES);
+            assert!(batch.body.len() <= FEEDBACK_BATCH_MAX_BYTES);
             Ok(())
         });
         let status = capture.status();
         assert_eq!(post_calls, 1);
         assert_eq!(status.state, "uploaded");
         assert_eq!(status.pending_events, 0);
+    }
+
+    #[test]
+    fn feedback_snapshot_streams_bounded_batches_without_rebuilding_candidates() {
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let ring = RecentDiagnosticRing::new(dir.path().to_path_buf());
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let capture_id = capture
+            .create_feedback_snapshot(&context(), &ring)
+            .unwrap()
+            .capture_id
+            .unwrap();
+        let events = (0..=MAX_BATCH_EVENTS)
+            .map(|index| queued_event(&format!("event-{index}"), &capture_id, "x".to_string()))
+            .collect::<Vec<_>>();
+        replace_queue(&capture, &capture_id, &events, "queued");
+
+        let mut batches = Vec::new();
+        capture.flush_with_poster(Some(context()), |_, batch| {
+            batches.push((batch.events.len(), batch.body.len()));
+            Ok(())
+        });
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].0, MAX_BATCH_EVENTS);
+        assert_eq!(batches[1].0, 1);
+        assert!(batches
+            .iter()
+            .all(|(_, bytes)| *bytes <= FEEDBACK_BATCH_MAX_BYTES));
+        let status = capture.status();
+        assert_eq!(status.state, "uploaded");
+        assert_eq!(status.accepted_events, events.len() as u64);
+    }
+
+    #[test]
+    fn feedback_snapshot_uses_the_larger_bounded_delivery_request() {
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let ring = RecentDiagnosticRing::new(dir.path().to_path_buf());
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let capture_id = capture
+            .create_feedback_snapshot(&context(), &ring)
+            .unwrap()
+            .capture_id
+            .unwrap();
+        let events = (0..3)
+            .map(|index| {
+                queued_event(
+                    &format!("large-event-{index}"),
+                    &capture_id,
+                    "x".repeat(800 * 1024),
+                )
+            })
+            .collect::<Vec<_>>();
+        replace_queue(&capture, &capture_id, &events, "queued");
+
+        let mut batches = Vec::new();
+        capture.flush_with_poster(Some(context()), |_, batch| {
+            batches.push((batch.events.len(), batch.body.len()));
+            Ok(())
+        });
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].0, 2);
+        assert_eq!(batches[1].0, 1);
+        assert!(batches
+            .iter()
+            .all(|(_, bytes)| *bytes <= FEEDBACK_BATCH_MAX_BYTES));
+    }
+
+    #[test]
+    fn restarted_desktop_marks_one_ready_feedback_snapshot_for_link_recovery() {
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let ring = RecentDiagnosticRing::new(dir.path().to_path_buf());
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let capture_id = capture
+            .create_feedback_snapshot(&context(), &ring)
+            .unwrap()
+            .capture_id
+            .unwrap();
+
+        let restarted = UserDiagnosticCapture::new(dir.path().to_path_buf());
+
+        assert!(restarted.feedback_attachment_recovery_due(&capture_id));
+        restarted.clear_feedback_attachment_recovery(&capture_id);
+        assert!(!restarted.feedback_attachment_recovery_due(&capture_id));
+        assert_eq!(restarted.status().state, "ready");
     }
 
     #[test]
@@ -1670,7 +2006,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_feedback_snapshot_replaces_an_unqueued_stale_snapshot() {
+    fn a_new_feedback_snapshot_keeps_an_unverified_ready_snapshot() {
         if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
             return;
         }
@@ -1680,15 +2016,13 @@ mod tests {
         let first = capture.create_feedback_snapshot(&context(), &ring).unwrap();
         let first_id = first.capture_id.unwrap();
 
-        let second = capture.create_feedback_snapshot(&context(), &ring).unwrap();
-        let second_id = second.capture_id.unwrap();
+        let replacement = capture.create_feedback_snapshot(&context(), &ring);
 
-        assert_ne!(first_id, second_id);
-        assert!(!queue_path(dir.path(), &first_id).exists());
-        assert!(queue_path(dir.path(), &second_id).exists());
+        assert!(replacement.is_err());
+        assert!(queue_path(dir.path(), &first_id).exists());
         assert_eq!(
             capture.status().capture_id.as_deref(),
-            Some(second_id.as_str())
+            Some(first_id.as_str())
         );
     }
 
@@ -1713,6 +2047,9 @@ mod tests {
         let raw = fs::read_to_string(queue_path(dir.path(), &capture_id)).unwrap();
         assert!(raw.contains("\"state\":\"finished\""));
         assert!(raw.contains("\"terminalReason\":\"user_stopped\""));
+        assert!(raw.contains("\"authoritativeOperation\":null"));
+        assert!(raw.contains("\"captureId\":\""));
+        assert!(raw.contains("\"phase\":\"diagnostic-capture\""));
     }
 
     #[test]
