@@ -2047,7 +2047,6 @@ export function createConversationRunLifecycleController(
             attempt + 1 >= PROVIDER_START_TERMINAL_HANDOFF_RECOVERY_ATTEMPT &&
             !providerStartHandoffRecoveryAttempts.has(providerStartHandoffKey)
           ) {
-            providerStartHandoffRecoveryAttempts.add(providerStartHandoffKey);
             recordTrace("server:conversation-run:provider-start-timeout-handoff-recovery:start", {
               workspaceId: input.workspace.id,
               conversationId,
@@ -2056,7 +2055,28 @@ export function createConversationRunLifecycleController(
               ...lifecycleStatusTraceFields(status),
             });
             try {
-              await lifecycleOwner.recoverProviderStartTimeout(input.workspace.id, runId);
+              // Keep the destructive generation check and suspend ordered with
+              // server-side admission. The orchestrator repeats the exact-owner
+              // and active-peer checks, which also protects callers outside this
+              // process, but a new local submit must not slip in between them.
+              const recoveryRequested = await withWorkspaceExecutionGate(input.workspace.id, async () => {
+                const reservation = workspaceRunReservations
+                  .get(normalizeWorkspaceExecutionKey(input.workspace.id))
+                  ?.get(runId);
+                if (!reservation) return false;
+                providerStartHandoffRecoveryAttempts.add(providerStartHandoffKey);
+                await lifecycleOwner.recoverProviderStartTimeout(input.workspace.id, runId);
+                return true;
+              });
+              if (!recoveryRequested) {
+                recordTrace("server:conversation-run:provider-start-timeout-handoff-recovery:stale", {
+                  workspaceId: input.workspace.id,
+                  conversationId,
+                  runId,
+                  attempt: attempt + 1,
+                });
+                return;
+              }
               recordTrace("server:conversation-run:provider-start-timeout-handoff-recovery", {
                 workspaceId: input.workspace.id,
                 conversationId,
