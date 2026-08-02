@@ -110,6 +110,21 @@ export type ConversationWorkspaceRunReservation = {
   updatedAt: number;
 };
 
+/** A durable terminal-owner fence which survives after its old reservation is gone. */
+export type ConversationTerminalHandoffBarrier = {
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  fingerprint: string;
+  state: "observed" | "evidence_requested" | "resolved" | "unresolved";
+  reason: string;
+  attempts: number;
+  requestedAt: number | null;
+  decidedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type ConversationWorkspaceRunEngineOwner = {
   engineSlotId: string;
   engineOwnerId: string;
@@ -204,6 +219,47 @@ export type ConversationRunQueueStore = {
     workspaceId: string,
     runId: string,
   ): ConversationWorkspaceRunReservation | null;
+  getTerminalHandoffBarrier(
+    workspaceId: string,
+    conversationId: string,
+    runId: string,
+  ): ConversationTerminalHandoffBarrier | null;
+  getActiveTerminalHandoffBarrier(
+    workspaceId: string,
+    conversationId: string,
+  ): ConversationTerminalHandoffBarrier | null;
+  observeTerminalHandoffBarrier(input: {
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    fingerprint: string;
+    reason: string;
+  }): ConversationTerminalHandoffBarrier;
+  requestTerminalHandoffBarrierEvidence(input: {
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    fingerprint: string;
+    reason: string;
+  }): ConversationTerminalHandoffBarrier | null;
+  resolveTerminalHandoffBarrier(input: {
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    reason: string;
+  }): ConversationTerminalHandoffBarrier | null;
+  markTerminalHandoffBarrierUnresolved(input: {
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    reason: string;
+  }): ConversationTerminalHandoffBarrier | null;
+  reopenTerminalHandoffBarrier(
+    workspaceId: string,
+    conversationId: string,
+    runId: string,
+  ): ConversationTerminalHandoffBarrier | null;
+  listTerminalHandoffBarriers(): ConversationTerminalHandoffBarrier[];
   markWorkspaceRunProviderStartAbortPending(input: {
     workspaceId: string;
     runId: string;
@@ -306,6 +362,20 @@ type WorkspaceRuntimeOperationRow = {
   updated_at: number;
   expires_at: number;
   terminal_code: string | null;
+};
+
+type TerminalHandoffBarrierRow = {
+  workspace_id: string;
+  conversation_id: string;
+  run_id: string;
+  fingerprint: string;
+  state: string;
+  reason: string;
+  attempts: number;
+  requested_at: number | null;
+  decided_at: number | null;
+  created_at: number;
+  updated_at: number;
 };
 
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
@@ -416,6 +486,22 @@ function createDatabase(dbPath: string): Database {
     );
     CREATE INDEX IF NOT EXISTS conversation_workspace_runtime_operation_active_idx
       ON conversation_workspace_runtime_operation (state, expires_at, updated_at);
+    CREATE TABLE IF NOT EXISTS conversation_terminal_handoff_barrier (
+      workspace_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      state TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      requested_at INTEGER,
+      decided_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (workspace_id, conversation_id, run_id)
+    );
+    CREATE INDEX IF NOT EXISTS conversation_terminal_handoff_barrier_state_idx
+      ON conversation_terminal_handoff_barrier (workspace_id, conversation_id, state, updated_at);
   `);
   ensureQueueSchema(db);
   return db;
@@ -623,6 +709,27 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
     skillViewRevision: row.skill_view_revision?.trim() || null,
     authorizationRevision: row.authorization_revision?.trim() || null,
     openCodeConfigDigest: row.opencode_config_digest?.trim() || null,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+function terminalHandoffBarrierRowToItem(
+  row: TerminalHandoffBarrierRow,
+): ConversationTerminalHandoffBarrier {
+  const state = row.state === "evidence_requested" || row.state === "resolved" || row.state === "unresolved"
+    ? row.state
+    : "observed";
+  return {
+    workspaceId: row.workspace_id,
+    conversationId: row.conversation_id,
+    runId: row.run_id,
+    fingerprint: row.fingerprint,
+    state,
+    reason: row.reason,
+    attempts: Math.max(0, Number(row.attempts)),
+    requestedAt: row.requested_at === null ? null : Number(row.requested_at),
+    decidedAt: row.decided_at === null ? null : Number(row.decided_at),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -978,7 +1085,17 @@ export function createConversationRunQueueStore(options?: {
                started_at = ?2,
                updated_at = ?2,
                error = NULL
-           WHERE queue_item_id = ?1 AND state = 'pending'`,
+           WHERE queue_item_id = ?1
+             AND state = 'pending'
+             -- The handoff fence is the durable admission owner when an old
+             -- reservation was lost during restart. Do not let a status/claim
+             -- race start its successor before that exact fence is resolved.
+             AND NOT EXISTS (
+               SELECT 1 FROM conversation_terminal_handoff_barrier AS barrier
+               WHERE barrier.workspace_id = conversation_run_queue.workspace_id
+                 AND barrier.conversation_id = conversation_run_queue.conversation_id
+                 AND barrier.state IN ('observed', 'evidence_requested', 'unresolved')
+             )`,
         ).run(queueItemId, timestamp);
         if (result.changes !== 1) return null;
         const row = db.query<QueueRow, [string]>(
@@ -1020,6 +1137,12 @@ export function createConversationRunQueueStore(options?: {
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
         ).get(row.workspace_id, row.reserved_run_id);
         if (!reservation) throw new Error("failed to reserve claimed conversation run");
+        // Once a successor is durably claimed, its predecessor's resolved
+        // handoff fence has served its purpose and must not accumulate forever.
+        db.query(
+          `DELETE FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND state = 'resolved'`,
+        ).run(row.workspace_id, row.conversation_id);
         return { item: rowToItem(row), reservation: reservationRowToItem(reservation) };
       })());
     },
@@ -1284,6 +1407,130 @@ export function createConversationRunQueueStore(options?: {
         ).get(normalizeText(workspaceId), normalizeText(runId));
         return row ? reservationRowToItem(row) : null;
       });
+    },
+
+    getTerminalHandoffBarrier(workspaceId, conversationId, runId) {
+      return withDb((db) => {
+        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
+          `SELECT * FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
+        ).get(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId));
+        return row ? terminalHandoffBarrierRowToItem(row) : null;
+      });
+    },
+
+    getActiveTerminalHandoffBarrier(workspaceId, conversationId) {
+      return withDb((db) => {
+        const row = db.query<TerminalHandoffBarrierRow, [string, string]>(
+          `SELECT * FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1 AND conversation_id = ?2
+             AND state IN ('observed', 'evidence_requested', 'unresolved')
+           ORDER BY updated_at DESC, run_id ASC LIMIT 1`,
+        ).get(normalizeText(workspaceId), normalizeText(conversationId));
+        return row ? terminalHandoffBarrierRowToItem(row) : null;
+      });
+    },
+
+    observeTerminalHandoffBarrier(input) {
+      return withDb((db) => db.transaction(() => {
+        const timestamp = now();
+        const workspaceId = normalizeText(input.workspaceId);
+        const conversationId = normalizeText(input.conversationId);
+        const runId = normalizeText(input.runId);
+        db.query(
+          `INSERT INTO conversation_terminal_handoff_barrier (
+             workspace_id, conversation_id, run_id, fingerprint, state, reason, attempts, created_at, updated_at
+           ) VALUES (?1, ?2, ?3, ?4, 'observed', ?5, 0, ?6, ?6)
+           ON CONFLICT(workspace_id, conversation_id, run_id) DO NOTHING`,
+        ).run(workspaceId, conversationId, runId, normalizeText(input.fingerprint), normalizeText(input.reason), timestamp);
+        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
+          `SELECT * FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
+        ).get(workspaceId, conversationId, runId);
+        if (!row) throw new Error("failed to observe terminal handoff barrier");
+        return terminalHandoffBarrierRowToItem(row);
+      })());
+    },
+
+    requestTerminalHandoffBarrierEvidence(input) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_terminal_handoff_barrier
+           SET fingerprint = ?4, state = 'evidence_requested', reason = ?5,
+               attempts = attempts + 1, requested_at = ?6, decided_at = NULL, updated_at = ?6
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 AND state = 'observed'`,
+        ).run(
+          normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId),
+          normalizeText(input.fingerprint), normalizeText(input.reason), timestamp,
+        );
+        if (result.changes !== 1) return null;
+        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
+          `SELECT * FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
+        ).get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
+        return row ? terminalHandoffBarrierRowToItem(row) : null;
+      });
+    },
+
+    resolveTerminalHandoffBarrier(input) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_terminal_handoff_barrier
+           SET state = 'resolved', reason = ?4, decided_at = ?5, updated_at = ?5
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3
+             AND state IN ('observed', 'evidence_requested', 'unresolved')`,
+        ).run(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId), normalizeText(input.reason), timestamp);
+        if (result.changes !== 1) return null;
+        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
+          `SELECT * FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
+        ).get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
+        return row ? terminalHandoffBarrierRowToItem(row) : null;
+      });
+    },
+
+    markTerminalHandoffBarrierUnresolved(input) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_terminal_handoff_barrier
+           SET state = 'unresolved', reason = ?4, decided_at = ?5, updated_at = ?5
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3
+             AND state IN ('observed', 'evidence_requested')`,
+        ).run(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId), normalizeText(input.reason), timestamp);
+        if (result.changes !== 1) return null;
+        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
+          `SELECT * FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
+        ).get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
+        return row ? terminalHandoffBarrierRowToItem(row) : null;
+      });
+    },
+
+    reopenTerminalHandoffBarrier(workspaceId, conversationId, runId) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_terminal_handoff_barrier
+           SET state = 'observed', updated_at = ?4
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 AND state = 'unresolved'`,
+        ).run(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId), timestamp);
+        if (result.changes !== 1) return null;
+        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
+          `SELECT * FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
+        ).get(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId));
+        return row ? terminalHandoffBarrierRowToItem(row) : null;
+      });
+    },
+
+    listTerminalHandoffBarriers() {
+      return withDb((db) => db.query<TerminalHandoffBarrierRow, []>(
+        `SELECT * FROM conversation_terminal_handoff_barrier
+         ORDER BY workspace_id ASC, conversation_id ASC, created_at ASC, run_id ASC`,
+      ).all().map(terminalHandoffBarrierRowToItem));
     },
 
     markWorkspaceRunProviderStartAbortPending(input) {

@@ -23,8 +23,16 @@ const VESLO_DISABLE_SANDBOX_ENV: &str = "VESLO_DISABLE_SANDBOX";
 const VESLO_RUNTIME_FILE_ENV: &str = "VESLO_RUNTIME_FILE";
 const VESLO_RUNTIME_DESCRIPTOR_PATH_ENV: &str = "VESLO_RUNTIME_DESCRIPTOR_PATH";
 const VESLO_SECRETS_FILE_ENV: &str = "VESLO_SECRETS_FILE";
+const VESLO_LOG_FORMAT_ENV: &str = "VESLO_LOG_FORMAT";
 const PORT_RESTART_RETRY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const PORT_RESTART_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+fn desktop_server_observability_env_overrides() -> [(&'static str, &'static str); 1] {
+    // The native feedback capture receives the server's stdout. JSON preserves
+    // redacted log attributes (for example the skill reload reason and retry
+    // budget); pretty output would retain only the human message.
+    [(VESLO_LOG_FORMAT_ENV, "json")]
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VesloPortConflict {
@@ -708,6 +716,9 @@ pub fn spawn_veslo_server(
         command.args(server_args).current_dir(cwd)
     }
     .env("VESLO_MANAGED_AI_BASE_URL", resolve_managed_ai_base_url());
+    for (key, value) in desktop_server_observability_env_overrides() {
+        command = command.env(key, value);
+    }
     command = command.env("VESLO_INSTANCE_ID", instance_id);
     command = command.env(
         VESLO_RUNTIME_FILE_ENV,
@@ -996,6 +1007,14 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--workspace-id", "app-workspace-a"]));
+    }
+
+    #[test]
+    fn desktop_server_uses_structured_logs_for_feedback_diagnostics() {
+        assert_eq!(
+            desktop_server_observability_env_overrides(),
+            [("VESLO_LOG_FORMAT", "json")]
+        );
     }
 
     #[test]

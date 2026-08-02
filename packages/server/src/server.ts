@@ -5776,12 +5776,12 @@ function createRoutes(
       const scopedWorkspace = directory
         ? { ...workspace, directory }
         : workspace;
-      const runtimeSkillView =
-        scopedWorkspace.workspaceType === "local"
-          ? await readServingRuntimeSkillBinding(scopedWorkspace, {
-              dataDir: config.dataDir,
-            }) ?? EMPTY_SERVING_RUNTIME_SKILL_BINDING
-          : null;
+      // Session creation is not Skill admission. Supplying a newly published
+      // binding here could replace the pool generation between creating a
+      // session and its first prompt, or reject another session while a run
+      // owns the current engine. The subsequent run submission carries the
+      // authoritative binding; an unbound create only establishes the durable
+      // OpenCode session on the current engine generation.
       return await fetchOpencodeJsonWithOrchestratorFallback(
         config,
         scopedWorkspace,
@@ -5791,9 +5791,6 @@ function createRoutes(
           timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
           sendTraceId,
           runtimeSkillOperationId: sendTraceId,
-          skillViewRevision: runtimeSkillView?.revision ?? null,
-          authorizationRevision:
-            runtimeSkillView?.authorizationRevision ?? null,
           orchestratorRegistrationScope,
           body: {
             ...(requestedOpenCodeSessionId?.trim()

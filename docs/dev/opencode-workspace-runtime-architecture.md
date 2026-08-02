@@ -277,16 +277,21 @@ generation lifecycle. Any current shared engine, including one still starting,
 is a conservative blocker for this recovery just like a current pooled entry.
 
 Before this request the server persists `terminal_handoff_pending` on the
-reservation. A refusal, uncertain process identity, or request failure becomes
-`terminal_handoff_unresolved`, which remains an admission fence and does not
-resume the one-second reconcile loop after restart. The persisted state records
-only finite safe reason codes and timestamps; it contains no prompt, token,
-path, or raw process output. The app projects this as a blocked/degraded run
-with a single “retry verification” intent. That intent calls a server-owned
-endpoint which reopens only this durable unresolved reservation for one fresh,
-generation-fenced evidence read; it neither releases the reservation nor
-starts, stops, or replaces an engine. Reconnects, polling, and app restart do
-not replay that request automatically.
+reservation. If an unclean restart has already removed that old reservation,
+the server instead persists a per-conversation terminal-handoff barrier keyed
+by the old run and exact owner fingerprint. A refusal, uncertain process
+identity, or request failure becomes unresolved, which remains an admission
+fence and does not resume the one-second reconcile loop after restart. The
+persisted state records only finite safe reason codes and timestamps; it
+contains no prompt, token, path, or raw process output. The app projects this
+as a blocked/degraded run with a single “retry verification” intent. That
+intent calls a server-owned endpoint which reopens only this durable unresolved
+fence for one fresh, generation-fenced evidence read; it neither releases a
+reservation nor starts, stops, or replaces an engine. Reconnects, polling, and
+app restart do not replay that request automatically. Once the exact idle or
+lost-owner proof resolves the barrier, the next queued successor claims it as
+part of normal server admission and removes the resolved barrier in the same
+SQLite transaction.
 The server persists its exact per-conversation `starting` reservation before
 orchestrator registration. For queued work, the durable queue claim and that
 reservation are one SQLite transaction. The server's in-process workspace gate
@@ -484,6 +489,21 @@ default pooled topology, on reuse as well as on spawn. A caller that starts an
 engine passes the complete server-owned binding to the direct-path resolver.
 The resolver either validates that exact pair or selects canonical empty with
 `skills.paths = []`; it never substitutes a different non-empty binding.
+
+Creating an OpenCode session is not Skill admission: it establishes a durable
+conversation/session binding on the current generation without asking the pool
+to replace that generation. The following `prompt_async` is the admission
+boundary and carries the complete server-published binding. If a session was
+just created on the canonical empty bootstrap generation while a new Skill view
+is being published, that first prompt may run on the empty generation exactly
+once. The orchestrator reserves that exception atomically for the durable
+server run and consumes it only after OpenCode returns 2xx; failed, aborted,
+or concurrent requests cannot consume it. Empty is strictly more restrictive
+than the new view, so this preserves authorization while avoiding a session
+restart between creation and its first prompt. After acceptance, the next
+complete server admission leaves the empty generation and applies the newer
+binding. Unmarked proxy traffic never recomputes a fallback binding and never
+replaces a healthy selected generation.
 
 For an existing local conversation, a connected Veslo server without a live
 OpenCode base URL is a pre-HTTP binding failure, not a reason to reuse a stale

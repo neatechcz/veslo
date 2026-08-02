@@ -20,6 +20,7 @@ import {
 import type {
   ConversationRunQueueItem,
   ConversationRunQueueStore,
+  ConversationTerminalHandoffBarrier,
   ConversationWorkspaceRuntimeOperation,
   ConversationWorkspaceRunEngineOwner,
   ConversationWorkspaceRunReservation,
@@ -187,6 +188,7 @@ class QueueHarness implements ConversationRunQueueStore {
   private nextId = 1;
   readonly items: ConversationRunQueueItem[] = [];
   readonly reservations = new Map<string, ConversationWorkspaceRunReservation>();
+  readonly handoffBarriers = new Map<string, ConversationTerminalHandoffBarrier>();
   readonly runtimeOperations = new Map<string, ConversationWorkspaceRuntimeOperation>();
   readonly enqueueCalls: Array<Parameters<ConversationRunQueueStore["enqueue"]>[0]> = [];
   lostClaimQueueItemId: string | null = null;
@@ -485,6 +487,83 @@ class QueueHarness implements ConversationRunQueueStore {
     };
     this.reservations.set(key, reservation);
     return reservation;
+  }
+
+  getTerminalHandoffBarrier(workspaceId: string, conversationId: string, runId: string) {
+    return this.handoffBarriers.get(`${workspaceId}\0${conversationId}\0${runId}`) ?? null;
+  }
+
+  getActiveTerminalHandoffBarrier(workspaceId: string, conversationId: string) {
+    return [...this.handoffBarriers.values()].find((barrier) =>
+      barrier.workspaceId === workspaceId && barrier.conversationId === conversationId && barrier.state !== "resolved"
+    ) ?? null;
+  }
+
+  observeTerminalHandoffBarrier(input: Parameters<ConversationRunQueueStore["observeTerminalHandoffBarrier"]>[0]) {
+    const key = `${input.workspaceId}\0${input.conversationId}\0${input.runId}`;
+    const existing = this.handoffBarriers.get(key);
+    if (existing) return existing;
+    const timestamp = Date.now();
+    const barrier: ConversationTerminalHandoffBarrier = {
+      ...input,
+      state: "observed",
+      attempts: 0,
+      requestedAt: null,
+      decidedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.handoffBarriers.set(key, barrier);
+    return barrier;
+  }
+
+  requestTerminalHandoffBarrierEvidence(input: Parameters<ConversationRunQueueStore["requestTerminalHandoffBarrierEvidence"]>[0]) {
+    const key = `${input.workspaceId}\0${input.conversationId}\0${input.runId}`;
+    const previous = this.handoffBarriers.get(key);
+    if (!previous || previous.state !== "observed") return null;
+    const barrier = {
+      ...previous,
+      fingerprint: input.fingerprint,
+      reason: input.reason,
+      state: "evidence_requested" as const,
+      attempts: previous.attempts + 1,
+      requestedAt: Date.now(),
+      decidedAt: null,
+      updatedAt: Date.now(),
+    };
+    this.handoffBarriers.set(key, barrier);
+    return barrier;
+  }
+
+  resolveTerminalHandoffBarrier(input: Parameters<ConversationRunQueueStore["resolveTerminalHandoffBarrier"]>[0]) {
+    const key = `${input.workspaceId}\0${input.conversationId}\0${input.runId}`;
+    const previous = this.handoffBarriers.get(key);
+    if (!previous || previous.state === "resolved") return null;
+    const barrier = { ...previous, state: "resolved" as const, reason: input.reason, decidedAt: Date.now(), updatedAt: Date.now() };
+    this.handoffBarriers.set(key, barrier);
+    return barrier;
+  }
+
+  markTerminalHandoffBarrierUnresolved(input: Parameters<ConversationRunQueueStore["markTerminalHandoffBarrierUnresolved"]>[0]) {
+    const key = `${input.workspaceId}\0${input.conversationId}\0${input.runId}`;
+    const previous = this.handoffBarriers.get(key);
+    if (!previous || (previous.state !== "observed" && previous.state !== "evidence_requested")) return null;
+    const barrier = { ...previous, state: "unresolved" as const, reason: input.reason, decidedAt: Date.now(), updatedAt: Date.now() };
+    this.handoffBarriers.set(key, barrier);
+    return barrier;
+  }
+
+  reopenTerminalHandoffBarrier(workspaceId: string, conversationId: string, runId: string) {
+    const key = `${workspaceId}\0${conversationId}\0${runId}`;
+    const previous = this.handoffBarriers.get(key);
+    if (!previous || previous.state !== "unresolved") return null;
+    const barrier = { ...previous, state: "observed" as const, updatedAt: Date.now() };
+    this.handoffBarriers.set(key, barrier);
+    return barrier;
+  }
+
+  listTerminalHandoffBarriers() {
+    return [...this.handoffBarriers.values()];
   }
 
   markWorkspaceRunProviderStartAbortPending(
@@ -3149,6 +3228,169 @@ test("startup retains a durable unresolved terminal handoff without recreating i
     runId: "run-a",
     startup: true,
   }));
+});
+
+test("a stale terminal predecessor without a reservation owns a durable handoff barrier", async () => {
+  const { controller, lifecycle, queue, workspaces, timers } = controllerHarness();
+  const successor = enqueuePendingRun(queue, { reservedRunId: "run-successor" });
+  lifecycle.statusResult = {
+    runId: "run-predecessor",
+    status: "failed",
+    stale: true,
+    runtimeReadyForSuccessor: false,
+    unavailableReason: "no_current_engine",
+    engineOwnerId: "owner-before-restart",
+    enginePid: 1234,
+    engineStartedAt: 5678,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    reason: "queue-drain-terminal-handoff-pending",
+    delayMs: 0,
+  });
+
+  expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-predecessor")).toHaveLength(1);
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(expect.objectContaining({
+    state: "evidence_requested",
+    attempts: 1,
+  }));
+  expect(queue.getForReservedRun("ws_1", "conv-a", successor.reservedRunId)?.state).toBe("pending");
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+
+  lifecycle.statusResult = {
+    ...lifecycle.statusResult,
+    stale: false,
+    runtimeReadyForSuccessor: true,
+    engineOwnerState: "lost",
+  };
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    reason: "terminal-runtime-handoff-recovered",
+    delayMs: 0,
+  });
+
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")?.state).toBe("resolved");
+  expect(timers.activeTimers().some((timer) => timer.delayMs === 0)).toBe(true);
+});
+
+test("startup converts an interrupted reservationless handoff into an explicit retry fence", () => {
+  const { controller, queue, timers, traceEntries } = controllerHarness();
+  queue.observeTerminalHandoffBarrier({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    fingerprint: "owner-before-restart",
+    reason: "no_current_engine",
+  });
+  queue.requestTerminalHandoffBarrierEvidence({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    fingerprint: "owner-before-restart",
+    reason: "no_current_engine",
+  });
+
+  controller.start();
+
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(expect.objectContaining({
+    state: "unresolved",
+    reason: "recovery_interrupted_by_restart",
+  }));
+  expect(timers.activeTimers()).toEqual([]);
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:terminal-runtime-handoff-unresolved",
+    reservationPresent: false,
+  }));
+});
+
+test("a reservationless handoff becomes unresolved when its post-recovery read is still ambiguous", async () => {
+  const { controller, lifecycle, queue, workspaces } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-predecessor",
+    status: "failed",
+    stale: true,
+    runtimeReadyForSuccessor: false,
+    unavailableReason: "no_current_engine",
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    reason: "queue-drain-terminal-handoff-pending",
+    delayMs: 0,
+  });
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    reason: "terminal-runtime-handoff-recovered",
+    delayMs: 0,
+  });
+
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(expect.objectContaining({
+    state: "unresolved",
+    reason: "recovery_result_not_confirmed",
+  }));
+  expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-predecessor")).toHaveLength(1);
+});
+
+test("explicit retry reopens only the matching reservationless handoff barrier", async () => {
+  const { controller, lifecycle, queue, workspaces } = controllerHarness();
+  queue.observeTerminalHandoffBarrier({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    fingerprint: "owner-before-restart",
+    reason: "no_current_engine",
+  });
+  queue.requestTerminalHandoffBarrierEvidence({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    fingerprint: "owner-before-restart",
+    reason: "no_current_engine",
+  });
+  queue.markTerminalHandoffBarrierUnresolved({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    reason: "recovery_interrupted_by_restart",
+  });
+  lifecycle.statusResult = {
+    runId: "run-predecessor",
+    status: "failed",
+    stale: true,
+    runtimeReadyForSuccessor: false,
+    unavailableReason: "no_current_engine",
+  };
+
+  await expect(controller.retryTerminalRuntimeHandoff({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-predecessor",
+    directory: "/repo",
+    opencodeSessionId: "sess-a",
+    reason: "terminal-runtime-handoff-explicit-retry",
+    delayMs: 0,
+  })).resolves.toBe(true);
+
+  expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-predecessor")).toHaveLength(1);
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")?.state).toBe("evidence_requested");
+  expect(await controller.retryTerminalRuntimeHandoff({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-other",
+    directory: "/repo",
+    opencodeSessionId: "sess-a",
+    reason: "terminal-runtime-handoff-explicit-retry",
+    delayMs: 0,
+  })).toBe(false);
 });
 
 test("startup keeps an active starting queue row out of replay and restores its reservation", async () => {

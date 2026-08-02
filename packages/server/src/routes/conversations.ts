@@ -7,6 +7,7 @@ import {
   type ConversationRunQueueItem,
   type ConversationRunQueueReadableState,
   type ConversationRunQueueStore,
+  type ConversationTerminalHandoffBarrier,
   type ConversationWorkspaceRunReservation,
 } from "../conversation-run-queue-store.js";
 import {
@@ -725,7 +726,18 @@ function serializeTerminalizationPending(
 
 function serializeTerminalHandoff(
   reservation: ConversationWorkspaceRunReservation | undefined,
+  barrier?: ConversationTerminalHandoffBarrier | null,
 ): Record<string, unknown> | null {
+  if (barrier && barrier.state !== "resolved") {
+    return {
+      state: barrier.state === "unresolved" ? "unresolved" : "pending",
+      reasonCode: barrier.reason,
+      attempts: barrier.attempts,
+      requestedAt: barrier.requestedAt,
+      decidedAt: barrier.decidedAt,
+      blockingRunId: barrier.runId,
+    };
+  }
   if (
     reservation?.state !== "terminal_handoff_pending" &&
     reservation?.state !== "terminal_handoff_unresolved"
@@ -736,6 +748,7 @@ function serializeTerminalHandoff(
     attempts: reservation.terminalHandoffAttempts,
     requestedAt: reservation.terminalHandoffRequestedAt,
     decidedAt: reservation.terminalHandoffDecidedAt,
+    blockingRunId: reservation.runId,
   };
 }
 
@@ -1576,7 +1589,11 @@ export function registerConversationSessionRoutes(
       candidate.runId === runId
     );
     const terminalization = serializeTerminalizationPending(reservation);
-    const terminalHandoff = serializeTerminalHandoff(reservation);
+    const terminalHandoff = serializeTerminalHandoff(
+      reservation,
+      conversationRunQueueStore.getTerminalHandoffBarrier(workspace.id, conversationId, runId) ??
+        conversationRunQueueStore.getActiveTerminalHandoffBarrier(workspace.id, conversationId),
+    );
     recordSendWorkflowTrace("server", "server:conversation-run-status:start", statusTrace);
     let status;
     try {

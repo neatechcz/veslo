@@ -3421,7 +3421,7 @@ describe("conversation routes", () => {
     expect(conversationsPayload.items[0]?.opencodeSessionId).toBe("sess-live");
   });
 
-  test("POST /workspace/:id/conversations derives opencode baseUrl from orchestrator daemon for local workspaces", async () => {
+  test("POST /workspace/:id/conversations derives the orchestrator baseUrl without admitting a Skill binding", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-orchestrator-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
@@ -3504,8 +3504,10 @@ describe("conversation routes", () => {
     expect(response.status).toBe(201);
     expect(upstreamPath).toBe("/workspace/ws_orch/opencode/session");
     expect(receivedSkillBindings[0]).toEqual({
-      revision: servingCandidate.revision,
-      authorizationRevision: servingCandidate.authorizationRevision,
+      // Session creation must not replace the just-selected engine. The first
+      // server-owned prompt is the single authoritative Skill admission point.
+      revision: null,
+      authorizationRevision: null,
     });
     const payload = await response.json() as { id: string; opencodeSessionId: string };
     expect(payload.id).toBe("sess-orch");

@@ -500,6 +500,93 @@ describe("conversation run queue store", () => {
     }).runId).toBe("run-b");
   });
 
+  test("persists a terminal handoff barrier without recreating an old reservation", async () => {
+    const dataDir = await tempDataDir();
+    const store = createConversationRunQueueStore({ dataDir, now: () => 4_000 });
+    const observed = store.observeTerminalHandoffBarrier({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-old",
+      fingerprint: "generation-1",
+      reason: "no_current_engine",
+    });
+    expect(observed.state).toBe("observed");
+    expect(store.requestTerminalHandoffBarrierEvidence({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-old",
+      fingerprint: "generation-1",
+      reason: "no_current_engine",
+    })).toEqual(expect.objectContaining({ state: "evidence_requested", attempts: 1 }));
+    expect(store.listWorkspaceRunReservations()).toEqual([]);
+
+    const restarted = createConversationRunQueueStore({ dataDir, now: () => 5_000 });
+    expect(restarted.getTerminalHandoffBarrier("ws-a", "conv-a", "run-old")).toEqual(
+      expect.objectContaining({ state: "evidence_requested", fingerprint: "generation-1" }),
+    );
+    expect(restarted.markTerminalHandoffBarrierUnresolved({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-old",
+      reason: "recovery_interrupted_by_restart",
+    })).toEqual(expect.objectContaining({ state: "unresolved" }));
+    expect(restarted.reopenTerminalHandoffBarrier("ws-a", "conv-a", "run-old")).toEqual(
+      expect.objectContaining({ state: "observed" }),
+    );
+    expect(restarted.resolveTerminalHandoffBarrier({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-old",
+      reason: "runtime_ready_failed",
+    })).toEqual(expect.objectContaining({ state: "resolved" }));
+    const successor = restarted.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/repo",
+      reservedRunId: "run-successor",
+      kind: "prompt_async",
+      bodyJson: "{}",
+    });
+    expect(restarted.claimStartingWithReservation(successor.item.queueItemId)).not.toBeNull();
+    expect(restarted.getTerminalHandoffBarrier("ws-a", "conv-a", "run-old")).toBeNull();
+  });
+
+  test("does not claim a successor while its durable terminal handoff fence is active", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 4_000 });
+    store.observeTerminalHandoffBarrier({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-old",
+      fingerprint: "generation-1",
+      reason: "no_current_engine",
+    });
+    const successor = store.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/repo",
+      reservedRunId: "run-successor",
+      kind: "prompt_async",
+      bodyJson: "{}",
+    });
+
+    expect(store.claimStartingWithReservation(successor.item.queueItemId)).toBeNull();
+    expect(store.getForConversation("ws-a", "conv-a", successor.item.queueItemId)).toEqual(
+      expect.objectContaining({ state: "pending", attempts: 0 }),
+    );
+
+    store.resolveTerminalHandoffBarrier({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-old",
+      reason: "runtime_ready_failed",
+    });
+    expect(store.claimStartingWithReservation(successor.item.queueItemId)).toEqual(
+      expect.objectContaining({ item: expect.objectContaining({ state: "starting" }) }),
+    );
+  });
+
   test("persists the exact engine generation owner and rejects a stale replacement", async () => {
     const dataDir = await tempDataDir();
     const store = createConversationRunQueueStore({ dataDir, now: () => 2_000 });

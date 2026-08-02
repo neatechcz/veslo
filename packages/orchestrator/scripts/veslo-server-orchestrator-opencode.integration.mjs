@@ -155,6 +155,7 @@ const result = {
   queue: null,
   abortIsolation: null,
   generationLoss: null,
+  skillViewHandoff: null,
   httpContract: null,
   provider: null,
   compiledServerSha256: null,
@@ -373,6 +374,152 @@ try {
     body: JSON.stringify({ path: workspace, serverWorkspaceId: result.workspaceId, appWorkspaceId: result.workspaceId }),
   });
 
+  // Exercise the production cold-start sequence without a UI. A conversation
+  // starts the direct engine, then a normal server-owned skill change is
+  // published before the original session sends its first prompt. The prompt
+  // must reach the provider and leave a correlated server/orchestrator log
+  // artifact, whether the local runtime reuses or replaces its idle engine.
+  const handoffConversation = await requestJson(
+    serverUrl,
+    `/workspace/${encodeURIComponent(result.workspaceId)}/conversations`,
+    {
+      method: "POST",
+      headers: authHeaders(clientToken),
+      body: JSON.stringify({ directory: workspace, title: "Skill view handoff" }),
+    },
+  );
+  assert.equal(handoffConversation.response.status, 201, JSON.stringify(handoffConversation.body));
+  const serverLogBeforeSkillChange = logs.server.length;
+  const emptyBindingEngine = await waitFor(async () => {
+    const engine = (await requestJson(orchestratorUrl, "/health")).body.engines?.[0];
+    return engine?.skillViewRevision === "empty-direct-skill-view/v1" ? engine : null;
+  }, "server-created session starts an empty direct engine");
+  await mkdir(join(workspace, ".agents", "skills", "runtime-handoff"), { recursive: true });
+  await writeFile(
+    join(workspace, ".agents", "skills", "runtime-handoff", "SKILL.md"),
+    "---\nname: runtime-handoff\ndescription: Deterministic headless handoff fixture\n---\n\nUse this fixture only for the integration test.\n",
+    "utf8",
+  );
+  await waitFor(
+    () => logs.server.slice(serverLogBeforeSkillChange).includes("Skill watcher reconciliation settled"),
+    "server publishes the changed Skill view",
+  );
+  const engineAfterSkillWatcher = await waitFor(async () => {
+    const engine = (await requestJson(orchestratorUrl, "/health")).body.engines?.[0];
+    return engine?.engineOwnerId ? engine : null;
+  }, "engine remains observable after the skill watcher settles");
+  assert.equal(
+    engineAfterSkillWatcher.engineOwnerId,
+    emptyBindingEngine.engineOwnerId,
+    "Skill-view invalidation keeps the current engine stable until an authoritative binding requests replacement",
+  );
+  const handoffSessionBeforeSubmit = await requestJson(
+    serverUrl,
+    `/workspace/${encodeURIComponent(result.workspaceId)}/opencode/session/${encodeURIComponent(handoffConversation.body.opencodeSessionId)}`,
+    { headers: authHeaders(clientToken) },
+  );
+  assert.equal(handoffSessionBeforeSubmit.response.status, 200, JSON.stringify(handoffSessionBeforeSubmit.body));
+  const handoffText = "runtime-skill-view-handoff";
+  const handoffSubmit = await submitConversation(result.workspaceId, {
+    conversationId: handoffConversation.body.conversationId,
+    clientMessageId: "runtime-message-skill-view-handoff",
+    text: handoffText,
+  });
+  assert.equal(handoffSubmit.response.status, 200, JSON.stringify(handoffSubmit.body));
+  assert.ok(typeof handoffSubmit.body?.runId === "string" && handoffSubmit.body.runId);
+  const handoffActive = await waitFor(async () => {
+    const status = await orchestratorRunStatus(
+      result.workspaceId,
+      handoffConversation.body.conversationId,
+      handoffSubmit.body.runId,
+    );
+    return status?.engineOwnerState === "attached" ? status : null;
+  }, "skill-view handoff run attaches to an engine");
+  assert.equal(
+    handoffActive.engineOwnerId,
+    emptyBindingEngine.engineOwnerId,
+    "the first prompt keeps its just-created bootstrap session on the existing engine",
+  );
+  // Write the evidence before the provider assertion. A regression leaves this
+  // phase failed, but its artifact must still identify the exact owner handoff
+  // and whether the provider was ever reached.
+  result.skillViewHandoff = {
+    conversationId: handoffConversation.body.conversationId,
+    opencodeSessionId: handoffConversation.body.opencodeSessionId,
+    runId: handoffActive.runId,
+    emptyBindingOwnerId: emptyBindingEngine.engineOwnerId,
+    engineOwnerAfterSkillWatcher: engineAfterSkillWatcher.engineOwnerId,
+    promptEngineOwnerId: handoffActive.engineOwnerId,
+    skillViewRestartObserved: logs.orchestrator.includes("engine skill view restart"),
+    providerRequestObserved: false,
+    skillWatcherPublished: true,
+  };
+  await waitFor(
+    () => providerRequests.some((request) => request.text === handoffText),
+    "skill-view handoff prompt reaches the provider",
+  );
+  result.skillViewHandoff.providerRequestObserved = true;
+  await waitFor(async () => {
+    const status = await orchestratorActiveStatus(
+      result.workspaceId,
+      handoffConversation.body.conversationId,
+    );
+    return status === null ? true : null;
+  }, "skill-view handoff releases its workspace reservation", 60_000);
+  // A bootstrap prompt is intentionally restrictive, not a permanent stale
+  // view. The next server admission must create a generation for the newly
+  // published Skill view before it reaches the provider.
+  const handoffFollowUpConversation = await requestJson(
+    serverUrl,
+    `/workspace/${encodeURIComponent(result.workspaceId)}/conversations`,
+    {
+      method: "POST",
+      headers: authHeaders(clientToken),
+      body: JSON.stringify({ directory: workspace, title: "Skill view handoff follow-up" }),
+    },
+  );
+  assert.equal(handoffFollowUpConversation.response.status, 201, JSON.stringify(handoffFollowUpConversation.body));
+  const handoffFollowUpText = "runtime-skill-view-handoff-follow-up";
+  const handoffFollowUpSubmit = await submitConversation(result.workspaceId, {
+    conversationId: handoffFollowUpConversation.body.conversationId,
+    clientMessageId: "runtime-message-skill-view-handoff-follow-up",
+    text: handoffFollowUpText,
+  });
+  assert.equal(handoffFollowUpSubmit.response.status, 200, JSON.stringify(handoffFollowUpSubmit.body));
+  const handoffFollowUpActive = await waitFor(async () => {
+    const status = await orchestratorRunStatus(
+      result.workspaceId,
+      handoffFollowUpConversation.body.conversationId,
+      handoffFollowUpSubmit.body.runId,
+    );
+    return status?.engineOwnerState === "attached" ? status : null;
+  }, "follow-up admission attaches to a full Skill-view engine");
+  assert.notEqual(
+    handoffFollowUpActive.engineOwnerId,
+    emptyBindingEngine.engineOwnerId,
+    "the admission after a consumed bootstrap prompt must leave the empty generation",
+  );
+  const fullBindingEngine = await waitFor(async () => {
+    const engine = (await requestJson(orchestratorUrl, "/health")).body.engines?.[0];
+    return engine?.engineOwnerId === handoffFollowUpActive.engineOwnerId &&
+      engine?.skillViewRevision !== "empty-direct-skill-view/v1"
+      ? engine
+      : null;
+  }, "follow-up engine uses the server-published Skill view");
+  result.skillViewHandoff.followUpEngineOwnerId = fullBindingEngine.engineOwnerId;
+  result.skillViewHandoff.followUpSkillViewRevision = fullBindingEngine.skillViewRevision;
+  await waitFor(
+    () => providerRequests.some((request) => request.text === handoffFollowUpText),
+    "follow-up Skill-view prompt reaches the provider",
+  );
+  await waitFor(async () => {
+    const status = await orchestratorActiveStatus(
+      result.workspaceId,
+      handoffFollowUpConversation.body.conversationId,
+    );
+    return status === null ? true : null;
+  }, "follow-up Skill-view handoff releases its workspace reservation", 60_000);
+
   const conversationRecords = await Promise.all(Array.from({ length: 10 }, (_, index) => requestJson(
     serverUrl,
     `/workspace/${encodeURIComponent(result.workspaceId)}/conversations`,
@@ -421,8 +568,11 @@ try {
     engineStartedAt: activeStatuses[0].engineStartedAt,
     engineBaseUrl: activeStatuses[0].engineBaseUrl,
   });
-  await waitFor(() => providerRequests.length >= 10, "ten real provider requests");
-  assert.equal(new Set(providerRequests.slice(0, 10).map((request) => request.text)).size, 10);
+  const initialProviderRequests = await waitFor(() => {
+    const requests = providerRequests.filter((request) => request.text.startsWith("runtime-conversation-"));
+    return requests.length >= 10 ? requests : null;
+  }, "ten real provider requests");
+  assert.equal(new Set(initialProviderRequests.map((request) => request.text)).size, 10);
   assert.ok(maxProviderConcurrency > 1, `real provider requests did not overlap: ${maxProviderConcurrency}`);
 
   const queueSubmit = await submitConversation(result.workspaceId, {

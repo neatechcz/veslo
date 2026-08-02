@@ -131,6 +131,13 @@ export type EngineProcess = {
   restartCount: number;
   /** F2Ú5 — timestamp of last successful `waitForHealthy`. 0 = engine never reached ready. */
   lastSuccessfulRunStartedAt: number;
+  /** True after this generation has accepted at least one prompt request. */
+  hasAcceptedPrompt?: boolean;
+  /**
+   * The one server-owned prompt currently allowed to bridge an empty bootstrap
+   * generation. Keeping this in the pool makes the exception atomic.
+   */
+  bootstrapPromptReservationRunId?: string;
 };
 
 export type SerializedEngineState = {
@@ -530,6 +537,45 @@ export class EnginePool {
   touch(workspaceId: string): void {
     const engine = this.engines.get(workspaceId);
     if (engine) engine.lastActivityAt = this.deps.now();
+  }
+
+  reserveBootstrapPrompt(workspaceId: string, engineOwnerId: string, runId: string): boolean {
+    const engine = this.engines.get(workspaceId);
+    if (
+      !engine ||
+      engine.engineOwnerId !== engineOwnerId ||
+      !runId ||
+      engine.hasAcceptedPrompt ||
+      engine.bootstrapPromptReservationRunId
+    ) return false;
+    engine.bootstrapPromptReservationRunId = runId;
+    engine.lastActivityAt = this.deps.now();
+    return true;
+  }
+
+  confirmBootstrapPrompt(workspaceId: string, engineOwnerId: string, runId: string): boolean {
+    const engine = this.engines.get(workspaceId);
+    if (
+      !engine ||
+      engine.engineOwnerId !== engineOwnerId ||
+      engine.bootstrapPromptReservationRunId !== runId
+    ) return false;
+    engine.hasAcceptedPrompt = true;
+    engine.bootstrapPromptReservationRunId = undefined;
+    engine.lastActivityAt = this.deps.now();
+    return true;
+  }
+
+  releaseBootstrapPrompt(workspaceId: string, engineOwnerId: string, runId: string): boolean {
+    const engine = this.engines.get(workspaceId);
+    if (
+      !engine ||
+      engine.engineOwnerId !== engineOwnerId ||
+      engine.bootstrapPromptReservationRunId !== runId
+    ) return false;
+    engine.bootstrapPromptReservationRunId = undefined;
+    engine.lastActivityAt = this.deps.now();
+    return true;
   }
 
   async ensure(workspace: EngineWorkspace): Promise<EngineProcess> {
@@ -1119,6 +1165,7 @@ export class EnginePool {
       lastActivityAt: spawnedAt,
       child,
       healthStrikes: 0,
+      hasAcceptedPrompt: false,
       // F2Ú5 — preserve restart counter across crash-driven respawns; first-time
       // spawn starts at 0. Caller (respawn) resets when restartCountResetMs elapses.
       restartCount: existing?.restartCount ?? 0,

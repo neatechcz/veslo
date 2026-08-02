@@ -724,6 +724,16 @@ export function createConversationRunLifecycleController(
     return next;
   };
 
+  const terminalHandoffBarrier = (workspaceId: string, conversationId: string, runId: string) =>
+    options.queueStore?.getTerminalHandoffBarrier(workspaceId, conversationId, runId) ?? null;
+
+  const markTerminalHandoffBarrierUnresolved = (input: {
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    reason: string;
+  }) => options.queueStore?.markTerminalHandoffBarrierUnresolved(input) ?? null;
+
   const persistTerminalHandoffUnresolved = (input: {
     workspaceId: string;
     runId: string;
@@ -1889,6 +1899,7 @@ export function createConversationRunLifecycleController(
     const pendingTerminalization = workspaceRunReservations
       .get(normalizeWorkspaceExecutionKey(input.workspace.id))
       ?.get(runId);
+    const pendingTerminalHandoffBarrier = terminalHandoffBarrier(input.workspace.id, conversationId, runId);
     if (pendingTerminalization?.state === "terminalization_pending") {
       scheduleTerminalizationRetry({
         workspace: input.workspace,
@@ -1914,13 +1925,16 @@ export function createConversationRunLifecycleController(
       );
       return;
     }
-    if (pendingTerminalization?.state === "terminal_handoff_unresolved") {
+    if (
+      pendingTerminalization?.state === "terminal_handoff_unresolved" ||
+      pendingTerminalHandoffBarrier?.state === "unresolved"
+    ) {
       recordTrace("server:conversation-run:terminal-runtime-handoff-unresolved", {
         workspaceId: input.workspace.id,
         conversationId,
         runId,
-        reason: pendingTerminalization.terminalHandoffReason,
-        attempts: pendingTerminalization.terminalHandoffAttempts,
+        reason: pendingTerminalization?.terminalHandoffReason ?? pendingTerminalHandoffBarrier?.reason,
+        attempts: pendingTerminalization?.terminalHandoffAttempts ?? pendingTerminalHandoffBarrier?.attempts ?? 0,
       });
       return;
     }
@@ -2210,6 +2224,43 @@ export function createConversationRunLifecycleController(
         conversationId,
         runId,
       );
+      const requestedReservation = workspaceRunReservations
+        .get(normalizeWorkspaceExecutionKey(input.workspace.id))
+        ?.get(runId);
+      const requestedBarrier = terminalHandoffBarrier(input.workspace.id, conversationId, runId);
+      if (
+        status.stale === true &&
+        !isActiveLifecycleStatus(status.status) &&
+        status.runtimeReadyForSuccessor !== true &&
+        status.unavailableReason === "no_current_engine" &&
+        (
+          requestedReservation?.state === "terminal_handoff_pending" ||
+          requestedBarrier?.state === "evidence_requested"
+        )
+      ) {
+        if (requestedReservation?.state === "terminal_handoff_pending") {
+          persistTerminalHandoffUnresolved({
+            workspaceId: input.workspace.id,
+            runId,
+            status,
+            reason: "recovery_result_not_confirmed",
+          });
+        }
+        markTerminalHandoffBarrierUnresolved({
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId,
+          reason: "recovery_result_not_confirmed",
+        });
+        recordTrace("server:conversation-run:terminal-runtime-handoff-recovery:suppressed", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId,
+          reason: "recovery_result_not_confirmed",
+          ...lifecycleStatusTraceFields(status),
+        });
+        return;
+      }
       if (
         status.stale === true &&
         !isActiveLifecycleStatus(status.status) &&
@@ -2220,11 +2271,23 @@ export function createConversationRunLifecycleController(
         const persistedReservation = workspaceRunReservations
           .get(normalizeWorkspaceExecutionKey(input.workspace.id))
           ?.get(runId);
-        if (persistedReservation?.state === "terminal_handoff_pending") {
-          persistTerminalHandoffUnresolved({
+        const persistedBarrier = terminalHandoffBarrier(input.workspace.id, conversationId, runId);
+        if (
+          persistedReservation?.state === "terminal_handoff_pending" ||
+          persistedBarrier?.state === "evidence_requested"
+        ) {
+          if (persistedReservation?.state === "terminal_handoff_pending") {
+            persistTerminalHandoffUnresolved({
+              workspaceId: input.workspace.id,
+              runId,
+              status,
+              reason: "recovery_result_not_confirmed",
+            });
+          }
+          markTerminalHandoffBarrierUnresolved({
             workspaceId: input.workspace.id,
+            conversationId,
             runId,
-            status,
             reason: "recovery_result_not_confirmed",
           });
           recordTrace("server:conversation-run:terminal-runtime-handoff-recovery:suppressed", {
@@ -2236,12 +2299,33 @@ export function createConversationRunLifecycleController(
           });
           return;
         }
-        if (!persistTerminalHandoffPending({ workspaceId: input.workspace.id, runId, status })) {
+        const reservationPending = persistTerminalHandoffPending({ workspaceId: input.workspace.id, runId, status });
+        const barrierObserved = reservationPending
+          ? null
+          : options.queueStore?.observeTerminalHandoffBarrier({
+            workspaceId: input.workspace.id,
+            conversationId,
+            runId,
+            fingerprint: terminalHandoffFingerprint(input.workspace.id, runId, status),
+            reason: status.unavailableReason ?? "unknown",
+          }) ?? null;
+        const barrierPending = barrierObserved?.state === "observed"
+          ? options.queueStore?.requestTerminalHandoffBarrierEvidence({
+            workspaceId: input.workspace.id,
+            conversationId,
+            runId,
+            fingerprint: terminalHandoffFingerprint(input.workspace.id, runId, status),
+            reason: status.unavailableReason ?? "unknown",
+          }) ?? null
+          : null;
+        if (!reservationPending && !barrierPending) {
           recordTrace("server:conversation-run:terminal-runtime-handoff-recovery:suppressed", {
             workspaceId: input.workspace.id,
             conversationId,
             runId,
-            reason: "reservation_missing",
+            // The independent barrier is the durable owner when an old
+            // reservation was already released before the server restarted.
+            reason: barrierObserved?.state === "unresolved" ? "barrier_unresolved" : "barrier_not_claimed",
           });
           return;
         }
@@ -2270,10 +2354,18 @@ export function createConversationRunLifecycleController(
           });
           return;
         } catch (error) {
-          persistTerminalHandoffUnresolved({
+          if (reservationPending) {
+            persistTerminalHandoffUnresolved({
+              workspaceId: input.workspace.id,
+              runId,
+              status,
+              reason: lifecycleErrorReason(error),
+            });
+          }
+          markTerminalHandoffBarrierUnresolved({
             workspaceId: input.workspace.id,
+            conversationId,
             runId,
-            status,
             reason: lifecycleErrorReason(error),
           });
           recordTrace("server:conversation-run:terminal-runtime-handoff-recovery:error", {
@@ -2382,6 +2474,14 @@ export function createConversationRunLifecycleController(
           return;
         }
         unregisterScheduledAiGatewayRun(input);
+        // Resolution is durable and independent from the predecessor
+        // reservation: an unclean restart may have already removed that row.
+        options.queueStore?.resolveTerminalHandoffBarrier({
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId,
+          reason: `runtime_ready_${status.status}`,
+        });
         releaseRun(input.workspace.id, status.runId?.trim() || runId, `lifecycle-terminal-${status.status}`);
         if (
           input.abortRequested === true &&
@@ -3227,9 +3327,12 @@ export function createConversationRunLifecycleController(
         const workspaceId = normalizeWorkspaceExecutionKey(input.workspace.id);
         const runId = input.runId.trim();
         if (!workspaceId || !runId) return false;
-        const reopened = options.queueStore?.reopenWorkspaceRunTerminalHandoff(workspaceId, runId) ?? null;
-        if (!reopened) return false;
-        reservationsForWorkspace(workspaceId).set(runId, reopened);
+        const reopenedReservation = options.queueStore?.reopenWorkspaceRunTerminalHandoff(workspaceId, runId) ?? null;
+        const reopenedBarrier = reopenedReservation
+          ? null
+          : options.queueStore?.reopenTerminalHandoffBarrier(workspaceId, input.conversationId, runId) ?? null;
+        if (!reopenedReservation && !reopenedBarrier) return false;
+        if (reopenedReservation) reservationsForWorkspace(workspaceId).set(runId, reopenedReservation);
         staleTerminalHandoffRecoveryAttempts.delete(providerStartAbortRecoveryKey(
           workspaceId,
           input.conversationId,
@@ -3239,8 +3342,8 @@ export function createConversationRunLifecycleController(
           workspaceId,
           conversationId: input.conversationId,
           runId,
-          previousReason: reopened.terminalHandoffReason,
-          previousAttempts: reopened.terminalHandoffAttempts,
+          previousReason: reopenedReservation?.terminalHandoffReason ?? reopenedBarrier?.reason,
+          previousAttempts: reopenedReservation?.terminalHandoffAttempts ?? reopenedBarrier?.attempts ?? 0,
         });
         await reconcileConversationRunLifecycle({
           ...input,
@@ -3435,6 +3538,35 @@ export function createConversationRunLifecycleController(
             delayMs: 0,
           });
         }
+      }
+      // A recovery request without a completed answer must not be replayed
+      // after restart.  Preserve the fence, surface it as unresolved, and
+      // require one explicit retry with the original run identity.
+      const storedTerminalHandoffBarriers = options.queueStore &&
+        typeof options.queueStore.listTerminalHandoffBarriers === "function"
+        ? options.queueStore.listTerminalHandoffBarriers()
+        : [];
+      for (const barrier of storedTerminalHandoffBarriers) {
+        if (barrier.state !== "evidence_requested" && barrier.state !== "unresolved") continue;
+        const workspace = options.resolveWorkspace?.(barrier.workspaceId) ?? null;
+        if (!workspace || workspace.workspaceType === "remote" || !options.lifecycleClient) continue;
+        const unresolved = barrier.state === "evidence_requested"
+          ? options.queueStore?.markTerminalHandoffBarrierUnresolved({
+            workspaceId: barrier.workspaceId,
+            conversationId: barrier.conversationId,
+            runId: barrier.runId,
+            reason: "recovery_interrupted_by_restart",
+          }) ?? barrier
+          : barrier;
+        recordTrace("server:conversation-run:terminal-runtime-handoff-unresolved", {
+          workspaceId: unresolved.workspaceId,
+          conversationId: unresolved.conversationId,
+          runId: unresolved.runId,
+          reason: unresolved.reason,
+          attempts: unresolved.attempts,
+          startup: true,
+          reservationPresent: false,
+        });
       }
       schedulePendingQueueDrains();
       scheduleDiagnosticsTimer();

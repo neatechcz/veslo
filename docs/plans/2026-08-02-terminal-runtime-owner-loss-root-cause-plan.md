@@ -1,379 +1,373 @@
 ---
-title: Terminal Runtime Owner Loss Root-Cause and Recovery Plan
-status: in_progress
-done: false
+title: Durable Terminal Handoff Barrier Implementation Plan
+status: implemented
+done: true
 date: 2026-08-02
 issue: unlinked
-scope: safely unblock a durable successor only after the prior engine generation is durably proven gone; retain bounded, causal diagnostics when proof is unavailable
+scope: unblock a durable queued successor only after the existing orchestrator evidence owner proves the exact previous engine generation gone; accurately project the result in an old conversation without moving lifecycle authority into the UI
 related:
-  - docs/plans/2026-08-01-conversation-run-lifecycle-ownership-plan.md
-  - docs/plans/2026-08-02-server-owned-runtime-operations-plan.md
-  - docs/dev/opencode-workspace-runtime-architecture.md
   - docs/dev/conversation-workflow-contract.md
+  - docs/dev/conversation-history-resume.md
+  - docs/dev/opencode-workspace-runtime-architecture.md
+  - docs/dev/server-owned-composer-submit.md
+  - docs/plans/2026-08-01-conversation-run-lifecycle-ownership-plan.md
 ---
 
-# Terminal Runtime Owner Loss Root-Cause and Recovery Plan
+# Durable Terminal Handoff Barrier Implementation Plan
 
-## Decision
+## Implementation decision
 
-This is a narrow lifecycle repair. It does not rewrite the queue, restart an
-engine to clear a queue, or move lifecycle authority into the UI.
+Fix the stale-old-run queue deadlock in the Veslo server. Do not rewrite
+conversation history, the desktop queue, OpenCode, or the orchestrator engine
+pool.
 
-The defect is the missing durable bridge between a persisted run/reservation
-and an engine pool that is deliberately only in memory. A new orchestrator
-process not having an old engine in its pool is evidence of lost local
-knowledge; it is **not** evidence that the old OS child process is dead.
+The server will add one small durable record named a **terminal handoff
+barrier**. It represents one fact only: a queued intent for one conversation is
+waiting for one exact terminal stale predecessor to be proven safe for a
+successor. The record is separate from a run reservation because a predecessor
+can legitimately predate, or survive independently of, the reservation that
+would otherwise store this state.
 
-Add a small orchestrator-owned `EngineGenerationAuthority`. It owns durable
-identity and liveness evidence for one engine generation across orchestrator
-restart. It is the only component allowed to answer whether the exact recorded
-generation is `lost_proven`, `live_or_ambiguous`, or `unknown`. The authority
-does not start, stop, or schedule engines; those remain responsibilities of
-the existing pool.
+The orchestrator continues to own exact engine-generation evidence. The server
+continues to own admission, reservation release, FIFO dispatch, and barrier
+state. The app continues to own editable intent and projection only.
 
-The server remains the sole owner of durable queue admission, reservation
-release, and successor dispatch. It may request a decision from the
-orchestrator, but it must persist the decision process on the reservation and
-must never infer owner loss from UI state, a terminal transcript, a timeout, a
-PID, or pool absence.
+## Implementation result (2026-08-03)
 
-`lost` means only: the exact engine generation recorded on the run is proven
-unable to own the session any longer. It does not imply a replacement engine is
-healthy, a queued prompt was delivered, or the user-visible transcript
-succeeded.
+Implemented in the server queue store and lifecycle controller. The durable
+barrier is persisted independently of reservations, has the planned
+`observed -> evidence_requested -> resolved|unresolved` transitions, and is
+recovered as `unresolved` after a process restart if a recovery result was not
+durably confirmed. A confirmed terminal idle/lost result resolves it; normal
+FIFO claim removes resolved barriers atomically. Existing status responses now
+project the barrier (including the blocking predecessor run) for both that run
+and a queued successor, and the existing explicit retry route reopens the
+matching barrier without creating a replacement reservation.
 
-## Codebase findings and corrected terminology
+Focused SQLite and lifecycle-controller regression tests cover the original
+reservationless predecessor, ambiguous evidence, restart recovery, explicit
+retry scope, and normal release. The orchestrator generation-proof boundary
+was deliberately reused unchanged.
 
-The inspected incident has a terminal `failed` run with an attached exact
-engine owner. New orchestrator processes reported it as stale with successor
-readiness unknown; server reconciliation correctly retained its reservation and
-repeated the conservative reconcile path.
+## Verified codebase starting point
 
-The previous wording "the old owner could not possibly still execute" was too
-strong. The trace proves that a new in-memory pool did not know this engine. It
-does not prove that a child surviving an unclean orchestrator termination was
-dead. Existing clean shutdown attempts to stop pool children, but an unclean
-crash bypasses that path.
+The following is already implemented and is deliberately retained:
 
-The current recovery route is only a partial mitigation. It checks that a
-terminal record is stale, has an attached exact tuple, has no active peer, and
-has no current owner in the pool. It does not receive a structured probe reason
-or durable owner-death proof. The server's one-request guard and reconcile
-attempt counter are both process-local. Therefore neither can protect the
-restart case by itself.
-
-The existing service-chain integration kills a real OpenCode child and verifies
-the normal in-process engine-loss callback. It does not restart the
-orchestrator over preserved lifecycle and queue databases. That is a different
-failure mode and needs its own test.
-
-## Ownership contract
-
-| Owner | Owns | Must not own |
+| Existing capability | Current Veslo owner | Implementation decision |
 | --- | --- | --- |
-| Engine pool | Spawn, health, suspend, stop, child exit events, and current in-memory process handles. | Durable proof about a generation it no longer has in memory; reservation release. |
-| `EngineGenerationAuthority` | Durable generation record, exact child identity, heartbeat/closure evidence, and the three-way owner-evidence decision. | Queue dispatch, run terminalization policy, UI presentation, or automatic replacement. |
-| Run registry | Durable run state and the exact `attached -> lost` update after a `lost_proven` decision. | Deciding process death from its own record or a probe timeout. |
-| Server lifecycle controller and queue store | Admission, durable reservation state, bounded handoff workflow, release, and FIFO wake-up. | Direct engine control or guessing generation liveness. |
-| Runtime-operation owner | UI-originated control-plane and guarded reload operations. | Engine-generation death proof; it must consume, not duplicate, this authority. |
-| UI | Intent and projection of queued, recovering, blocked, or degraded state. | Lifecycle mutation, retry budget, engine restart, or reservation release. |
+| Typed unavailable evidence, including `no_current_engine` | Orchestrator run probe and run registry | Reuse unchanged. Only this reason can start a handoff check. |
+| Durable engine-generation identity with Windows process-birth inspection | `EngineGenerationAuthority` | Reuse unchanged. It already persists creating/live/stopping/confirmed-exit state and fails closed on an ambiguous process. |
+| Proof-gated terminal-handoff route | Orchestrator lifecycle route | Reuse unchanged. It already requires a terminal stale exact run, no active peer, no current engine, then `lost_proven` before the exact run becomes lost. |
+| Reservation-before-registration and FIFO queue claim | Server queue store and lifecycle controller | Reuse unchanged. A barrier is not a reservation and may not dispatch work itself. |
+| Typed terminal-handoff status, retry intent, and selected-session presentation | Server status route and app lifecycle presentation | Preserve the DTO and UI flow; change only where the server obtains its handoff state. |
 
-This is not a second lifecycle owner. The authority fills one deliberately
-missing fact: whether a named generation still exists after its original pool
-vanished. The server-owned runtime-operation lease is not suitable for this
-fact: it is workspace-scoped and expiring, while a handoff must identify one
-specific run and engine generation.
+The remaining defect is entirely on the server side:
 
-## Evidence model and state machine
+1. The controller observes a terminal stale predecessor with
+   `no_current_engine`.
+2. It tries to persist terminal-handoff state on that predecessor's reservation.
+3. In the reproduced old-conversation case that reservation does not exist,
+   while a later user intent is safely present as a durable queue item.
+4. Persistence returns nothing, the controller records `reservation_missing`,
+   and it suppresses recovery. The queued intent can then wait indefinitely.
 
-The authority stores one row per engine generation in the existing
-orchestrator lifecycle SQLite database, not a new database. A row contains:
+Do not make the newer queued item's reservation stand in for the old run. The
+two runs have different identities and conflating them would create a second,
+ambiguous release authority.
 
-- random `generationId`/engine owner id and workspace slot;
-- orchestrator instance id and its start time, for diagnosis and fencing;
-- child PID plus an OS process birth identity captured at spawn (not only the
-  PID);
-- engine base URL only as a redacted/internal matching field, never in user or
-  cloud diagnostics;
-- `createdAt`, `lastHeartbeatAt`, `closedAt`, and a finite closure reason.
+## Concrete implementation map
 
-The durable state model is:
+| Target | Change in this plan |
+| --- | --- |
+| `packages/server/src/conversation-run-queue-store.ts` | Add the barrier schema, typed store contract, atomic transitions, and resolved/unresolved cleanup. |
+| `packages/server/src/conversation-run-lifecycle-controller.ts` | Replace the `reservation_missing` suppression path with barrier-driven handoff and deterministic restart handling. |
+| `packages/server/src/routes/conversations.ts` | Project barrier state in existing run-status responses and validate/reopen a matching barrier through the existing retry route. |
+| `packages/server/src/tests/conversation-run-queue-store.test.ts` | Prove SQLite identity, atomicity, restart, and cleanup semantics. |
+| `packages/server/src/tests/conversation-run-lifecycle-controller.test.ts` | Reproduce the no-predecessor-reservation deadlock and prove exactly-once recovery/dispatch. |
+| `packages/server/src/tests/server-conversations.test.ts` | Prove status and explicit-retry API behavior for a queued successor. |
+| `packages/orchestrator/src/tests/engine-generation-authority.test.ts` and lifecycle route tests | Retain the existing proof boundary; add only missing server-to-orchestrator integration cases. |
+| `packages/app/src/app/pages/session-run-presentation.ts` and `packages/app/src/app/context/session-lifecycle-recovery.ts` | Retain the existing typed projection/retry path; change only if tests expose a missing barrier status or scope fence. |
+| App projection and selection tests | Prove a late old-session status/history result cannot alter the newly selected conversation. |
+
+## Target ownership and state contract
+
+| Component | It may do | It must not do |
+| --- | --- | --- |
+| Engine generation authority | Prove `lost_proven`, `live_or_ambiguous`, or `unknown` for one attached owner tuple. | Release a reservation, start a successor, or decide UI state. |
+| Orchestrator run registry | Perform the exact fenced `attached -> lost` transition after `lost_proven`. | Infer death from pool absence, PID alone, transcript, or timeout. |
+| Terminal handoff barrier store | Persist and deduplicate one blocked-handoff decision for a conversation. | Create/delete a run reservation, submit a prompt, or decide engine liveness. |
+| Server lifecycle controller | Create/advance the barrier, consume orchestrator evidence, release only a matching reservation, and wake normal FIFO draining. | Infer owner loss itself or make a direct engine-control call. |
+| Desktop app | Render history, durable queued intent, and typed handoff state; send explicit retry intent. | Retry automatically, release a queue item, decide terminality, or restart runtime. |
+
+The durable state machine is intentionally small:
 
 ```text
-creating -> live -> stopping -> exited_confirmed
-    |        |            \
-    +--------+-------------> unknown_after_orchestrator_loss
+observed -> evidence_requested -> resolved
+                            \-> unresolved
 ```
 
-`creating` is written before a run can attach to the engine. `live` is written
-after spawn; where the host supports it, the same activation captures the
-exact process identity. A missing identity does not block ordinary execution,
-but it disables automatic owner-loss recovery for that generation. A clean
-stop writes `stopping`, waits for exact child exit, then writes
-`exited_confirmed`. A failed stop or unclean orchestrator loss never
-manufactures an exit record.
+- `observed`: the server saw a durable waiting item blocked by an exact stale
+  terminal predecessor.
+- `evidence_requested`: request identity was durably fenced before the
+  orchestrator call.
+- `resolved`: owner loss was proven and the server's fresh lifecycle read says
+  the predecessor is ready for normal release/drain handling.
+- `unresolved`: owner evidence was live, ambiguous, unavailable, or the
+  request outcome is unknown. It is an admission fence and stops automatic
+  polling.
 
-On restart, a stale heartbeat triggers a single evidence read through a
-platform process-identity adapter:
+The active barrier key is the exact tuple:
 
-| Evidence | Decision | Consequence |
-| --- | --- | --- |
-| Exact process identity is alive, or the current pool retains any record for the workspace (`spawning`, `ready`, `idle`, `suspended`, or `crashed`). | `live_or_ambiguous` | Do not mark the run lost or release its reservation. |
-| Exact recorded process identity is absent and the durable generation record has a valid identity. | `lost_proven` | Atomically record confirmed closure and permit the exact run transition. |
-| Identity cannot be read, generation record is incomplete, PID is reused, health/evidence disagrees, or the record is still `creating`. A `stopping` record is resolved only if its exact captured identity is observed absent. | `unknown` | Preserve the reservation in durable degraded state; do not retry destructively. |
-
-Heartbeat expiry alone is never `lost_proven`. A PID liveness probe alone is
-never `lost_proven`. If the platform cannot provide an exact process-birth
-identity, automatic loss recovery is unavailable on that platform and must
-return `unknown`; safety wins over queue throughput.
-
-## Confirmed error inventory
-
-| ID | Finding | Required disposition |
-| --- | --- | --- |
-| RCO-01 | Restart loses the pool but durable terminal runs retain an attached owner. Pool absence is not death proof. | Add durable generation evidence and make absence only a candidate for evidence resolution. |
-| RCO-02 | Current pool event cleanup cannot observe a generation from a prior orchestrator process. | Route prior-generation resolution through `EngineGenerationAuthority`; do not fabricate a pool event. |
-| RCO-03 | Probe collapses missing engine, HTTP/status failures, missing session, timeout, and transport errors into `unreachable`. | Preserve a finite redacted unavailable reason; only `no_current_engine` can start evidence resolution, never finish it. |
-| RCO-04 | Current server stale-terminal recovery is guarded only by process memory and can request recovery again after restart. | Persist a per-reservation handoff decision before the request; deduplicate by exact run/owner/evidence fingerprint. |
-| RCO-05 | The 600-poll limit is process-local and terminal stale exhaustion has no durable operational outcome. | Persist `terminal_handoff_unresolved`, stop one-second polling, and rehydrate it without replay. |
-| RCO-06 | Current route treats a current pool owner as a generic blocker rather than a named engine state contract. | Return typed `live_or_ambiguous` evidence for starting, ready, idle, suspended, incomplete, and changed generation states. |
-| RCO-07 | The inspected runtime used an older server binary and could not exercise the source recovery path. | Verification must build server and orchestrator binaries, refresh the desktop sidecar, and record the resulting runtime evidence. |
-
-## Non-goals
-
-- Do not auto-restart, stop, reload, or replace an engine to unblock a queue.
-- Do not make a terminal transcript or a completed provider response release
-  authority.
-- Do not use the UI, a client operation ID, a raw PID, or a stale heartbeat as
-  proof of owner death.
-- Do not discard durable queued prompts on startup.
-- Do not reuse the runtime-operation owner as a second queue or owner-death
-  ledger.
-- Do not send prompts, credentials, URLs, local paths, raw upstream bodies, or
-  process output in diagnostics.
-
-## P0 implementation plan
-
-### 1. Freeze the unsafe current boundary with tests
-
-Add failing focused tests before behavior changes:
-
-1. A terminal stale record with a missing pool entry but a live exact old child
-   remains attached and blocks release.
-2. An old child proven absent by exact process identity allows only its exact
-   terminal run to become `lost`.
-3. The same PID with a different process-birth identity is `unknown`, never
-   `lost_proven`.
-4. An authority row in `creating`, `stopping`, or unknown state, and a current
-   pool record in `spawning`, `ready`, `idle`, `suspended`, `crashed`, or a
-   changed generation, cannot permit the transition.
-5. Restarting the server between a handoff request and its answer does not send
-   a duplicate request or release the queue.
-6. Reaching the handoff budget stores a durable blocked outcome and creates no
-   further one-second timer.
-
-Use fake process-identity adapters in unit tests; do not rely on timing or an
-actual PID reuse to prove the decision table.
-
-### 2. Add `EngineGenerationAuthority` under the orchestrator
-
-Create a small authority and store abstraction beside the run store. Add an
-`engine_generations` table to the existing orchestrator lifecycle SQLite
-database and migrate it with the existing store pattern.
-
-Expose only these operations:
-
-```ts
-registerCreating(input) -> generation
-activateGeneration(input) -> generation
-beginStop(generationId, reason) -> generation
-confirmExit(generationId, reason) -> generation
-resolveOwnerEvidence(exactRunOwner) ->
-  | { kind: "lost_proven"; evidenceId: string }
-  | { kind: "live_or_ambiguous"; reason: FiniteReason }
-  | { kind: "unknown"; reason: FiniteReason }
+```text
+workspaceId + conversationId + blockingRunId + engineOwnerFingerprint
 ```
 
-The authority owns the platform adapter which reads an exact process instance.
-The adapter returns `alive`, `absent`, or `unknown`; it must compare PID and
-birth identity. It is intentionally fail-closed. No route, registry, or server
-controller may call a raw PID liveness probe to decide owner loss.
+Only one active barrier is permitted for a workspace/conversation. Existing
+admission already ensures there cannot be two independently blocking runs for
+one conversation.
 
-Replace the pool's observational `(workspaceId, event)` callback as the
-critical loss handoff with an awaited lifecycle hook carrying an immutable
-engine-owner tuple. The hook may coexist with the old callback for logging,
-but no correctness path may reconstruct a crashed owner later through
-`pool.get(workspaceId)`. Its minimal contract is:
+## Action-taking implementation sequence
 
-```ts
-beforeEngineSpawn(ownerSeed) -> Promise<void>
-afterEngineSpawn(engine) -> Promise<void>
-beforeEngineStop(engine, reason) -> Promise<void>
-afterEngineExit(engine, reason) -> Promise<void>
+### 1. Freeze the present bug with failing tests
+
+Change no production behavior before these tests fail for the current source.
+
+1. In the server lifecycle-controller test suite, construct a terminal stale
+   run `old-run` that has a complete attached engine tuple but **no** server
+   reservation. Add one durable pending queue item `new-run` for the same
+   workspace/conversation.
+2. Make lifecycle status return `stale: true`, terminal status,
+   `runtimeReadyForSuccessor: null`, and `unavailableReason:
+   no_current_engine` for `old-run`.
+3. Assert the desired contract: one barrier is persisted, the handoff endpoint
+   is called once, and `new-run` remains pending until a fresh `lost_proven`
+   result is followed by runtime-ready evidence. This test fails against the
+   current `reservation_missing` path and remains unchanged after the fix.
+4. In the queue-store test suite, add empty tests for barrier identity,
+   idempotent request claiming, unresolved reopening, and removal after a
+   successful queue claim. They define the storage API before controller code
+   uses it.
+5. Keep the existing orchestrator authority tests as the proof for exact
+   process evidence. Add only missing integration coverage for the route's
+   `lost_proven`, live, unknown, and PID-reuse results; do not reimplement the
+   authority in the server.
+
+### 2. Add the barrier to the existing server queue store
+
+Modify the existing server queue SQLite store; do not create a new database or
+another generic lifecycle service.
+
+1. Add a `conversation_terminal_handoff_barrier` migration. Its columns are:
+
+   ```text
+   workspace_id, conversation_id, blocking_run_id, owner_fingerprint,
+   state, probe_reason, evidence_fingerprint, evidence_id,
+   safe_outcome_reason, first_waiting_queue_item_id,
+   requested_at, decided_at, resolved_at, attempt_count,
+   created_at, updated_at
+   ```
+
+2. Add a partial unique index that permits one active (`observed`,
+   `evidence_requested`, or `unresolved`) barrier per
+   `(workspace_id, conversation_id)`. Keep a unique exact barrier identity as
+   well. Store only opaque ids and finite reason codes; never store prompt
+   text, transcript content, URL, PID, process-birth token, headers, or raw
+   upstream error bodies.
+3. Add a small `ConversationTerminalHandoffBarrier` type and these store
+   operations:
+
+   ```text
+   getActiveTerminalHandoffBarrier(workspaceId, conversationId)
+   observeTerminalHandoffBarrier(input) -> barrier
+   claimTerminalHandoffEvidence(input) -> { barrier, requestRequired }
+   resolveTerminalHandoffBarrier(input) -> barrier
+   markTerminalHandoffBarrierUnresolved(input) -> barrier
+   reopenTerminalHandoffBarrier(workspaceId, conversationId, runId) -> barrier | null
+   consumeResolvedTerminalHandoffBarrierForQueueClaim(queueItemId) -> boolean
+   clearTerminalHandoffBarrierIfNoWaitingItem(workspaceId, conversationId)
+   ```
+
+4. Make `observe`, `claim`, `resolve`, `unresolve`, and queue-claim consumption
+   compare the exact owner/evidence fingerprint in SQL. A repeated timer,
+   reconnect, or server restart returns the existing row and never grants a
+   second recovery call.
+5. Retain `resolved` only until the normal queue store has atomically claimed
+   one successor as `starting`; then remove it in the same transaction. Retain
+   `unresolved` only while a queue item remains blocked; cancellation of the
+   last waiting item removes it. Traces, not an ever-growing table, hold the
+   diagnostic history.
+6. Leave the existing `terminal_handoff_*` reservation columns readable during
+   migration, but stop using them as a handoff decision source. They may become
+   a compatibility mirror temporarily; they must not race the barrier to decide
+   release.
+
+### 3. Move stale-terminal recovery in the server controller onto the barrier
+
+Change the existing lifecycle-controller branch that currently suppresses
+recovery when `persistTerminalHandoffPending` returns no predecessor
+reservation.
+
+1. At the queue-drain boundary, after selecting the oldest pending item, read
+   latest lifecycle state for that conversation as it already does.
+2. Only when the latest run is terminal, stale, not ready for a successor, and
+   has `no_current_engine`, call `observeTerminalHandoffBarrier` with:
+
+   - the selected waiting queue item;
+   - the blocking run id;
+   - the immutable owner fingerprint from lifecycle evidence; and
+   - the exact finite probe reason.
+
+   All other active, terminal-ready, timeout, HTTP, transport, or missing
+   session states retain their existing reconciliation behavior.
+3. Call `claimTerminalHandoffEvidence` before invoking the existing
+   `recoverTerminalRuntimeHandoff` client method. Call the orchestrator only
+   when `requestRequired` is true.
+4. Remove the process-local stale-handoff attempt map from this correctness
+   path. A keyed scheduler may still coalesce callbacks, but durable barrier
+   state is the only retry/restart authority.
+5. On `lost_proven`, immediately read the exact lifecycle result again. Mark
+   the barrier `resolved` only when it now reports terminal and
+   `runtimeReadyForSuccessor: true`.
+6. After that resolution commits:
+
+   - release the predecessor reservation only if an exact matching reservation
+     really exists;
+   - otherwise release nothing;
+   - wake the existing FIFO drain path once; do not submit a prompt directly
+     from barrier code.
+
+7. On an ambiguous/live/unknown result, request error, or outcome-unknown crash
+   window, mark the barrier `unresolved`, emit one finite reason, and cancel
+   the automatic reconcile loop for that handoff. Do not restart, suspend, or
+   replace an engine.
+
+### 4. Make restart recovery deterministic
+
+Use the barrier state during existing queue/startup recovery; do not add a
+background sweep in this change.
+
+| Restart point | Required server action |
+| --- | --- |
+| Before evidence claim | Re-read queue/lifecycle; observe or claim normally. |
+| After evidence claim, before HTTP response | Re-read exact lifecycle once. If it is already lost/ready, resolve; otherwise mark the barrier unresolved. Do not resend the request automatically. |
+| After `lost_proven`, before barrier resolution | Re-read lifecycle and resolve only if ready. |
+| After resolution, before queue claim | Existing queue recovery sees the resolved barrier and performs one normal claim. |
+| After queue claim | Consume/delete the resolved barrier with that claim; existing starting-row recovery remains responsible for the claimed item. |
+
+An explicit retry operates only on an `unresolved` barrier for the same
+workspace/conversation and matching blocking run. It performs one fresh fenced
+evidence request. A run id from the client is a target hint and validation key,
+not the authority that selects a barrier or proves owner loss.
+
+### 5. Rewire the existing server status and retry projection
+
+The app already has `terminalHandoff` DTOs, presentation states, and an
+explicit retry button. Preserve them instead of adding another UI controller.
+
+1. Change the server's run-status serialization to obtain terminal-handoff
+   state from the active barrier for the scoped conversation, rather than only
+   from the reservation whose run id was requested.
+2. Return the existing `pending`/`unresolved` DTO to both the blocking run and
+   the currently queued successor for that conversation. This lets the pending
+   user row show its real server-owned wait state even when the predecessor has
+   no reservation.
+3. Change the retry route and controller method to look up and reopen the
+   matching barrier. Keep the existing scoped URL/client surface if practical,
+   but reject a request when its conversation/run does not match the barrier.
+4. Keep app retry behavior explicit. It may render the returned status and
+   restart its normal status watch; it must not retry because of polling,
+   remount, stream reconnect, opening an old conversation, or a local idle
+   observation.
+5. Keep the current selected-scope guards in the queue projection and lifecycle
+   recovery paths. Add tests proving that a late status or history response for
+   an old session cannot update the transcript, spinner, recovery action, or
+   queue panel of a newly selected conversation.
+
+### 6. Add bounded, causal diagnostics
+
+Use the existing send-workflow trace infrastructure. Add one event for each
+state transition, not one event per poll:
+
+```text
+terminal-handoff-barrier-observed
+terminal-handoff-barrier-evidence-requested
+terminal-handoff-barrier-resolved
+terminal-handoff-barrier-unresolved
+terminal-handoff-barrier-request-suppressed
+terminal-handoff-barrier-cleared
 ```
 
-The pool invokes `beforeEngineSpawn` after allocating the random owner id but
-before it creates the child. It awaits `afterEngineSpawn` after exact child
-identity capture and before returning an engine that can accept a run. On a
-child exit, it awaits `afterEngineExit` with the original immutable engine
-object before any run-loss cleanup. This prevents map deletion, a replacement
-generation, or a changed workspace entry from changing the identity being
-closed.
+Each event includes only workspace/conversation/run/queue opaque ids, a finite
+reason, whether a predecessor reservation existed, barrier state, and attempt
+number. It excludes message bodies, transcript, raw URL, local path,
+credentials, process output, PID, process-birth token, and raw provider body.
 
-Wire the pool and authority in this strict order:
+### 7. Update canonical behavior documentation after code lands
 
-1. Allocate the random owner id, then persist `creating` through
-   `beforeEngineSpawn` before creating a child.
-2. After spawn, capture exact process identity and persist `live` through
-   `afterEngineSpawn` before any run can attach to this owner.
-3. On pool child exit/crash, invoke `afterEngineExit` with the original tuple;
-   it persists `exited_confirmed` before existing run-loss cleanup begins.
-4. On intentional stop, invoke `beforeEngineStop` to persist `stopping`;
-   persist confirmed exit only after the child has actually exited. A stop
-   error yields `unknown`, not loss.
-5. On orchestrator startup, retain old rows. Resolve an old row lazily only
-   when its attached run blocks a reservation; do not add a broad startup sweep
-   in P0.
+Update the current workflow and runtime architecture documentation, not this
+plan alone, to state:
 
-The existing persisted engine snapshot remains diagnostic state only. It must
-not be restored as a live lease or used as proof.
+- historical transcript is display/recovery data and never runtime-ready
+  evidence;
+- the server barrier is the durable owner of an unresolved stale-terminal
+  handoff, including the no-predecessor-reservation case;
+- the orchestrator authority supplies proof only;
+- the UI projects state and sends one explicit retry-verification intent.
 
-### 3. Make probe unavailability causal but bounded
+## Required verification
 
-Replace boolean-only `unreachable` with a closed, redacted reason:
+### Focused regression coverage
 
-```ts
-type RunProbeUnavailableReason =
-  | "no_current_engine"
-  | "session_status_http"
-  | "session_messages_missing"
-  | "session_messages_http"
-  | "request_timeout"
-  | "request_transport_error";
-```
+1. Barrier store: unique active barrier, idempotent claim, no duplicate request
+   after reopen/restart, resolve-to-queue-claim cleanup, and cancellation
+   cleanup.
+2. Lifecycle controller: the exact `old-run` without reservation plus queued
+   `new-run` reproduction now creates one barrier, calls recovery once, and
+   dispatches `new-run` once only after `lost_proven` and fresh ready evidence.
+3. Lifecycle controller: live process, PID reuse, unknown inspection, active
+   peer, timeout, HTTP failure, and missing session never release or dispatch.
+4. Restart: preserve the queue/store database across every row in the restart
+   table; assert no duplicate orchestrator recovery call and no duplicate
+   provider submit.
+5. Route/client/app: queued successor receives the barrier projection; retry is
+   explicit and scoped; stale old-session responses cannot alter a new selected
+   session.
+6. Orchestrator: retain and run the existing generation-authority and
+   proof-gated-route tests. Add only missing cross-module proof that the server
+   consumes `lost_proven` rather than replacing it with pool absence.
 
-The probe returns only this reason and an optional safe HTTP status. The run
-registry forwards it on stale lifecycle responses. `no_current_engine` means
-only that the in-memory pool lacks a current entry; it tells the recovery route
-to ask the authority for evidence. It never bypasses the authority.
+### Service and desktop proof
 
-Add one test for every reason and tests proving that a timeout, status error,
-or missing session cannot call `resolveOwnerEvidence`.
-
-### 4. Replace the handoff route with a proof-gated transition
-
-The server-to-orchestrator terminal-handoff route must:
-
-1. Read the exact terminal run and require a complete attached owner tuple.
-2. Reconcile it and require `stale` with probe reason `no_current_engine`.
-3. Reject active peers for that exact owner.
-4. Call `resolveOwnerEvidence`.
-5. Only for `lost_proven`, update the exact run from `attached` to `lost` and
-   return the evidence identifier plus fresh lifecycle state.
-6. For `live_or_ambiguous` or `unknown`, return a typed non-mutating result.
-
-The registry remains responsible for validating the exact tuple on the write.
-The authority result is an additional required precondition, not a replacement
-for the tuple fence. The route never calls `suspend` or any pool mutation for a
-terminal handoff.
-
-### 5. Persist server handoff workflow on the reservation
-
-Extend the durable workspace-run reservation with a distinct
-`terminal_handoff_unresolved` state and fields for:
-
-- finite probe reason and authority result;
-- owner/evidence fingerprint and last authoritative read time;
-- requested/decided timestamps and a bounded attempt count;
-- safe diagnostic reason and an explicit `resolvedAt` when applicable.
-
-Before the server sends a recovery request, it persists the exact handoff
-fingerprint as requested. If it restarts, it reads this state first and must not
-repeat the same request. A new request is permitted only after a new
-authoritative evidence fingerprint or an explicit server-owned retry policy;
-it must not be caused merely by process restart or a timer.
-
-Outcomes are:
-
-| Orchestrator result | Durable reservation action | Queue action |
-| --- | --- | --- |
-| `lost_proven` | Re-read lifecycle. Mark resolved only after terminal readiness is true. | Release exactly this reservation, then wake one FIFO successor. |
-| `live_or_ambiguous` | Persist `terminal_handoff_unresolved` with safe reason. | Keep intent durable; no release or dispatch. |
-| `unknown`, route failure, or any other unavailable reason | Persist `terminal_handoff_unresolved` with safe reason. | Stop the one-second loop; no release, dispatch, or runtime mutation. |
-
-The controller rehydrates unresolved reservations at startup, emits one
-deduplicated decision trace, and projects them as blocked/degraded through the
-run-status contract. It never restarts the old polling loop or replays a
-recovery request because of restart, polling, or reconnect. The app may submit
-one explicit retry-verification intent; the server atomically reopens only the
-matching unresolved reservation and performs one new fenced evidence read.
-The UI never decides loss, releases a reservation, or controls an engine.
-
-### 6. Keep observability useful and private
-
-Add finite, deduplicated events for:
-
-- authority evidence decision and its safe reason;
-- reservation handoff request, resolution, and unresolved persistence;
-- startup classification, queue age bucket, and whether a retry was suppressed
-  because the evidence fingerprint was unchanged.
-
-Do not log message bodies, raw URLs, headers, tokens, absolute local paths,
-raw provider responses, or process output. A terminal stale state emits an
-initial decision and a state change, not an event every second.
-
-### 7. Verification: prove the actual restart boundary
-
-Run focused unit tests for the authority, probe, registry, route, queue store,
-and lifecycle controller. Then add a deterministic full service-chain test
-using the compiled server, compiled orchestrator, real OpenCode sidecar, and
-preserved orchestrator/server data directories.
-
-The service-chain test must cover all of these cases:
-
-1. Start orchestrator generation A, admit a run, retain a queued successor,
-   then terminate A without running its graceful shutdown.
-2. Confirm the old child still exists. Start orchestrator generation B over the
-   same durable data. Assert no `lost` transition, no reservation release, and
-   no successor dispatch.
-3. Terminate the exact old child, verify its recorded process identity is
-   absent, then request handoff. Assert one `lost_proven` transition, one
-   reservation release, and exactly one FIFO successor.
-4. Restart the server before and after the request. Assert the persisted
-   fingerprint prevents duplicate recovery and does not reset the retry budget.
-5. Simulate PID reuse and unavailable process-identity inspection through the
-   adapter. Assert both produce `unknown` and no release.
-
-For desktop proof, follow the documented single-tenant preflight, build server
-and orchestrator binaries, refresh the desktop sidecar, and add a focused
-WebDriverIO scenario. It must send through visible controls, use an isolated
-workspace and only loopback E2E fault control where required, visibly show the
-blocked/degraded handoff state, and verify continuation after a proven owner
-loss. The scenario must retain a redacted artifact under the existing
-WebDriverIO diagnostics convention. Legacy Tauri Pilot scenarios are not
-acceptable evidence.
-
-## P1 follow-up
-
-After P0 proves the on-demand blocked-handoff path, evaluate a rate-limited
-startup sweep over persisted attached generations. It must call the same
-authority, retain the same fail-closed semantics, and never release a
-reservation solely because a pool is empty. Do not add it before P0: on-demand
-resolution is smaller, observable, and materially safer.
+1. Build the Veslo server binary and orchestrator binary.
+2. Add a deterministic service-chain scenario using preserved server and
+   orchestrator data, an actual OpenCode child, and a durable queued successor.
+   It must reproduce the missing-predecessor-reservation case, restart both
+   services across the defined crash windows, then verify one successor submit
+   after the exact old child is proven absent.
+3. Add a focused WebDriverIO desktop scenario after the documented single
+   tenant preflight. It opens an old conversation, sends a successor, shows
+   the server-owned waiting/unresolved state, navigates away and back, verifies
+   no cross-conversation spinner/projection leak, then completes after the
+   deterministic owner-loss proof. Keep a redacted diagnostic artifact.
+4. Run the normal server build, the relevant focused tests, the workspace
+   engine/service gates selected by the testing playbook, and `pnpm check` for
+   the final source-code handoff.
 
 ## Acceptance criteria
 
-1. An old terminal owner is marked `lost` only after an exact durable
-   generation proof; new-pool absence, heartbeat expiry, and a raw PID never
-   suffice.
-2. A live orphaned engine cannot be interrupted or bypassed by a new
-   orchestrator/server generation.
-3. An unprovable old owner becomes a durable visible degraded state, not an
-   infinite one-second reconcile loop or a silent deadlock.
-4. Server restart does not repeat an identical handoff request or reset its
-   outcome.
-5. The server remains the sole owner of reservation release and successor
-   dispatch; UI never becomes a lifecycle authority.
-6. Diagnostics distinguish finite causal categories without sensitive data.
-7. Focused tests and a real WebDriverIO desktop scenario prove the preserved
-   datastore/restart boundary using rebuilt binaries.
+1. The exact current `reservation_missing` reproduction no longer suppresses
+   recovery: it creates one durable barrier and retains the queued intent.
+2. Pool absence, a stale heartbeat, a timeout, a PID, UI state, or transcript
+   never releases a reservation or starts a successor.
+3. Only the existing generation authority's `lost_proven` result can permit
+   the exact old run to transition to lost.
+4. A server or orchestrator restart at any handoff step cannot duplicate a
+   recovery request or provider submit.
+5. An ambiguous or unavailable proof produces a durable visible unresolved
+   state and stops automatic polling; only explicit retry verification can
+   request another evidence read.
+6. The server remains the only queue/admission/release owner. The barrier is a
+   narrow server record, not a second queue or lifecycle framework.
+7. An old transcript remains visible as history, while active/waiting UI state
+   comes only from a server-scoped run or barrier projection for that same
+   selected conversation.

@@ -867,6 +867,22 @@ describe("EnginePool", () => {
     }
   });
 
+  test("bootstrap prompt reservation is exclusive and only a confirmed prompt consumes it", async () => {
+    const h = harness();
+    try {
+      const engine = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      expect(h.pool.reserveBootstrapPrompt("a", engine.engineOwnerId, "run-first")).toBe(true);
+      expect(h.pool.reserveBootstrapPrompt("a", engine.engineOwnerId, "run-second")).toBe(false);
+      expect(h.pool.releaseBootstrapPrompt("a", engine.engineOwnerId, "run-first")).toBe(true);
+      expect(h.pool.reserveBootstrapPrompt("a", engine.engineOwnerId, "run-second")).toBe(true);
+      expect(h.pool.confirmBootstrapPrompt("a", engine.engineOwnerId, "run-second")).toBe(true);
+      expect(h.pool.get("a")?.hasAcceptedPrompt).toBe(true);
+      expect(h.pool.reserveBootstrapPrompt("a", engine.engineOwnerId, "run-third")).toBe(false);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   test("ensure respawns when underlying process died externally", async () => {
     const h = harness();
     try {

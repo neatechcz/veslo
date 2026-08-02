@@ -2790,6 +2790,14 @@ async function startOpencode(options: {
   openCodeConfigDigest: string;
 }> {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
+  // OpenCode normally suppresses its structured runtime diagnostics. Keep them
+  // opt-in so a production investigation can distinguish a prompt that was
+  // merely accepted (204) from one that actually entered provider execution.
+  if (truthyEnv("VESLO_OPENCODE_PRINT_LOGS")) args.push("--print-logs");
+  const requestedOpenCodeLogLevel = process.env.VESLO_OPENCODE_LOG_LEVEL?.trim().toUpperCase();
+  if (requestedOpenCodeLogLevel && ["DEBUG", "INFO", "WARN", "ERROR"].includes(requestedOpenCodeLogLevel)) {
+    args.push("--log-level", requestedOpenCodeLogLevel);
+  }
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
   }
@@ -4957,18 +4965,69 @@ async function runRouterDaemon(args: ParsedArgs) {
     requestedAuthorizationRevision?: string;
     managedSkillStoreRoot?: string;
     skillManifestPath?: string;
+    /** Only the first prompt may safely bridge an empty bootstrap binding. */
+    allowBootstrapBinding?: boolean;
+    /** The durable server run that owns this exceptional admission. */
+    bootstrapRunId?: string;
   }) => {
     const current = pool.get(input.workspaceId);
     const completeRequest = Boolean(
       input.requestedRevision && input.requestedAuthorizationRevision,
+    );
+    const hasPublishedBindingRequest = Boolean(
+      input.requestedRevision || input.requestedAuthorizationRevision,
+    );
+    const currentIsEmptyBootstrap = Boolean(
+      current &&
+        current.skillViewRevision === EMPTY_DIRECT_SKILL_VIEW_REVISION &&
+        current.authorizationRevision === EMPTY_DIRECT_AUTHORIZATION_REVISION,
+    );
+    const canServeOneBootstrapPrompt = Boolean(
+      input.allowBootstrapBinding &&
+        current &&
+        !current.hasAcceptedPrompt &&
+        currentIsEmptyBootstrap,
+    );
+    if (current?.bootstrapPromptReservationRunId && hasPublishedBindingRequest) {
+      // Do not let a concurrent admission replace the bootstrap engine before
+      // its reserved server run is attached and sent upstream.
+      throw new Error("bootstrap_prompt_busy");
+    }
+    let bootstrapPromptReservation: { engineOwnerId: string; runId: string } | null = null;
+    if (canServeOneBootstrapPrompt) {
+      const runId = input.bootstrapRunId?.trim() ?? "";
+      if (!runId || !pool.reserveBootstrapPrompt(input.workspaceId, current!.engineOwnerId, runId)) {
+        throw new Error("bootstrap_prompt_busy");
+      }
+      bootstrapPromptReservation = { engineOwnerId: current!.engineOwnerId, runId };
+    }
+    // The first accepted prompt may bridge the restrictive empty generation,
+    // but that generation must not become a permanent substitute for the
+    // server-published Skill view. The next complete admission restages it.
+    const mustLeaveConsumedBootstrap = Boolean(
+      currentIsEmptyBootstrap &&
+        current?.hasAcceptedPrompt &&
+        completeRequest &&
+        input.requestedRevision &&
+        input.requestedRevision !== EMPTY_DIRECT_SKILL_VIEW_REVISION,
     );
     const currentIsReusable = Boolean(
       current &&
         (current.state === "ready" || current.state === "idle") &&
         current.skillViewRevision &&
         current.authorizationRevision &&
-        completeRequest &&
-        current.authorizationRevision === input.requestedAuthorizationRevision,
+        // A proxy request without a published binding is not permission to
+        // recompute a fallback view. The pool already owns the selected
+        // generation; recomputing here can resolve the empty direct view and
+        // tear down a freshly activated Skill view between session creation
+        // and prompt_async. Only an explicit, complete server-published
+        // binding may replace a healthy engine, except for the first prompt's
+        // explicitly allowed empty-bootstrap bridge.
+        (canServeOneBootstrapPrompt ||
+          !hasPublishedBindingRequest ||
+          (completeRequest &&
+            current.authorizationRevision === input.requestedAuthorizationRevision &&
+            !mustLeaveConsumedBootstrap)),
     );
     if (currentIsReusable && current) {
       return {
@@ -4979,6 +5038,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           current.skillViewRevision === input.requestedRevision
             ? null
             : "content_stale_reused",
+        bootstrapPromptReservation,
       };
     }
 
@@ -5005,6 +5065,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       authorizationRevision: resolution.view.authorizationRevision!,
       result: resolution.result,
       fallbackReason: resolution.fallbackReason,
+      bootstrapPromptReservation,
     };
   };
 
@@ -6518,6 +6579,16 @@ async function runRouterDaemon(args: ParsedArgs) {
         let pooledSkillResolution: Awaited<
           ReturnType<typeof resolveOrdinaryPooledSkillBinding>
         > | null = null;
+        let bootstrapPromptReservation: { engineOwnerId: string; runId: string } | null = null;
+        const releaseBootstrapPromptReservation = (): void => {
+          if (!bootstrapPromptReservation) return;
+          pool.releaseBootstrapPrompt(
+            ws.id,
+            bootstrapPromptReservation.engineOwnerId,
+            bootstrapPromptReservation.runId,
+          );
+          bootstrapPromptReservation = null;
+        };
         const runtimeSkillDecisionOperationId = sendTraceId || randomUUID();
         let expectedSharedSkillView: { workspaceId: string; workspaceRoot: string; revision?: string } | null = null;
         let directorySkillView: DirectorySkillViewInstance | null = null;
@@ -6585,7 +6656,18 @@ async function runRouterDaemon(args: ParsedArgs) {
                 : {}),
               managedSkillStoreRoot,
               ...(skillManifestPath ? { skillManifestPath } : {}),
+              allowBootstrapBinding:
+                proxyMethod === "POST" &&
+                /\/prompt_async\/?$/.test(restPath) &&
+                Boolean(
+                  conversationRunId &&
+                  requestedSkillViewRevision &&
+                  requestedAuthorizationRevision,
+                ),
+              ...(conversationRunId ? { bootstrapRunId: conversationRunId } : {}),
             });
+            bootstrapPromptReservation =
+              pooledSkillResolution.bootstrapPromptReservation ?? null;
           }
           proxyTarget = await resolveOpencodeProxyTarget({
             topology: workspaceTopology,
@@ -6614,6 +6696,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             ...(skillManifestPath ? { skillManifestPath } : {}),
           });
           if (!proxyTarget.engine) {
+            releaseBootstrapPromptReservation();
             const isEngineStarting = proxyTarget.unavailableReason === "starting";
             const isEngineFailed = proxyTarget.unavailableReason === "failed";
             const proxyUnavailableEvent = isEngineStarting
@@ -6673,6 +6756,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             sharedViewRequired &&
             !sharedSkillViewMatches(expectedSharedSkillView)
           ) {
+            releaseBootstrapPromptReservation();
             send(409, {
               error: "shared_engine_skill_view_stale",
               message: "Shared engine skill view changed before the request could be dispatched",
@@ -6743,6 +6827,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             durationMs: Date.now() - ensureStartedAt,
           });
         } catch (err) {
+          releaseBootstrapPromptReservation();
           const detail = err instanceof Error ? err.message : String(err);
           traceRuntime("orchestrator:proxy-ensure:error", {
             traceId: sendTraceId || null,
@@ -6770,6 +6855,14 @@ async function runRouterDaemon(args: ParsedArgs) {
             send(409, {
               error: "skill_view_busy",
               message: "Workspace engine is running a job staged from a different skill view",
+              retryAfterMs: 250,
+            });
+            return;
+          }
+          if (detail === "bootstrap_prompt_busy") {
+            send(409, {
+              error: "bootstrap_prompt_busy",
+              message: "The workspace is finishing its first server-owned prompt admission",
               retryAfterMs: 250,
             });
             return;
@@ -6808,6 +6901,18 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         const engine = proxyTarget.engine;
+        if (
+          bootstrapPromptReservation &&
+          engine.engineOwnerId !== bootstrapPromptReservation.engineOwnerId
+        ) {
+          releaseBootstrapPromptReservation();
+          send(409, {
+            error: "bootstrap_prompt_stale",
+            message: "The bootstrap engine changed before the prompt could be attached",
+            retryAfterMs: 250,
+          });
+          return;
+        }
         const engineResponseHeaders = buildEngineSkillBindingResponseHeaders(
           engine,
         );
@@ -6835,6 +6940,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               engineBaseUrl: owner.engineBaseUrl,
             });
             if (!attached) {
+              releaseBootstrapPromptReservation();
               send(409, {
                 error: "owner_attach_failed",
                 message: "The run could not be attached to the selected engine generation",
@@ -6865,6 +6971,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               engineResponseHeaders["x-veslo-engine-base-url"] = owner.engineBaseUrl;
             }
           } catch (err) {
+            releaseBootstrapPromptReservation();
             const detail = err instanceof Error ? err.message : String(err);
             logger.warn(
               "failed to attach engine owner to run",
@@ -7220,6 +7327,21 @@ async function runRouterDaemon(args: ParsedArgs) {
             : undefined,
           onSuccess: () => {
             flushRouterObservations();
+            if (bootstrapPromptReservation) {
+              // `onSuccess` means the upstream response completed, not that
+              // OpenCode accepted it. Only 2xx consumes the exceptional slot;
+              // 4xx/5xx leaves the server run retryable on this generation.
+              if (res.statusCode >= 200 && res.statusCode < 300) {
+                pool.confirmBootstrapPrompt(
+                  ws.id,
+                  bootstrapPromptReservation.engineOwnerId,
+                  bootstrapPromptReservation.runId,
+                );
+              } else {
+                releaseBootstrapPromptReservation();
+              }
+              bootstrapPromptReservation = null;
+            }
             finishUpstreamTrace("orchestrator:proxy-upstream:done", {
               statusCode: res.statusCode,
             });
@@ -7231,6 +7353,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             persistEnginesSnapshot();
           },
           onError: (err) => {
+            releaseBootstrapPromptReservation();
             flushRouterObservations();
             const healthPolicy = classifySharedProxyUpstreamError({
               method: req.method,
@@ -7280,6 +7403,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           // shared engine unhealthy here would cold-restart it on every
           // stream teardown.
           onClientAbort: () => {
+            releaseBootstrapPromptReservation();
             flushRouterObservations();
             finishUpstreamTrace("orchestrator:proxy-upstream:done", {
               statusCode: res.statusCode,
