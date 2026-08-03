@@ -8,10 +8,11 @@ import {
 } from "../../../components/session/server-queue-projection-controller.js";
 import type { ServerQueuedRunProjectionScope } from "../../../components/session/server-queue-projection-model.js";
 
-const scope = (uiConversationKey = "ui-a"): ServerQueuedRunProjectionScope => ({
+const scope = (uiConversationKey = "ui-a", selectionGeneration = 1): ServerQueuedRunProjectionScope => ({
   workspaceId: "ws-a",
   conversationId: "conv-a",
   uiConversationKey,
+  selectionGeneration,
 });
 
 const item = (status: VesloConversationQueueItem["status"]): VesloConversationQueueItem => ({
@@ -53,6 +54,28 @@ test("server queue projection ignores a stale hydration result", async () => {
   resolveFetch([item("pending")]);
 
   assert.deepEqual(await refresh, { kind: "stale" });
+  assert.deepEqual(replacements, []);
+});
+
+test("server queue projection rejects an older A read after A -> B -> A returns to the same UI key", async () => {
+  const firstA = scope("ui-a", 1);
+  const returnedA = scope("ui-a", 3);
+  let activeScope: ServerQueuedRunProjectionScope | null = firstA;
+  let resolveFirstFetch!: (value: VesloConversationQueueItem[]) => void;
+  const replacements: VesloConversationQueueItem[][] = [];
+  const controller = createServerQueueProjectionController({
+    getScope: () => activeScope,
+    fetchScope: () => new Promise((resolve) => {
+      resolveFirstFetch = resolve;
+    }),
+    replaceScope: (_scope, items) => replacements.push(items),
+  });
+
+  const staleRefresh = controller.refresh(firstA);
+  activeScope = returnedA;
+  resolveFirstFetch([item("pending")]);
+
+  assert.deepEqual(await staleRefresh, { kind: "stale" });
   assert.deepEqual(replacements, []);
 });
 
@@ -165,6 +188,7 @@ test("server queue projection stops polling when its scope changes or controller
 
 test("a burst of refreshes for one scope shares a single fetch", async () => {
   let fetchCount = 0;
+  const trace: Array<{ event: string; payload: Record<string, unknown> }> = [];
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -178,6 +202,7 @@ test("a burst of refreshes for one scope shares a single fetch", async () => {
       return [item("failed")];
     },
     replaceScope: () => undefined,
+    trace: (event, payload) => trace.push({ event, payload }),
   });
 
   // Reactive callers fire this in bursts. Without a guard each call started its
@@ -197,6 +222,11 @@ test("a burst of refreshes for one scope shares a single fetch", async () => {
   assert.deepEqual(
     results.map((result) => result.kind),
     ["updated", "updated", "updated", "updated", "updated"],
+  );
+  assert.equal(
+    trace.filter(({ event }) => event === "session-queue-projection:refresh-joined").length,
+    1,
+    "one in-flight scope should emit one joined diagnostic, not one event per reactive caller",
   );
 
   // Once settled, a later refresh is a new fetch rather than a stale share.

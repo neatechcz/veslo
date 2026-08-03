@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { VesloConversationQueueItem } from "../../../lib/veslo-server.js";
 import {
+  retainServerQueuedRunProjectionScope,
   replaceServerQueuedRunScope,
   serverQueuedRunsForVisibleConversation,
   serverQueuedRunsForScope,
@@ -28,9 +29,16 @@ const item = (queueItemId: string, overrides: Partial<VesloConversationQueueItem
   ...overrides,
 });
 
+const scope = (
+  workspaceId = "ws-a",
+  conversationId = "conv-a",
+  uiConversationKey = "ui-a",
+  selectionGeneration = 1,
+) => ({ workspaceId, conversationId, uiConversationKey, selectionGeneration });
+
 test("server queue projection deduplicates by queue item id without using local draft content", () => {
-  const first = upsertServerQueuedRunProjection([], item("queue-1"), "ui-a");
-  const updated = upsertServerQueuedRunProjection(first, item("queue-1", { status: "failed", error: "safe failure" }), "ui-a");
+  const first = upsertServerQueuedRunProjection([], item("queue-1"), scope());
+  const updated = upsertServerQueuedRunProjection(first, item("queue-1", { status: "failed", error: "safe failure" }), scope());
 
   assert.equal(updated.length, 1);
   assert.equal(updated[0]?.status, "failed");
@@ -41,7 +49,7 @@ test("server queue projection deduplicates by queue item id without using local 
   const sameClientMessage = upsertServerQueuedRunProjection(
     updated,
     item("queue-2", { clientMessageId: "msg-queue-1" }),
-    "ui-a",
+    scope(),
   );
   assert.deepEqual(
     sameClientMessage.map((row) => row.queueItemId),
@@ -52,22 +60,42 @@ test("server queue projection deduplicates by queue item id without using local 
 
 test("server queue projection replaces only the captured workspace and conversation scope", () => {
   const current = [
-    ...replaceServerQueuedRunScope([], { workspaceId: "ws-a", conversationId: "conv-a", uiConversationKey: "ui-a" }, [item("queue-a")]),
-    ...replaceServerQueuedRunScope([], { workspaceId: "ws-b", conversationId: "conv-b", uiConversationKey: "ui-b" }, [item("queue-b", { workspaceId: "ws-b", conversationId: "conv-b" })]),
+    ...replaceServerQueuedRunScope([], scope(), [item("queue-a")]),
+    ...replaceServerQueuedRunScope([], scope("ws-b", "conv-b", "ui-b"), [item("queue-b", { workspaceId: "ws-b", conversationId: "conv-b" })]),
   ];
-  const replaced = replaceServerQueuedRunScope(current, { workspaceId: "ws-a", conversationId: "conv-a", uiConversationKey: "ui-a-next" }, [item("queue-next")]);
+  const nextScope = scope("ws-a", "conv-a", "ui-a-next", 2);
+  const replaced = replaceServerQueuedRunScope(current, nextScope, [item("queue-next")]);
 
-  assert.deepEqual(serverQueuedRunsForScope(replaced, "ws-a", "conv-a").map((row) => row.queueItemId), ["queue-next"]);
-  assert.deepEqual(serverQueuedRunsForScope(replaced, "ws-b", "conv-b").map((row) => row.queueItemId), ["queue-b"]);
+  assert.deepEqual(serverQueuedRunsForScope(replaced, nextScope).map((row) => row.queueItemId), ["queue-next"]);
+  assert.deepEqual(serverQueuedRunsForScope(replaced, scope("ws-b", "conv-b", "ui-b")).map((row) => row.queueItemId), ["queue-b"]);
+});
+
+test("server queue projection rejects a foreign queue-list item before it can inherit the selected UI key", () => {
+  const projectionScope = scope("ws-a", "conv-a", "ui-a", 1);
+  const projected = replaceServerQueuedRunScope([], projectionScope, [
+    item("queue-a"),
+    item("queue-foreign", { workspaceId: "ws-a", conversationId: "conv-b" }),
+  ]);
+  const afterForeignImmediate = upsertServerQueuedRunProjection(
+    projected,
+    item("queue-foreign-immediate", { workspaceId: "ws-a", conversationId: "conv-b" }),
+    projectionScope,
+  );
+
+  assert.deepEqual(
+    serverQueuedRunsForVisibleConversation(afterForeignImmediate, projectionScope).map((row) => row.queueItemId),
+    ["queue-a"],
+  );
 });
 
 test("server queue projection stays with its UI conversation while accepting a materialized id handoff", () => {
-  const immediate = upsertServerQueuedRunProjection([], item("queue-1"), "pending-ui");
+  const immediate = upsertServerQueuedRunProjection([], item("queue-1"), scope("ws-a", "conv-a", "pending-ui"));
 
   assert.deepEqual(
     serverQueuedRunsForVisibleConversation(immediate, {
       workspaceId: "ws-a",
       uiConversationKey: "pending-ui",
+      selectionGeneration: 1,
     }).map((row) => row.queueItemId),
     ["queue-1"],
   );
@@ -76,13 +104,45 @@ test("server queue projection stays with its UI conversation while accepting a m
       workspaceId: "ws-a",
       conversationId: "conv-a",
       uiConversationKey: "materialized-ui",
+      selectionGeneration: 1,
     }).map((row) => row.queueItemId),
     ["queue-1"],
   );
 });
 
+test("server queue projection does not render a prior selection generation after returning to the same conversation", () => {
+  const firstSelection = scope("ws-a", "conv-a", "ui-a", 1);
+  const reenteredSelection = scope("ws-a", "conv-a", "ui-a", 3);
+  const stale = replaceServerQueuedRunScope([], firstSelection, [item("queue-stale")]);
+
+  assert.deepEqual(
+    serverQueuedRunsForVisibleConversation(stale, reenteredSelection).map((row) => row.queueItemId),
+    [],
+  );
+});
+
+test("server queue projection evicts inactive selections instead of retaining a historical queue cache", () => {
+  const first = scope("ws-a", "conv-a", "ui-a", 1);
+  const second = scope("ws-a", "conv-b", "ui-b", 2);
+  const third = scope("ws-a", "conv-c", "ui-c", 3);
+  const historical = [
+    ...replaceServerQueuedRunScope([], first, [item("queue-a")]),
+    ...replaceServerQueuedRunScope([], second, [item("queue-b", { conversationId: "conv-b" })]),
+    ...replaceServerQueuedRunScope([], third, [item("queue-c", { conversationId: "conv-c" })]),
+  ];
+
+  const retained = retainServerQueuedRunProjectionScope(historical, third);
+
+  assert.deepEqual(retained.map((row) => row.queueItemId), ["queue-c"]);
+  assert.deepEqual(
+    serverQueuedRunsForVisibleConversation(retained, first).map((row) => row.queueItemId),
+    [],
+    "reopening a previous conversation must wait for a fresh scoped server list",
+  );
+});
+
 test("server queue projection removes a submitted handoff when its waiting-row refresh no longer returns it", () => {
-  const projectionScope = { workspaceId: "ws-a", conversationId: "conv-a", uiConversationKey: "ui-a" };
+  const projectionScope = scope();
   const waiting = replaceServerQueuedRunScope([], projectionScope, [item("queue-submitted")]);
   const afterLifecycleHandoff = replaceServerQueuedRunScope(waiting, projectionScope, []);
 

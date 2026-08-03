@@ -122,7 +122,7 @@ test("app overlay wiring uses explicit blocking workspace id, not connecting wor
 
   assert.match(
     overlayStateSource,
-    /blockingWorkspaceId: \(\) => workspaceStore\.workspaceSwitchOverlayWorkspaceId\(\)/,
+    /blockingWorkspaceId:\s*\(\)\s*=>\s*workspaceStore\.workspaceSwitchOverlayWorkspaceId\(\)/,
     "overlay should be driven by explicit blocking workspace state",
   );
   assert.doesNotMatch(

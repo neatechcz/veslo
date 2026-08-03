@@ -1,6 +1,7 @@
 import type {
   VesloConversationRunActivityKind,
   VesloConversationRunLifecycleStatus,
+  VesloConversationRunObservationSource,
   VesloConversationRunTerminalization,
   VesloConversationRunTerminalHandoff,
   VesloConversationRunWaitReason,
@@ -32,6 +33,7 @@ export type SessionLifecycleRecoveryStatus = {
   runId?: string | null;
   status: VesloConversationRunLifecycleStatus;
   stale: boolean;
+  observationSource?: VesloConversationRunObservationSource;
   error?: string | null;
   clientMessageId?: string | null;
   activityKind?: VesloConversationRunActivityKind | null;
@@ -236,7 +238,18 @@ export function createSessionLifecycleRecoveryController(
 
   const watches = new Map<string, Watch>();
   const exhaustedWatches = new Map<string, Watch>();
-  const latestProbeScopes = new Set<string>();
+  const latestProbeScopes = new Map<string, Promise<boolean>>();
+  let lastCompletedLatestProbeKey: string | null = null;
+  let lastCompletedLatestProbeOutcome: "settled" | "error" | null = null;
+  let runtimeReadiness = "";
+  let runtimeReadinessGeneration = 0;
+  let deferredLatestProbe: {
+    sessionId: string;
+    scope: SessionLifecycleRecoveryScope;
+    selectionVersion: number | undefined;
+    scopeKey: string;
+    readinessGeneration: number;
+  } | null = null;
   const admittedRunKeys = new Set<string>();
   const settledRunKeys = new Set<string>();
   const terminalTranscriptRecoveries = new Map<string, TerminalTranscriptRecovery>();
@@ -282,6 +295,16 @@ export function createSessionLifecycleRecoveryController(
     if (selectionVersion === undefined || !options.currentSelectionVersion) return true;
     return options.currentSelectionVersion() === selectionVersion;
   };
+
+  const latestProbeKeyFor = (
+    scope: SessionLifecycleRecoveryScope,
+    selectionVersion: number | undefined,
+  ) => [
+    normalize(scope.workspaceId),
+    normalize(scope.conversationId),
+    normalize(scope.sessionId),
+    selectionVersion ?? "none",
+  ].join("\0");
 
   const latestProbeErrorDetails = (error: unknown) => {
     if (error instanceof Error) {
@@ -427,16 +450,22 @@ export function createSessionLifecycleRecoveryController(
     admitted = false,
     generation = 1,
     terminalResult?: SessionLifecycleRecoveryStatus,
+    latestProbeKey?: string,
   ) => {
     const key = recoveryKey(scope);
+    // The network request itself is released by its promise `finally`, but a
+    // terminal hydration owns its dedupe until it settles. Otherwise repeated
+    // selection effects could re-read and re-project one terminal run.
     const releaseLatestProbeScope = (afterCurrentTurn = false) => {
-      if (source !== "latest-probe") return;
-      const release = () => latestProbeScopes.delete(conversationKey(scope));
-      if (afterCurrentTurn) {
-        setTimer(release, 0);
-      } else {
-        release();
-      }
+      if (source !== "latest-probe" || !latestProbeKey) return;
+      const release = () => {
+        if (lastCompletedLatestProbeKey === latestProbeKey) {
+          lastCompletedLatestProbeKey = null;
+          lastCompletedLatestProbeOutcome = null;
+        }
+      };
+      if (afterCurrentTurn) setTimer(release, 0);
+      else release();
     };
     const existingTerminalRecovery = key ? terminalTranscriptRecoveries.get(key) : undefined;
     const ownsPresentation = !options.isConversationRunActive || options.isConversationRunActive(scope);
@@ -897,19 +926,40 @@ export function createSessionLifecycleRecoveryController(
     }
   };
 
-  const probeSelectedConversationLatestRun = async (): Promise<boolean> => {
+  const probeSelectedConversationLatestRun = (probeOptions: { force?: boolean } = {}): Promise<boolean> => {
     const sessionId = normalize(options.selectedSessionId());
-    if (!sessionId) return false;
+    if (!sessionId) return Promise.resolve(false);
     const selectionVersion = options.currentSelectionVersion?.();
     const scope = options.resolveConversationRunForSession(sessionId, null, { allowLatest: true });
-    if (!scope || scope.runId !== "latest") return false;
-    const scopeKey = `${normalize(scope.workspaceId)}\0${normalize(scope.conversationId)}`;
-    if (!scopeKey || latestProbeScopes.has(scopeKey)) return false;
-    latestProbeScopes.add(scopeKey);
-    try {
+    if (!scope || scope.runId !== "latest") return Promise.resolve(false);
+    const scopeKey = latestProbeKeyFor(scope, selectionVersion);
+    if (!scopeKey) return Promise.resolve(false);
+    const inFlight = latestProbeScopes.get(scopeKey);
+    if (inFlight) {
+      traceForScope("session-lifecycle-recovery:latest-probe-joined", scope, 1, {
+        outcome: "same-selection-in-flight",
+        selectionVersion,
+      });
+      return inFlight;
+    }
+    if (lastCompletedLatestProbeKey === scopeKey && !probeOptions.force) return Promise.resolve(false);
+    if (
+      probeOptions.force &&
+      lastCompletedLatestProbeKey === scopeKey &&
+      lastCompletedLatestProbeOutcome !== "error"
+    ) return Promise.resolve(false);
+    if (probeOptions.force && lastCompletedLatestProbeKey === scopeKey) {
+      // A reconnect/readiness generation is the only automatic escape from a
+      // settled latest-read error. Selection effects must not turn an unknown
+      // status route failure into an immediate request loop.
+      lastCompletedLatestProbeKey = null;
+      lastCompletedLatestProbeOutcome = null;
+    }
+
+    const probe = (async (): Promise<boolean> => {
+      try {
       const status = await options.readConversationRunStatus(scope);
       if (!latestProbeSelectionIsCurrent(sessionId, selectionVersion)) {
-        latestProbeScopes.delete(scopeKey);
         traceForScope("session-lifecycle-recovery:latest-probe-discarded", scope, 1, {
           outcome: "selection-changed",
           selectionVersion,
@@ -919,25 +969,51 @@ export function createSessionLifecycleRecoveryController(
         return true;
       }
       if (!status) {
-        latestProbeScopes.delete(scopeKey);
+        lastCompletedLatestProbeKey = scopeKey;
+        lastCompletedLatestProbeOutcome = "settled";
         return true;
       }
       const runId = normalize(status.runId);
-      if (!runId) return true;
+      if (!runId) {
+        lastCompletedLatestProbeKey = scopeKey;
+        lastCompletedLatestProbeOutcome = "settled";
+        return true;
+      }
       const resolvedScope = { ...scope, runId };
       const key = recoveryKey(resolvedScope);
+      if (status.observationSource === "durable-startup") {
+        options.onConversationRunStatus?.(resolvedScope, status);
+        if (key && status.terminalHandoff?.state === "unresolved") {
+          terminalHandoffScopes.set(key, resolvedScope);
+        }
+        lastCompletedLatestProbeKey = scopeKey;
+        lastCompletedLatestProbeOutcome = "settled";
+        deferredLatestProbe = {
+          sessionId,
+          scope,
+          selectionVersion,
+          scopeKey,
+          readinessGeneration: runtimeReadinessGeneration,
+        };
+        traceForScope("session-lifecycle-recovery:latest-probe-deferred", resolvedScope, 1, {
+          outcome: "durable-startup",
+          readinessGeneration: runtimeReadinessGeneration,
+        });
+        return true;
+      }
       const terminal = status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status);
       options.onConversationRunStatus?.(resolvedScope, status);
+      lastCompletedLatestProbeKey = scopeKey;
+      lastCompletedLatestProbeOutcome = "settled";
       if (terminal) {
         if (key && settledRunKeys.has(key)) {
-          latestProbeScopes.delete(scopeKey);
           traceForScope("session-lifecycle-recovery:latest-probe-skipped", resolvedScope, 1, {
             outcome: "exact-run-already-settled",
           });
           return true;
         }
         if (key) settledRunKeys.add(key);
-        recoverTerminalRun(resolvedScope, status.status, "latest-probe", false, 1, status);
+        recoverTerminalRun(resolvedScope, status.status, "latest-probe", false, 1, status, scopeKey);
         return true;
       }
       if (key && !watches.has(key)) {
@@ -956,7 +1032,6 @@ export function createSessionLifecycleRecoveryController(
       }
       return true;
     } catch (error) {
-      latestProbeScopes.delete(scopeKey);
       const errorDetails = latestProbeErrorDetails(error);
       if (!latestProbeSelectionIsCurrent(sessionId, selectionVersion)) {
         traceForScope("session-lifecycle-recovery:latest-probe-discarded", scope, 1, {
@@ -972,10 +1047,73 @@ export function createSessionLifecycleRecoveryController(
         outcome: "latest-probe-http-error",
         ...errorDetails,
         selectionVersion,
+        retrySuppressedForSelection: true,
       });
+      lastCompletedLatestProbeKey = scopeKey;
+      lastCompletedLatestProbeOutcome = "error";
+      return true;
+      } finally {
+        latestProbeScopes.delete(scopeKey);
+      }
+    })();
+    latestProbeScopes.set(scopeKey, probe);
+    return probe;
+  };
+
+  const observeRuntimeReadiness = (nextReadiness: string | null | undefined) => {
+    const normalizedReadiness = normalize(nextReadiness);
+    if (normalizedReadiness === runtimeReadiness) return false;
+    runtimeReadiness = normalizedReadiness;
+    runtimeReadinessGeneration += 1;
+    if (runtimeReadiness !== "ready") return false;
+    if (!deferredLatestProbe) {
+      const sessionId = normalize(options.selectedSessionId());
+      const selectionVersion = options.currentSelectionVersion?.();
+      const scope = sessionId
+        ? options.resolveConversationRunForSession(sessionId, null, { allowLatest: true })
+        : null;
+      const scopeKey = scope?.runId === "latest"
+        ? latestProbeKeyFor(scope, selectionVersion)
+        : "";
+      if (
+        !scopeKey ||
+        lastCompletedLatestProbeKey !== scopeKey ||
+        lastCompletedLatestProbeOutcome !== "error"
+      ) return false;
+      traceForScope("session-lifecycle-recovery:latest-probe-ready", scope!, 1, {
+        outcome: "readiness-resume-settled-read",
+        readinessGeneration: runtimeReadinessGeneration,
+      });
+      void probeSelectedConversationLatestRun({ force: true });
       return true;
     }
+    const deferred = deferredLatestProbe;
+    deferredLatestProbe = null;
+    if (
+      deferred.readinessGeneration >= runtimeReadinessGeneration ||
+      !latestProbeSelectionIsCurrent(deferred.sessionId, deferred.selectionVersion)
+    ) {
+      traceForScope("session-lifecycle-recovery:latest-probe-discarded", deferred.scope, 1, {
+        outcome: "deferred-readiness-stale-selection",
+        selectionVersion: deferred.selectionVersion,
+        readinessGeneration: runtimeReadinessGeneration,
+      });
+      return false;
+    }
+    if (lastCompletedLatestProbeKey === deferred.scopeKey) {
+      lastCompletedLatestProbeKey = null;
+      lastCompletedLatestProbeOutcome = null;
+    }
+    traceForScope("session-lifecycle-recovery:latest-probe-ready", deferred.scope, 1, {
+      outcome: "deferred-readiness-resume",
+      readinessGeneration: runtimeReadinessGeneration,
+    });
+    void probeSelectedConversationLatestRun();
+    return true;
   };
+
+  const resumeSelectedConversationLatestRun = (): Promise<boolean> =>
+    probeSelectedConversationLatestRun({ force: true });
 
   const restartAcceptedWatch = (
     watch: Watch,
@@ -1130,6 +1268,8 @@ export function createSessionLifecycleRecoveryController(
     },
     reconcile,
     probeSelectedConversationLatestRun,
+    resumeSelectedConversationLatestRun,
+    observeRuntimeReadiness,
     observeSessionLifecycleEvent(
       sessionId: string,
       workspaceId?: string | null,
@@ -1327,6 +1467,9 @@ export function createSessionLifecycleRecoveryController(
       exhaustedWatches.clear();
       terminalHandoffScopes.clear();
       latestProbeScopes.clear();
+      deferredLatestProbe = null;
+      lastCompletedLatestProbeKey = null;
+      lastCompletedLatestProbeOutcome = null;
       admittedRunKeys.clear();
       settledRunKeys.clear();
       for (const key of [...terminalTranscriptRecoveries.keys()]) clearTerminalHydrationRecovery(key);

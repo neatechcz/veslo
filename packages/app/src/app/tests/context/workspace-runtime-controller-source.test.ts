@@ -95,7 +95,7 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(runtimeSource, /clearWorkspaceBusyAllExcept\(workspace\.id\)/);
   assert.match(
     runtimeSource,
-    /const runtimeReady = workspace\.workspaceType === "local"[\s\S]*await deps\.ensureLocalRuntimeReadyForWorkspaceStart\?\.\(workspace\.path\)[\s\S]*if \(runtimeReady === false\) \{[\s\S]*ensure-engine:runtime-prerequisites-not-ready[\s\S]*return false;[\s\S]*\}[\s\S]*const skillSyncMaxAttempts = isRuntimeRecovery \? 6 : 1;[\s\S]*const skillSyncReason = isRuntimeRecovery \? "runtime-recovery" : "browse-attach";[\s\S]*deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,[\s\S]*reason: skillSyncReason,/s,
+    /const runtimeReady = workspace\.workspaceType === "local"[\s\S]*await deps\.ensureLocalRuntimeReadyForWorkspaceStart\?\.\(workspace\.path\)[\s\S]*if \(runtimeReady === false\) \{[\s\S]*ensure-engine:runtime-prerequisites-not-ready[\s\S]*return false;[\s\S]*\}[\s\S]*const skillSyncReason = isRuntimeRecovery \? "runtime-recovery" : "browse-attach";[\s\S]*deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,[\s\S]*reason: skillSyncReason,/s,
     "first-prompt lazy runtime startup must ask the local runtime readiness guard before skill sync or engine spawn",
   );
   const managedConfigStart = ensureSource.indexOf(

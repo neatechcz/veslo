@@ -17,6 +17,7 @@ export type ServerQueueProjectionControllerOptions = {
   fetchScope: (scope: ServerQueuedRunProjectionScope) => Promise<VesloConversationQueueItem[] | null>;
   replaceScope: (scope: ServerQueuedRunProjectionScope, items: VesloConversationQueueItem[]) => void;
   hasKnownPollingRows?: (scope: ServerQueuedRunProjectionScope) => boolean;
+  trace?: (event: string, payload: Record<string, unknown>) => void;
   setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 };
@@ -29,6 +30,7 @@ const scopesMatch = (
     left &&
       right &&
       left.uiConversationKey === right.uiConversationKey &&
+      left.selectionGeneration === right.selectionGeneration &&
       serverQueuedRunScopeKey(left.workspaceId, left.conversationId) ===
         serverQueuedRunScopeKey(right.workspaceId, right.conversationId),
   );
@@ -50,11 +52,26 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
    * inside one stalled frame. Coalescing at the transport hides the duplicate
    * request but not the per-caller continuation work, so the burst still has to
    * be paid. One in-flight refresh per scope is the cheaper contract.
-   */
+  */
   const inFlightByScope = new Map<string, Promise<ServerQueueProjectionRefreshResult>>();
+  const joinedTraceRecordedByScope = new Set<string>();
+
+  const traceScope = (
+    event: string,
+    scope: ServerQueuedRunProjectionScope,
+    payload: Record<string, unknown> = {},
+  ) => {
+    options.trace?.(event, {
+      workspaceId: scope.workspaceId,
+      conversationId: scope.conversationId,
+      uiConversationKey: scope.uiConversationKey,
+      selectionGeneration: scope.selectionGeneration,
+      ...payload,
+    });
+  };
 
   const scopeKey = (scope: ServerQueuedRunProjectionScope) =>
-    `${scope.uiConversationKey}\u0000${serverQueuedRunScopeKey(scope.workspaceId, scope.conversationId)}`;
+    `${scope.selectionGeneration}\u0000${scope.uiConversationKey}\u0000${serverQueuedRunScopeKey(scope.workspaceId, scope.conversationId)}`;
 
   const stopPolling = () => {
     if (timer !== null) clearTimer(timer);
@@ -76,9 +93,23 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
     }
     const key = scopeKey(requestedScope);
     const existing = inFlightByScope.get(key);
-    if (existing) return existing;
+    if (existing) {
+      // A reactive burst may join one promise dozens of times in a frame. The
+      // first join explains the coalescing decision; the rest add only trace
+      // volume and can obscure an actual scope discard or queue transition.
+      if (!joinedTraceRecordedByScope.has(key)) {
+        joinedTraceRecordedByScope.add(key);
+        traceScope("session-queue-projection:refresh-joined", requestedScope, {
+          outcome: "same-selection-in-flight",
+        });
+      }
+      return existing;
+    }
     const flight = refreshUncoalesced(requestedScope).finally(() => {
-      if (inFlightByScope.get(key) === flight) inFlightByScope.delete(key);
+      if (inFlightByScope.get(key) === flight) {
+        inFlightByScope.delete(key);
+        joinedTraceRecordedByScope.delete(key);
+      }
     });
     inFlightByScope.set(key, flight);
     return flight;
@@ -92,14 +123,28 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
     try {
       items = await options.fetchScope(requestedScope);
     } catch {
-      if (!scopesMatch(requestedScope, options.getScope())) return { kind: "stale" };
+      if (!scopesMatch(requestedScope, options.getScope())) {
+        traceScope("session-queue-projection:refresh-discarded", requestedScope, {
+          reason: "scope-changed-during-error",
+        });
+        return { kind: "stale" };
+      }
       return { kind: "error" };
     }
 
     if (!items) return { kind: "unavailable" };
-    if (disposal.has(true) || !scopesMatch(requestedScope, options.getScope())) return { kind: "stale" };
+    if (disposal.has(true) || !scopesMatch(requestedScope, options.getScope())) {
+      traceScope("session-queue-projection:refresh-discarded", requestedScope, {
+        reason: disposal.has(true) ? "disposed" : "scope-changed",
+      });
+      return { kind: "stale" };
+    }
 
     options.replaceScope(requestedScope, items);
+    traceScope("session-queue-projection:refresh-applied", requestedScope, {
+      itemCount: items.length,
+      hasPollingRows: hasPollingRows(items),
+    });
     return { kind: "updated", itemCount: items.length, hasPollingRows: hasPollingRows(items) };
   };
 

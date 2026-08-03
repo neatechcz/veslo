@@ -34,7 +34,7 @@ const sessionQueueDrainControllerSource = readFileSync(
 test("session loading stays route-owned without a pending preloader", () => {
   assert.match(
     sessionSource,
-    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*!activeSessionSwitchHandoffActive\(\) &&[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: transcriptDisplaySessionId\(\),[\s\S]*messageCount: displayedEffectiveMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
+    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: transcriptDisplaySessionId\(\),[\s\S]*messageCount: displayedEffectiveMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
     "session page should derive inline loading from the effectively rendered conversation, not raw backend messages only",
   );
 
@@ -211,31 +211,21 @@ test("dev runtime records bounded session DOM mutation batches alongside state c
   );
 });
 
-test("active session switch handoff suppresses empty browse and loading surfaces", () => {
+test("session switch never holds a previous transcript under a new identity", () => {
   assert.match(
     sessionSource,
-    /const \[activeSessionSwitchHandoff, setActiveSessionSwitchHandoff\] =[\s\S]*createSignal<ActiveSessionSwitchHandoff \| null>\(null\);/,
-    "SessionView should track an active-session handoff while the next transcript is cold",
+    /const displayedEffectiveMessages = createMemo\(\(\) => \{[\s\S]*const displayed = effectiveRenderedMessages\(\);[\s\S]*observeTranscriptProjectionBoundary\("selected-session", props\.selectedSessionId, displayed\);/s,
+    "SessionView should render only the selected session projection",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /ActiveSessionSwitchHandoff|activeSessionSwitchHandoff|heldMessages|lastPaintedMessages/,
+    "ordinary navigation must not retain a previous transcript as a placeholder",
   );
   assert.match(
     sessionSource,
-    /const displayedEffectiveMessages = createMemo\(\(\) => \{[\s\S]*activeSessionSwitchHandoffActive\(\)[\s\S]*activeSessionSwitchHandoff\(\)\?\.heldMessages[\s\S]*effectiveRenderedMessages\(\);/s,
-    "session switches should keep rendering the last active transcript instead of an empty browse surface",
-  );
-  assert.match(
-    sessionSource,
-    /const showComposerEntryState = createMemo\(\(\) =>[\s\S]*displayedEffectiveMessages\(\)\.length === 0[\s\S]*!activeSessionSwitchHandoffActive\(\)[\s\S]*!showSessionLoadingState\(\),/s,
-    "the centered composer entry should not appear during active-to-active session handoff",
-  );
-  assert.match(
-    sessionSource,
-    /const showFooterComposerArea = createMemo\(\(\) =>[\s\S]*!showSessionLoadingState\(\)[\s\S]*!activeSessionSwitchHandoffActive\(\),/s,
-    "the footer composer should stay hidden while the opening loader or active-session handoff owns the pane",
-  );
-  assert.match(
-    sessionSource,
-    /<MessageList[\s\S]*messages=\{displayedEffectiveMessages\(\)\}/s,
-    "MessageList should render the handoff transcript instead of the cold empty target transcript",
+    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(/s,
+    "the target should use its identity-neutral loading surface while its own transcript is cold",
   );
 });
 
@@ -276,7 +266,7 @@ test("first submit dismisses the centered composer entry before backend handoff 
 
   assert.match(
     sessionSource,
-    /const showComposerEntryState = createMemo\(\(\) =>\s*displayedEffectiveMessages\(\)\.length === 0 &&\s*!composerEntryDismissed\(\) &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!activeSessionSwitchHandoffActive\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
+    /const showComposerEntryState = createMemo\(\(\) =>\s*displayedEffectiveMessages\(\)\.length === 0 &&\s*!composerEntryDismissed\(\) &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
     "a submit attempt should hide the centered entry even before backend messages or optimistic handoff survive",
   );
 

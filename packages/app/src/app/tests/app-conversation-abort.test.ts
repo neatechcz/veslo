@@ -25,7 +25,7 @@ test("conversation runs remember abort and lifecycle run ids under scoped identi
   const runSource = conversationServiceSource.slice(runStart, abortStart);
   assert.match(
     runSource,
-    /const (abortRunId|latestRunId) = result\.status === "submitted"[\s\S]*\? result\.runId[\s\S]*: result\.activeRunId\?\.trim\(\) \|\| result\.reservedRunId;[\s\S]*deps\.rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: \1,[\s\S]*\}\);/,
+    /const (abortRunId|latestRunId)\s*=\s*result\.status === "submitted"[\s\S]*\? result\.runId[\s\S]*: result\.activeRunId\?\.trim\(\) \|\| result\.reservedRunId;[\s\S]*deps\.rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: \1,[\s\S]*\}\);/,
     "conversation abort should keep the active queued run id available for stop requests",
   );
   assert.match(
@@ -53,7 +53,7 @@ test("abortSession routes scoped conversations through Veslo abort without legac
   );
 
   const abortSessionStart = sendWorkflowSource.indexOf("async function abortSession(");
-  const retryStart = sendWorkflowSource.indexOf("return {", abortSessionStart);
+  const retryStart = sendWorkflowSource.lastIndexOf("\n  return {");
   assert.notEqual(abortSessionStart, -1, "abortSession should exist");
   assert.notEqual(retryStart, -1, "abortSession should end before the workflow return");
   const abortSessionSource = sendWorkflowSource.slice(abortSessionStart, retryStart);
@@ -79,7 +79,7 @@ test("reload guards include background workspace busy runs", () => {
   );
   assert.match(
     source,
-    /const activeReloadBlockingSessions = createMemo<ActiveReloadBlockingSession\[\]>\(\(\) => \{[\s\S]*for \(const \[workspaceId, busySessions\] of Object\.entries\(workspaceStore\.workspaceBusy\(\)\)\) \{[\s\S]*for \(const idRaw of Object\.keys\(busySessions\)\) \{[\s\S]*findSidebarSessionForWorkspace\(workspaceId, id\)[\s\S]*conversationId: sidebarSession\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: sidebarSession\?\.opencodeSessionId \?\? id,[\s\S]*\}/,
+    /const activeReloadBlockingSessions\s*=\s*createMemo<\s*ActiveReloadBlockingSession\[\]\s*>\(\(\) => \{[\s\S]*for \(const \[workspaceId, busySessions\] of Object\.entries\(\s*workspaceStore\.workspaceBusy\(\),?\s*\)\) \{[\s\S]*for \(const idRaw of Object\.keys\(busySessions\)\) \{[\s\S]*findSidebarSessionForWorkspace\(workspaceId, id\)[\s\S]*conversationId: sidebarSession\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: sidebarSession\?\.opencodeSessionId \?\? id,[\s\S]*\}/,
     "MCP reload blocking should include background busy workspaces and carry conversation metadata",
   );
   assert.match(
@@ -104,7 +104,7 @@ test("reload guards include background workspace busy runs", () => {
   );
   assert.match(
     source,
-    /onForceStopSession=\{\(sessionID, session\) => abortSession\(sessionID, session\)\}/,
+    /onForceStopSession=\{\(sessionID, session\) =>\s*\{\s*void abortSession\(sessionID, session\);?\s*\}\}/,
     "MCP auth modal force-stop should preserve the scoped background session metadata",
   );
 });
@@ -139,7 +139,7 @@ test("session lifecycle recovery resolves lifecycle run ids before abort run ids
   const resolveRunSource = conversationServiceSource.slice(resolveRunStart, readRunStatusStart);
   assert.match(
     resolveRunSource,
-    /const runId = deps\.resolveLatestConversationLifecycleRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId,[\s\S]*opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\) \|\| deps\.resolveLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId,[\s\S]*opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\);/,
+    /const runId\s*=\s*deps\.resolveLatestConversationLifecycleRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId,[\s\S]*opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\)\s*\|\|\s*deps\.resolveLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId,[\s\S]*opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\);/,
     "lifecycle recovery should prefer the queued reserved run id and fall back to the abort run id",
   );
 });

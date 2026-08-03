@@ -58,10 +58,11 @@ test("sendPrompt keeps the session id returned by createSessionAndOpen before pr
 test("sendPrompt submits a browsed explicit target before first-session creation", () => {
   const source = sendPromptSource();
 
-  const explicitTargetIndex = source.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)");
+  const explicitTargetIndex = source.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(");
   const sessionAssignmentIndex = source.indexOf("let sessionID = explicitTargetSessionId || selectedRealSessionId;", explicitTargetIndex);
   const scopedActivationIndex = source.indexOf('"sendPrompt:ensure-scoped-workspace-active"', sessionAssignmentIndex);
-  const existingSubmitIndex = source.indexOf("const serverSubmitExistingSessionResult = await submitExistingSessionWithServer();", scopedActivationIndex);
+  const existingSubmitIndex = source.indexOf("const serverSubmitExistingSessionResult =", scopedActivationIndex);
+  const existingSubmitAwaitIndex = source.indexOf("await submitExistingSessionWithServer();", existingSubmitIndex);
   const existingSubmitReturnIndex = source.indexOf("return serverSubmitExistingSessionResult;", existingSubmitIndex);
   const createGuardIndex = source.indexOf("if (!sessionID) {", scopedActivationIndex);
   const createNeededIndex = source.indexOf('recordSendTrace("sendPrompt:create-session-needed"', createGuardIndex);
@@ -70,6 +71,7 @@ test("sendPrompt submits a browsed explicit target before first-session creation
   assert.ok(sessionAssignmentIndex > explicitTargetIndex, "explicit target should become the send session id before create checks");
   assert.ok(scopedActivationIndex > sessionAssignmentIndex, "explicit target should activate its scoped workspace before sending");
   assert.ok(existingSubmitIndex > scopedActivationIndex, "explicit targets should attempt server-owned existing-session submit");
+  assert.ok(existingSubmitAwaitIndex > existingSubmitIndex, "existing-session submit should await the server-owned operation");
   assert.ok(existingSubmitIndex < createGuardIndex, "existing-session submit should run before first-session creation checks");
   assert.ok(existingSubmitReturnIndex > existingSubmitIndex, "accepted existing-session submit results should return before creation");
   assert.ok(createGuardIndex > scopedActivationIndex, "first-session creation should be guarded by the resolved session id");

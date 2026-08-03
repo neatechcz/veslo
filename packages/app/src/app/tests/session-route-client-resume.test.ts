@@ -29,7 +29,7 @@ test("hydrates active pending draft state from the desktop draft store and prefe
   );
   assert.match(
     source,
-    /const currentComposerStorageKey = createMemo\(\(\) => resolveActiveComposerDraftStorageKey\(\{\s*selectedSessionId: selectedSessionId\(\),\s*pendingDraftKey: activePendingDraftKey\(\),\s*materializingSessionId: materializingComposerDraftSessionId\(\),\s*\}\)\);/s,
+    /const currentComposerStorageKey = createMemo\(\(\)\s*=>\s*resolveActiveComposerDraftStorageKey\(\{\s*selectedSessionId: selectedSessionId\(\),\s*pendingDraftKey: activePendingDraftKey\(\),\s*materializingSessionId: materializingComposerDraftSessionId\(\),\s*\}\),\s*\);/s,
     "real sessions should keep their own composer key even when a pending draft remains active in the background",
   );
   assert.match(

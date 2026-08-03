@@ -21,7 +21,12 @@ test("app delegates session route decisions to the session route controller", ()
   );
   assert.match(
     appSource,
-    /import \{\s*createSessionRouteSync(?:,\s*sessionIdFromRoutePath)?\s*\} from "\.\/context\/session-route-sync";[\s\S]*const sessionRouteSync = createSessionRouteSync\(\{[\s\S]*onSessionRoute: sessionRouteSync\.handleSessionRoute,/,
+    /import \{[\s\S]*createSessionRouteSync,[\s\S]*sessionIdFromRoutePath,[\s\S]*\} from "\.\/context\/session-route-sync";/,
+    "app.tsx should import the route sync owner",
+  );
+  assert.match(
+    appSource,
+    /const sessionRouteSync\s*=\s*createSessionRouteSync\(\{[\s\S]*appRouteSync\.startStartupRouteSync\(\{[\s\S]*onSessionRoute:\s*sessionRouteSync\.handleSessionRoute,/s,
     "app.tsx should wire session route effects through the route sync module",
   );
 });

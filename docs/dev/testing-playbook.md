@@ -212,6 +212,30 @@ pnpm test:webdriver:same-conversation-queue-roundtrip -- <runtime-info.json> `
   --second-message "Reply with exactly: second"
 ```
 
+For historical-conversation projection and continuation, create a seed chat,
+an intervening chat, then reopen the seed through the visible sidebar:
+
+```powershell
+$env:WEBDRIVER_ALLOW_MUTATION = "1"
+pnpm test:webdriver:historical-conversation-roundtrip -- <runtime-info.json> `
+  --workspace "Disposable workspace" `
+  --seed-message "Reply with exactly: historical seed" `
+  --interlude-message "Reply with exactly: intervening chat" `
+  --continuation-message "Reply with exactly: historical continuation"
+
+# Verify the same scenario's server-side causal path without sending another request.
+pnpm test:webdriver:historical-conversation-trace-verify -- `
+  .tmp/webdriver-scenarios/<historical-scenario-artifact>.json
+```
+
+The scenario fails if the reopened chat displays the intervening user's
+transcript, or if its continuation ends with a visible app or assistant error.
+The read-only verifier derives the continuation's durable scope from the
+server trace and requires one direct admission, one successful OpenCode submit,
+and terminal readiness. It writes a redacted local companion summary, records
+unrelated workspace failures separately, and fails closed if the trace cannot
+prove the exact operation.
+
 WebDriverIO is the desktop test driver. It uses an explicit loopback endpoint
 and records redacted per-scenario evidence under `.tmp/webdriver-scenarios/`.
 Use disposable workspaces for every mutating scenario.

@@ -36,8 +36,8 @@ test("runtime recovery remains isolated from the first requested engine start", 
   );
   assert.match(
     runtimeSource,
-    /const skillSyncMaxAttempts = isRuntimeRecovery \? 6 : 1;[\s\S]*const skillSyncReason = isRuntimeRecovery \? "runtime-recovery" : "browse-attach";/s,
-    "only recovery gets bounded materialization retries",
+    /const skillSyncReason = isRuntimeRecovery \? "runtime-recovery" : "browse-attach";[\s\S]*syncWorkspaceSkillMaterializationBeforeRuntime\(workspace, \{[\s\S]*reason: skillSyncReason,/s,
+    "the runtime owner passes recovery intent to skill materialization instead of owning a client-side retry loop",
   );
 });
 

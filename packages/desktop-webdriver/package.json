@@ -8,6 +8,8 @@
     "test:attach": "node ./src/attach-smoke.mjs",
     "test:workspace-roundtrip": "node ./src/workspace-roundtrip.mjs",
     "test:same-conversation-queue-roundtrip": "node ./src/same-conversation-queue-roundtrip.mjs",
+    "test:historical-conversation-roundtrip": "node ./src/historical-conversation-roundtrip.mjs",
+    "test:historical-conversation-trace-verify": "node ./src/historical-conversation-trace-verify.mjs",
     "test:sidebar-flicker": "node ./src/sidebar-workspace-accordion-flicker.mjs",
     "test:skill-sidebar-refresh": "node ./src/skill-sidebar-refresh.mjs",
     "test:skill-sidebar-refresh:owned": "node ./src/skill-sidebar-refresh-owned.mjs"

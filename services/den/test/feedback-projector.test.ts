@@ -436,22 +436,13 @@ test("feedback projector reuses an existing YouTrack issue found by feedback id 
   }])
 })
 
-test("feedback route waits for projector success before returning the YouTrack task number", async () => {
+test("feedback route stores feedback without waiting for a third-party projection", async () => {
   setupEnv()
   const [{ createFeedbackRouter }, { errorMiddleware }] = await Promise.all([
     import("../src/http/feedback.js"),
     import("../src/http/errors.js"),
   ])
 
-  const projectorCalls: string[] = []
-  let releaseProjection!: (result: { issueId: string; issueUrl: string }) => void
-  let projectionStarted!: () => void
-  const started = new Promise<void>((resolve) => {
-    projectionStarted = resolve
-  })
-  const projectionResult = new Promise<{ issueId: string; issueUrl: string }>((resolve) => {
-    releaseProjection = resolve
-  })
   const app = express()
   app.use("/v1", createFeedbackRouter({
     authorize: async () => ({
@@ -483,13 +474,6 @@ test("feedback route waits for projector success before returning the YouTrack t
       },
     },
     generateId: () => "fb_async_123",
-    projector: {
-      async projectFeedback(feedbackId: string) {
-        projectorCalls.push(feedbackId)
-        projectionStarted()
-        return projectionResult
-      },
-    },
   }))
   app.use(errorMiddleware)
 
@@ -498,7 +482,7 @@ test("feedback route waits for projector success before returning the YouTrack t
 
   try {
     const { port } = server.address() as AddressInfo
-    const responsePromise = fetch(`http://127.0.0.1:${port}/v1/feedback`, {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/feedback`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -506,29 +490,17 @@ test("feedback route waits for projector success before returning the YouTrack t
       },
       body: JSON.stringify(buildFeedbackPayload()),
     })
-    await started
-    let responded = false
-    void responsePromise.then(() => {
-      responded = true
-    })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    assert.equal(responded, false)
-
-    releaseProjection({
-      issueId: "VSLO-4321",
-      issueUrl: "https://youtrack.example/issue/VSLO-4321",
-    })
-    const response = await responsePromise
     assert.equal(response.status, 201)
     assert.deepEqual(await response.json(), {
       feedbackId: "fb_async_123",
-      status: "projected",
-      youtrackIssueId: "VSLO-4321",
-      youtrackIssueUrl: "https://youtrack.example/issue/VSLO-4321",
+      status: "stored",
     })
-    assert.deepEqual(projectorCalls, ["fb_async_123"])
   } finally {
+    // `server.close()` can emit synchronously once the fetch connection has
+    // drained. Subscribe first so the test cannot miss that terminal event
+    // and leave the full quality gate waiting forever.
+    const closed = once(server, "close")
     server.close()
-    await once(server, "close")
+    await closed
   }
 })

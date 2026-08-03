@@ -32,7 +32,7 @@ test("app delegates created session materialization decisions to session creatio
   );
   assert.match(
     source,
-    /import \{[\s\S]*buildCreatedSidebarSessionItem,[\s\S]*\} from "\.\/controllers\/session-creation-flow";/,
+    /import \{\s*buildCreatedSidebarSessionItem\s*,?\s*\} from "\.\/controllers\/session-creation-flow";/,
     "app.tsx should keep sidebar materialization on the app-side state boundary",
   );
   assert.match(

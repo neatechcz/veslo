@@ -31,22 +31,22 @@ test("engineReady boots false so guards block engine API calls until a real conn
 test("boot warmup readiness is separate from live transcript read policy", () => {
   assert.match(
     appSource,
-    /const liveTranscriptReadPolicy = createLiveTranscriptReadPolicy\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)\.trim\(\) \?\? "",[\s\S]*record: \(event, payload\) =>[\s\S]*recordSendWorkflowTrace\("live-transcript-policy", event, payload,[\s\S]*\}\);/s,
+    /const liveTranscriptReadPolicy = createLiveTranscriptReadPolicy\(\{[\s\S]*activeWorkspaceId:\s*\(\)\s*=>\s*currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)\.trim\(\)\s*\?\? "",[\s\S]*record:\s*\(event, payload\)\s*=>[\s\S]*recordSendWorkflowTrace\("live-transcript-policy", event, payload,[\s\S]*\}\);/s,
     "live transcript read allowance should be tracked by a dedicated policy owner",
   );
   assert.match(
     appSource,
-    /const isLiveTranscriptReadAllowedForWorkspace = liveTranscriptReadPolicy\.isAllowedForWorkspace;/,
+    /const isLiveTranscriptReadAllowedForWorkspace\s*=\s*liveTranscriptReadPolicy\.isAllowedForWorkspace;/,
     "ordinary history browsing should consult the live transcript policy owner",
   );
   assert.match(
     appSource,
-    /emitLiveTranscriptPolicyEvent: \(event\) => liveTranscriptReadPolicy\.emit\(event\),/,
+    /emitLiveTranscriptPolicyEvent:\s*\(event\)\s*=>\s*liveTranscriptReadPolicy\.emit\(event\),/,
     "send workflow should only emit typed policy events instead of mutating browse policy directly",
   );
   assert.match(
     appSource,
-    /const activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(activeWorkspaceId\);/,
+    /const activeWorkspaceId\s*=\s*workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*return !isLiveTranscriptReadAllowedForWorkspace\(activeWorkspaceId\);/,
     "ordinary history browsing should not become live SDK reading merely because the runtime is ready",
   );
   assert.doesNotMatch(

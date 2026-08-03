@@ -88,12 +88,12 @@ test("new Chat opens the pending draft and then ensures the local Veslo server",
 
   assert.match(
     wrapperSource,
-    /const opened = await pendingSessionDraftController\.openNewSessionWithDirectory\(\);/,
+    /const opened\s*=\s*await pendingSessionDraftController\.openNewSessionWithDirectory\(\);/,
     "new Chat should first delegate composer opening to the pending draft controller",
   );
   assert.match(
     wrapperSource,
-    /if \(opened !== false && isTauriRuntime\(\)\) \{[\s\S]*void ensureLocalVesloServerRunning\(\{ ignoreStartupPreference: true \}\)\.catch/,
+    /if \(opened !== false && isTauriRuntime\(\)\) \{[\s\S]*void ensureLocalVesloServerRunning\(\{\s*ignoreStartupPreference:\s*true,\s*\}\)\.catch/,
     "new Chat should explicitly wake the local Veslo server after the draft opens",
   );
   assert.match(
@@ -125,7 +125,7 @@ test("local Veslo server ensure effect is registered after the real implementati
 test("workspace materialization can request server-only local Veslo startup", () => {
   assert.match(
     source,
-    /ensureLocalVesloServerRunning:\s*\(options\) => ensureLocalVesloServerRunning\(\{\s*ignoreStartupPreference: true,\s*requireRuntimeChainReady: options\?\.requireRuntimeChainReady,\s*\}\)/s,
+    /ensureLocalVesloServerRunning:\s*\(options\)\s*=>\s*ensureLocalVesloServerRunning\(\{[\s\S]*?ignoreStartupPreference:\s*true,[\s\S]*?requireRuntimeChainReady:\s*options\?\.requireRuntimeChainReady,[\s\S]*?\}\)/s,
     "workspace store wiring must forward requireRuntimeChainReady so pre-runtime materialization can ensure only the server process",
   );
 });
@@ -140,7 +140,7 @@ test("skill registry auth reacquire uses the managed server ensure callback", ()
 
   assert.match(
     orchestratorSource,
-    /ensureLocalVesloServerRunning:\s*\(options\) => ensureLocalVesloServerRunning\(options\)/,
+    /ensureLocalVesloServerRunning:\s*\(options\)\s*=>\s*ensureLocalVesloServerRunning\(options\)/,
     "skill registry 401/403 reacquire should use the existing managed server ensure callback",
   );
 });

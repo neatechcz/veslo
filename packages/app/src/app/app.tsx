@@ -1647,6 +1647,7 @@ export default function App() {
       appWorkspaceId: workspaceStore.activeWorkspaceId().trim() || null,
       connectionSnapshot: vesloServerConnectionSnapshot(),
     }),
+    lifecycleRecoveryRuntimeReadiness: () => vesloServerConnectionSnapshot().runtimeReadiness,
     // VSLO-86 — selectSession uses this for active-workspace
     // runtime readiness and live recovery decisions. Ordinary browse/live
     // transcript policy is gated by shouldBrowseSessionFromDb and

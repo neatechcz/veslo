@@ -194,17 +194,18 @@ test(
 test(
   "app send trace normalizes persisted failure snapshots before exposing them",
   withTestWindow((target) => {
+    const storedAt = new Date().toISOString();
     const stored = JSON.stringify({
       "workspace-a": {
         workspaceId: "workspace-a",
         firstFailure: {
-          at: "2026-07-28T12:00:00.000Z",
+          at: storedAt,
           traceId: "trace-stored",
           event: "sendPrompt:error",
           message: "C:\\Users\\name\\private-repo",
         },
         finalFailure: null,
-        updatedAt: "2026-07-28T12:00:01.000Z",
+        updatedAt: storedAt,
       },
     });
     target.localStorage = {
@@ -218,7 +219,7 @@ test(
       "workspace-a": {
         workspaceId: "workspace-a",
         firstFailure: {
-          at: "2026-07-28T12:00:00.000Z",
+          at: storedAt,
           traceId: "trace-stored",
           event: "sendPrompt:error",
           phase: null,
@@ -227,7 +228,7 @@ test(
           httpAttempted: null,
         },
         finalFailure: null,
-        updatedAt: "2026-07-28T12:00:01.000Z",
+        updatedAt: storedAt,
       },
     });
   }),

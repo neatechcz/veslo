@@ -117,6 +117,73 @@ export async function selectWorkspaceForNewConversation(
   });
 }
 
+export async function selectedSidebarSessionId(browser) {
+  return browser.execute((selector) => {
+    const selected = Array.from(document.querySelectorAll(selector)).find((row) => {
+      const style = window.getComputedStyle(row);
+      return row.getAttribute("aria-current") === "page" &&
+        row.getClientRects().length > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden";
+    });
+    return selected?.getAttribute("data-session-id")?.trim() ?? null;
+  }, selectors.sessionSidebarRow);
+}
+
+export async function sidebarSessionIdForVisibleText(browser, expectedText) {
+  const text = normalize(expectedText);
+  if (!text) fail("Visible sidebar session text is required.");
+  const result = await browser.execute((selector, expected) => {
+    const matches = Array.from(document.querySelectorAll(selector)).filter((row) => {
+      const style = window.getComputedStyle(row);
+      return row.getClientRects().length > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        (row.textContent?.includes(expected) ?? false);
+    });
+    return { count: matches.length, sessionId: matches[0]?.getAttribute("data-session-id")?.trim() ?? null };
+  }, selectors.sessionSidebarRow, text);
+  if (result?.count !== 1 || !normalize(result.sessionId)) {
+    fail(`Expected exactly one visible sidebar conversation titled by the scenario message: ${text}.`);
+  }
+  return result.sessionId;
+}
+
+export async function openSidebarSession(browser, sessionId, workspaceLabel) {
+  const targetSessionId = normalize(sessionId);
+  if (!targetSessionId) fail("A session id is required to open an existing conversation.");
+  const opened = await browser.execute((selector, expectedSessionId) => {
+    const row = Array.from(document.querySelectorAll(selector)).find((candidate) => {
+      const style = window.getComputedStyle(candidate);
+      return candidate.getAttribute("data-session-id") === expectedSessionId &&
+        candidate.getClientRects().length > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden";
+    });
+    if (!row) return false;
+    // This remains a visible sidebar interaction. Native WebDriver can ack a
+    // click while a row is transitioning without delivering it, so invoke the
+    // same visible DOM button and verify its selected state below.
+    row.click();
+    return true;
+  }, selectors.sessionSidebarRow, targetSessionId);
+  if (!opened) fail(`Historical conversation is not visible in ${workspaceLabel}.`);
+  // Some sidebar render modes intentionally do not expose `aria-current` for
+  // the active leaf. The caller proves selection from the target transcript,
+  // which is stronger than inferring it from a presentation-only attribute.
+  await waitForComposerReady(browser);
+  await browser.waitUntil(async () => {
+    const sessionQueueKey = await visibleComposerSessionQueueKey(browser);
+    return sessionQueueKey?.includes(`session:${targetSessionId}:`) === true;
+  }, {
+    // A generic visible editor can still belong to the session being replaced.
+    // Wait for the target-bound queue key before typing so this scenario proves
+    // the historical session path instead of racing its projection transition.
+    timeout: 15_000,
+    timeoutMsg: `Historical composer did not bind to the reopened conversation in ${workspaceLabel}.`,
+  });
+}
+
 export async function setWorkspaceConversationListExpanded(browser, workspaceLabel, expanded) {
   const { projectKey, projectSelector } = await projectTargetForWorkspace(browser, workspaceLabel);
   const project = await browser.$(projectSelector);

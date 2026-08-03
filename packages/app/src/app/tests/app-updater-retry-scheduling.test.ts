@@ -8,7 +8,7 @@ test("opt-in automatic updater download starts in automatic mode", () => {
   assert.match(source, /if \(!updateAutoDownload\(\)\) return;[\s\S]*?downloadUpdate\(\{\s*automatic: true\s*\}/);
   assert.match(
     source,
-    /downloadUpdate\(\{\s*automatic: true\s*\}\)\.catch\(e => reportError\(e, "updates\.download"\)\)/,
+    /downloadUpdate\(\{\s*automatic:\s*true\s*\}\)\.catch\(\(e\)\s*=>\s*reportError\(e, "updates\.download"\),?\s*\)/,
   );
 });
 
@@ -18,7 +18,7 @@ test("app schedules retry timers for failed automatic updater downloads", () => 
   assert.match(source, /const delayMs = Math\.max\(0, state\.retry\.nextRetryAt - Date\.now\(\)\);/);
   assert.match(
     source,
-    /const timeout = window\.setTimeout\(\(\) => \{[\s\S]*downloadUpdate\(\{[\s\S]*automatic: true,[\s\S]*retryAttempt: state\.retry\.retryAttempt,[\s\S]*refreshBeforeDownload: true,[\s\S]*\}\)\.catch\(e => reportError\(e, "updates\.download\.retry"\)\);[\s\S]*\}, delayMs\);/,
+    /const timeout = window\.setTimeout\(\(\) => \{[\s\S]*downloadUpdate\(\{[\s\S]*automatic:\s*true,[\s\S]*retryAttempt:\s*state\.retry\.retryAttempt,[\s\S]*refreshBeforeDownload:\s*true,[\s\S]*\}\)\.catch\(\(e\)\s*=>\s*reportError\(e, "updates\.download\.retry"\)\);[\s\S]*\}, delayMs\);/,
   );
   assert.match(source, /onCleanup\(\(\) => window\.clearTimeout\(timeout\)\);/);
 });

@@ -6365,6 +6365,12 @@ async function runRouterDaemon(args: ParsedArgs) {
                 currentPoolEntry: Boolean(currentEngine) || sharedEngineStarting,
               });
               if (evidence.kind !== "lost_proven") {
+                traceRuntime("orchestrator:run-lifecycle:terminal-runtime-handoff-evidence-unresolved", {
+                  workspaceId: workspace.id,
+                  runId,
+                  evidenceKind: evidence.kind,
+                  reason: evidence.reason,
+                });
                 send(409, {
                   error: evidence.kind === "live_or_ambiguous"
                     ? "terminal_handoff_recovery_owner_live_or_ambiguous"

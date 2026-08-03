@@ -173,7 +173,7 @@ impl RecentDiagnosticRing {
                     .and_then(|file| {
                         BufReader::new(file)
                             .lines()
-                            .filter_map(Result::ok)
+                            .map_while(Result::ok)
                             .filter_map(|line| {
                                 serde_json::from_str::<RecentDiagnosticEvent>(&line).ok()
                             })

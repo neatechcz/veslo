@@ -1454,6 +1454,9 @@ export type VesloConversationRunLifecycleStatus =
   | "failed"
   | "aborted";
 
+/** Distinguishes fresh orchestrator evidence from a server-owned startup snapshot. */
+export type VesloConversationRunObservationSource = "lifecycle" | "durable-startup";
+
 export type VesloConversationSubmitAttachmentKind = "image" | "file";
 
 export type VesloConversationSubmitAttachment = {
@@ -1711,6 +1714,7 @@ export type VesloConversationRunStatusResult = {
   runId: string;
   status: VesloConversationRunLifecycleStatus;
   stale: boolean;
+  observationSource?: VesloConversationRunObservationSource;
   error?: string | null;
   clientMessageId?: string | null;
   activityKind?: VesloConversationRunActivityKind | null;

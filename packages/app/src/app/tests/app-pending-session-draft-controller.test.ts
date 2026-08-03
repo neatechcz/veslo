@@ -26,7 +26,7 @@ test("app shell delegates pending draft orchestration to the pending draft contr
   );
   assert.match(
     wrapperSource,
-    /const opened = await pendingSessionDraftController\.openNewSessionWithDirectory\(\);/,
+    /const opened\s*=\s*await pendingSessionDraftController\.openNewSessionWithDirectory\(\);/,
     "app.tsx should delegate pending draft creation to the controller",
   );
   assert.doesNotMatch(

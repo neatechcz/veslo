@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::recent_diagnostic_ring::{RecentDiagnosticEvent, RecentDiagnosticRing};
+use crate::recent_diagnostic_ring::RecentDiagnosticRing;
 
 const JOURNAL_FILE: &str = "user-diagnostic-captures.json";
 const CAPTURE_DURATION_MS: u64 = 120_000;
@@ -410,6 +410,9 @@ impl UserDiagnosticCapture {
         });
     }
 
+    // Event metadata is intentionally explicit at the capture boundary. It
+    // keeps the serialized line independent from the mutable capture record.
+    #[allow(clippy::too_many_arguments)]
     fn serialize_event_at(
         &self,
         record: &CaptureRecord,
@@ -1610,6 +1613,7 @@ fn feedback_attachment_link_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recent_diagnostic_ring::RecentDiagnosticEvent;
     use tempfile::tempdir;
 
     fn context() -> CaptureCloudContext {

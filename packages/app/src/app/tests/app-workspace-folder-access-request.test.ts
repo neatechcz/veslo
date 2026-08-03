@@ -21,6 +21,6 @@ test("workspace runtime folder access requests are wired into the folder access 
   assert.match(appSource, /setPendingPermissions\(\[[\s\S]*permission,[\s\S]*\.\.\.pendingPermissions\(\)\.filter/);
   assert.match(
     appSource,
-    /if \(requestId && localFolderAccessPermissionIds\(\)\.has\(requestId\)\) \{[\s\S]*setPendingPermissions\(pendingPermissions\(\)\.filter/,
+    /if \(requestId && localFolderAccessPermissionIds\(\)\.has\(requestId\)\) \{[\s\S]*setPendingPermissions\(\s*pendingPermissions\(\)\.filter/,
   );
 });

@@ -37,7 +37,7 @@ test("app passes a workspace config refresh callback into the session view", () 
   assert.match(appSource, /workspaceStore\.setWorkspaceConfig\(cfg\)/);
   assert.match(appSource, /workspaceStore\.setAuthorizedDirs\(roots\.length \? roots : \[targetPath\]\)/);
   assert.match(appSource, /const reloadWorkspaceEngineAndResume = async \(workspaceId\?: string\)/);
-  assert.match(appSource, /workspaceStore\.activateWorkspace\(targetWorkspaceId/);
+  assert.match(appSource, /workspaceStore\.activateWorkspace\(\s*targetWorkspaceId,/);
   assert.match(viewPropsSource, /get refreshWorkspaceConfig\(\) \{\s*return refreshWorkspaceConfigForPath;\s*\}/);
 });
 
@@ -52,11 +52,11 @@ test("app exposes a guarded E2E-only folder access permission injection hook", (
 });
 
 test("app consumes synthetic E2E folder access permissions without calling the live permission API", () => {
-  assert.match(appSource, /const \[e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds\] = createSignal<Set<string>>/);
+  assert.match(appSource, /const \[e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds\] =[\s\S]*createSignal<Set<string>>/);
   assert.match(appSource, /async function respondPermissionForSessionView\(/);
   assert.match(appSource, /e2eFolderAccessPermissionIds\(\)\.has\(requestId\)/);
-  assert.match(appSource, /setPendingPermissions\(pendingPermissions\(\)\.filter\(\(permission\) => permission\.id !== requestId\)\)/);
-  assert.match(appSource, /__vesloE2ELastFolderAccessPermissionReply = \{ requestID: requestId, reply \}/);
+  assert.match(appSource, /setPendingPermissions\([\s\S]*pendingPermissions\(\)\.filter\([\s\S]*permission\) => permission\.id !== requestId,[\s\S]*\)[\s\S]*\);/);
+  assert.match(appSource, /__vesloE2ELastFolderAccessPermissionReply = \{[\s\S]*requestID: requestId,[\s\S]*reply,[\s\S]*\}/);
   assert.match(appSource, /await respondPermission\(requestID, reply\)/);
   assert.match(appSource, /const respondPermissionForAppViewProps = respondPermissionForSessionView/);
   assert.match(viewPropsSource, /get respondPermission\(\) \{\s*return respondPermissionForAppViewProps;\s*\}/);

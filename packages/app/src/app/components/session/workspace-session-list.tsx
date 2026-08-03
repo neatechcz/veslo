@@ -2018,6 +2018,8 @@ export default function WorkspaceSessionList(props: Props) {
         <button
           type="button"
           data-session-sidebar-row="true"
+          data-session-id={row.session.id}
+          data-workspace-id={row.workspace.id}
           class={sessionRowClass(isSelected(), "pr-12")}
           aria-current={isSelected() ? "page" : undefined}
           style={rowIndentStyle(row)}
@@ -2134,6 +2136,8 @@ export default function WorkspaceSessionList(props: Props) {
         <button
           type="button"
           data-session-sidebar-row="true"
+          data-session-id={session().id}
+          data-workspace-id={workspace().id}
           class={sessionRowClass(isSelected(), "pr-12")}
           aria-current={isSelected() ? "page" : undefined}
           style={rowIndentStyle(row)}

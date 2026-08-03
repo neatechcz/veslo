@@ -218,6 +218,7 @@ class QueueHarness implements ConversationRunQueueStore {
       directory: input.directory,
       reservedRunId: input.reservedRunId,
       clientMessageId: input.clientMessageId ?? null,
+      opencodeMessageId: null,
       origin: input.origin ?? null,
       kind: input.kind,
       bodyJson: input.bodyJson,
@@ -250,6 +251,41 @@ class QueueHarness implements ConversationRunQueueStore {
     return { items: [], nextCursor: null };
   }
 
+  readConversationRunStatusSnapshot(
+    input: Parameters<ConversationRunQueueStore["readConversationRunStatusSnapshot"]>[0],
+  ): ReturnType<ConversationRunQueueStore["readConversationRunStatusSnapshot"]> {
+    const item = input.runId === "latest"
+      ? this.items.find((candidate) =>
+        candidate.workspaceId === input.workspaceId &&
+        candidate.conversationId === input.conversationId &&
+        (candidate.state === "pending" || candidate.state === "starting") &&
+        this.reservations.has(`${candidate.workspaceId}\0${candidate.reservedRunId}`)
+      ) ?? this.items.find((candidate) =>
+        candidate.workspaceId === input.workspaceId &&
+        candidate.conversationId === input.conversationId &&
+        (candidate.state === "pending" || candidate.state === "starting")
+      ) ?? null
+      : this.items.find((candidate) =>
+        candidate.workspaceId === input.workspaceId &&
+        candidate.conversationId === input.conversationId &&
+        candidate.reservedRunId === input.runId
+      ) ?? null;
+    const selectedRunId = item?.reservedRunId ?? (input.runId === "latest" ? null : input.runId);
+    const reservation = selectedRunId
+      ? this.reservations.get(`${input.workspaceId}\0${selectedRunId}`) ?? null
+      : null;
+    const directBarrier = selectedRunId
+      ? this.getTerminalHandoffBarrier(input.workspaceId, input.conversationId, selectedRunId)
+      : null;
+    return {
+      item,
+      reservation,
+      terminalHandoff: item
+        ? this.getActiveTerminalHandoffBarrier(input.workspaceId, input.conversationId)
+        : directBarrier,
+    };
+  }
+
   markStarting(queueItemId: string): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
     if (!item || item.state !== "pending") return null;
@@ -257,6 +293,15 @@ class QueueHarness implements ConversationRunQueueStore {
     item.attempts += 1;
     item.startedAt = Date.now();
     item.updatedAt = item.startedAt;
+    if (!item.opencodeMessageId && item.kind === "prompt_async" && item.clientMessageId) {
+      item.opencodeMessageId = createConversationRunOpenCodeMessageId({
+        workspaceId: item.workspaceId,
+        engineSessionId: item.opencodeSessionId,
+        clientMessageId: item.clientMessageId,
+        runId: item.reservedRunId,
+        timestamp: item.startedAt,
+      });
+    }
     item.error = null;
     if (this.lostClaimQueueItemId === queueItemId) return null;
     return item;
@@ -1662,6 +1707,16 @@ test("submitRun keeps the reservation through exact runtime handoff after a term
   }));
 });
 
+test("submitRun releases a failed direct legacy run so its draft can retry", async () => {
+  const { controller, behavior, queue, timers } = controllerHarness({ withLifecycle: false });
+  behavior.submitError = new Error("opencode submit failed");
+
+  await expect(controller.submitRun(submitInput())).rejects.toThrow("opencode submit failed");
+
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+  expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 0 }));
+});
+
 test("submitRun traces lifecycle markFailed errors without hiding the submit failure", async () => {
   const {
     controller,
@@ -2986,6 +3041,16 @@ test("queue drain reuses an attached terminal runtime only after exact idle evid
   expect(submitCalls).toHaveLength(1);
 });
 
+test("submitRun does not retain a local reservation when the legacy runtime has no lifecycle owner", async () => {
+  const { controller, queue, submitCalls } = controllerHarness({ withLifecycle: false });
+
+  await controller.submitRun(submitInput({ runId: "run-legacy-first", clientMessageId: "msg-legacy-first" }));
+  await controller.submitRun(submitInput({ runId: "run-legacy-follow-up", clientMessageId: "msg-legacy-follow-up" }));
+
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+  expect(submitCalls).toHaveLength(2);
+});
+
 test("queue drain does not submit when another controller wins the durable claim", async () => {
   const { controller, queue, submitCalls } = controllerHarness();
   const item = enqueuePendingRun(queue);
@@ -3045,6 +3110,23 @@ test("queue drain re-pends items when lifecycle register sees another active run
   expect(queue.items[0]?.activeRunId).toBe("run-active-register");
   expect(submitCalls).toEqual([]);
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
+});
+
+test("submitRun rejects a local server-queue-only intent without a lifecycle owner", async () => {
+  const input = submitInput({ submitQueuePolicy: "server-queue-only" });
+  const { controller, queue, submitCalls } = controllerHarness({ withLifecycle: false });
+
+  await expect(controller.submitRun(input)).rejects.toMatchObject({
+    status: 503,
+    code: "lifecycle_unavailable",
+  } satisfies Partial<ApiError>);
+
+  expect(queue.items).toEqual([]);
+  expect(submitCalls).toEqual([]);
+  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:queue-policy-lifecycle-unavailable",
+    runId: "run-reserved",
+  }));
 });
 
 test("queue drain retains an unconfirmed lifecycle registration for exact recovery", async () => {

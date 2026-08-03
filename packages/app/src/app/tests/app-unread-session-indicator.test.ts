@@ -12,7 +12,7 @@ test("app shell keeps a focus-aware unread session map", () => {
   assert.match(appShellEnvironmentSource, /const \[appFocused,\s*setAppFocused\] = createSignal\(true\)/);
   assert.match(appShellEnvironmentSource, /win\.addEventListener\("focus",\s*updateAppFocused\)/);
   assert.match(appShellEnvironmentSource, /win\.addEventListener\("blur",\s*updateAppFocused\)/);
-  assert.match(source, /const \[unreadSessionIds,\s*setUnreadSessionIds\] = createSignal<UnreadSessionMap>\(\{\}\)/);
+  assert.match(source, /const \[unreadSessionIds,\s*setUnreadSessionIds\]\s*=\s*createSignal<UnreadSessionMap>\(\{\}\)/);
 });
 
 test("app shell marks unread from assistant responses and clears the selected session", () => {

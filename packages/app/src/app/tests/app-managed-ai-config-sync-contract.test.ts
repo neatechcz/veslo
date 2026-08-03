@@ -96,7 +96,7 @@ test("managed AI config sync ignores stale async runs before writing config", ()
   );
   assert.match(
     syncSource,
-    /const config = await input\.vesloClient\.getConfig\(input\.vesloWorkspaceId\);\s*if \(!input\.isCurrentManagedAiConfigSync\(\)\) return \{ kind: "unchanged" \};/,
+    /config = await input\.vesloClient\.getConfig\(input\.vesloWorkspaceId\);[\s\S]*?if \(!input\.isCurrentManagedAiConfigSync\(\)\)[\s\S]*?return \{ kind: "unchanged" \};/,
     "server config reads must not continue into writes after the run is stale",
   );
   assert.match(

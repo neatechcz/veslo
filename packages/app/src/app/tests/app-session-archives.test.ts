@@ -49,7 +49,7 @@ test("session archive flow uses the resolved archive owner key instead of requir
 test("update preference persistence waits for startup preference hydration", () => {
   assert.match(
     appSource,
-    /const \[updatePreferencesReady, setUpdatePreferencesReady\] = createSignal\(false\);/,
+    /const \[updatePreferencesReady, setUpdatePreferencesReady\]\s*=\s*createSignal\(false\);/,
     "app should track whether update preferences have been read before writing them back",
   );
   assert.match(
@@ -168,7 +168,7 @@ test("archiving the active sidebar session clears the displayed conversation onl
 
   assert.match(
     appSource,
-    /const archivedSessionMatchesSidebarTarget = \(\s*workspaceId: string,\s*sessionId: string,\s*target\?: SidebarSessionOpenTarget \| null,[\s\S]*buildArchivedSidebarSessionKey\(\{ workspaceId, sessionId, directory: target\?\.directory \}\)[\s\S]*archivedSessionIds\(\)\.includes\(key\)/,
+    /const archivedSessionMatchesSidebarTarget\s*=\s*\(\s*workspaceId: string,\s*sessionId: string,\s*target\?: SidebarSessionOpenTarget \| null,\s*\)\s*=>\s*\{[\s\S]*buildArchivedSidebarSessionKey\(\{\s*workspaceId,\s*sessionId,\s*directory: target\?\.directory,?\s*\}\)[\s\S]*archivedSessionIds\(\)\.includes\(key\)/,
     "active-session cleanup should verify that the mutation actually published the scoped archived sidebar key",
   );
 
@@ -186,7 +186,7 @@ test("archiving the active sidebar session clears the displayed conversation onl
 
   assert.match(
     appSource,
-    /const archiveSidebarSessionAndClearActive = async \(\s*workspaceId: string,\s*sessionId: string,\s*target\?: SidebarSessionOpenTarget \| null,[\s\S]*const shouldClearActiveSession = activeSessionMatchesArchiveTarget\(workspaceId, sessionId, target\);[\s\S]*await archiveSidebarSession\(workspaceId, sessionId, target \?\? undefined\);[\s\S]*if \(!shouldClearActiveSession\) return;[\s\S]*if \(!activeSessionMatchesArchiveTarget\(workspaceId, sessionId, target\)\) return;[\s\S]*if \(!archivedSessionMatchesSidebarTarget\(workspaceId, sessionId, target\)\) return;[\s\S]*clearArchivedActiveSession\(sessionId\);[\s\S]*\};/s,
+    /const archiveSidebarSessionAndClearActive\s*=\s*async \(\s*workspaceId: string,\s*sessionId: string,\s*target\?: SidebarSessionOpenTarget \| null,\s*\)\s*=>\s*\{[\s\S]*const shouldClearActiveSession = activeSessionMatchesArchiveTarget\(\s*workspaceId,\s*sessionId,\s*target,\s*\);[\s\S]*await archiveSidebarSession\(workspaceId, sessionId, target \?\? undefined\);[\s\S]*if \(!shouldClearActiveSession\) return;[\s\S]*if \(!activeSessionMatchesArchiveTarget\(workspaceId, sessionId, target\)\)\s*return;[\s\S]*if \(!archivedSessionMatchesSidebarTarget\(workspaceId, sessionId, target\)\)\s*return;[\s\S]*clearArchivedActiveSession\(sessionId\);[\s\S]*\};/s,
     "archive wrapper should not clear if archive failed or the user switched sessions while the mutation was in flight",
   );
 

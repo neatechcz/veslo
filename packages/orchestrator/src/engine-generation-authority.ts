@@ -97,6 +97,8 @@ type GenerationRow = {
 const trim = (value: string | null | undefined): string => value?.trim() ?? "";
 const validPid = (value: number | null | undefined): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+const validStartedAt = (value: number | null | undefined): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
 function rowToRecord(row: GenerationRow): EngineGenerationRecord {
   const state: EngineGenerationState = row.state === "creating" || row.state === "live" ||
@@ -247,6 +249,45 @@ export function createEngineGenerationAuthority(input: {
     return getInDb(db, record.engineOwnerId);
   });
 
+  const recordLegacyAbsentOwner = (owner: RunEngineOwner): EngineGenerationRecord | null => {
+    const ownerId = trim(owner.engineOwnerId);
+    const engineBaseUrl = trim(owner.engineBaseUrl);
+    if (!ownerId || !validPid(owner.enginePid) || !validStartedAt(owner.engineStartedAt) || !engineBaseUrl) {
+      return null;
+    }
+    return withDb((db) => {
+      const existing = getInDb(db, ownerId);
+      if (existing) return ownerMatchesRecord(existing, owner) ? existing : null;
+
+      const timestamp = now();
+      // This row is deliberately created only after the OS confirmed the old
+      // PID is absent. An old generation may predate this table, but an absent
+      // PID still proves that its original process cannot be serving work.
+      // A present PID remains ambiguous because it may have been reused.
+      db.query(
+        `INSERT INTO engine_generation (
+           engine_owner_id, workspace_id, engine_slot_id, engine_started_at,
+           engine_pid, engine_base_url, orchestrator_instance_id,
+           orchestrator_started_at, process_birth_token, state, created_at,
+           last_heartbeat_at, closed_at, closure_reason
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, 'exited_confirmed', ?9, ?9, ?9, 'legacy_process_absent')
+         ON CONFLICT(engine_owner_id) DO NOTHING`,
+      ).run(
+        ownerId,
+        trim(owner.engineSlotId) || "legacy-unknown",
+        trim(owner.engineSlotId) || null,
+        owner.engineStartedAt,
+        owner.enginePid,
+        engineBaseUrl,
+        input.orchestratorInstanceId,
+        input.orchestratorStartedAt,
+        timestamp,
+      );
+      const recorded = getInDb(db, ownerId);
+      return recorded && ownerMatchesRecord(recorded, owner) ? recorded : null;
+    });
+  };
+
   return {
     registerCreating(seed) {
       const ownerId = trim(seed.engineOwnerId);
@@ -327,13 +368,26 @@ export function createEngineGenerationAuthority(input: {
       const ownerId = trim(owner.engineOwnerId);
       if (!ownerId) return { kind: "unknown", reason: "generation_incomplete" };
       const record = get(ownerId);
-      if (!record) return { kind: "unknown", reason: "generation_not_found" };
-      if (!ownerMatchesRecord(record, owner) || !validPid(record.enginePid) || !record.processBirthToken) {
+      if (!record) {
+        if (!validPid(owner.enginePid)) return { kind: "unknown", reason: "generation_not_found" };
+        const observed = await inspector.inspect(owner.enginePid);
+        if (observed.kind !== "absent") {
+          return observed.kind === "unknown"
+            ? { kind: "unknown", reason: "process_identity_unavailable" }
+            : { kind: "unknown", reason: "generation_not_found" };
+        }
+        const retired = recordLegacyAbsentOwner(owner);
+        return retired
+          ? { kind: "lost_proven", evidenceId: `${retired.engineOwnerId}:${retired.closedAt ?? retired.lastHeartbeatAt}` }
+          : { kind: "unknown", reason: "generation_incomplete" };
+      }
+      if (!ownerMatchesRecord(record, owner) || !validPid(record.enginePid)) {
         return { kind: "unknown", reason: "generation_incomplete" };
       }
       if (record.state === "exited_confirmed") {
         return { kind: "lost_proven", evidenceId: `${record.engineOwnerId}:${record.closedAt ?? record.lastHeartbeatAt}` };
       }
+      if (!record.processBirthToken) return { kind: "unknown", reason: "generation_incomplete" };
       // A clean stop can be interrupted between recording `stopping` and the
       // child-exit callback. The exact process identity is still sufficient to
       // prove absence in that state. A merely-created generation is different:

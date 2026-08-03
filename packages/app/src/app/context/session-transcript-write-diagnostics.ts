@@ -32,7 +32,8 @@ export type TranscriptProjectionStage =
   | "canonical"
   | "visible"
   | "viewport-rendered"
-  | "session-handoff";
+  | "session-handoff"
+  | "selected-session";
 
 export type TranscriptProjectionBoundary = {
   stage: TranscriptProjectionStage;

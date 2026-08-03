@@ -151,13 +151,13 @@ test("accepted server queue work has a separate read-only projection and scoped 
   );
   assert.match(
     sessionSource,
-    /const uiConversationKey = currentSessionQueueKey\(\);\s*const result = await props\.sendPromptAsync\(draft, options\);/s,
-    "accepted queue responses should retain the pre-await UI conversation identity",
+    /const result = await props\.sendPromptAsync\(draft, options\);[\s\S]*const projectionScope = activeServerQueueProjectionScope\(\);[\s\S]*projectionScope\.workspaceId !== workspaceId[\s\S]*projectionScope\.conversationId !== conversationId[\s\S]*return result;/s,
+    "an accepted queue response must be projected only into the still-selected matching server scope",
   );
   assert.match(
     sessionSource,
-    /result\.status === "queued"[\s\S]*setServerQueuedRuns\(\(current\) =>[\s\S]*upsertServerQueuedRunProjection\(current, \{[\s\S]*queueItemId,[\s\S]*reservedRunId,[\s\S]*clientMessageId:[\s\S]*\}, uiConversationKey\),[\s\S]*requestServerQueueProjectionRefresh\(\{ workspaceId, conversationId, uiConversationKey \}\);/s,
-    "accepted queue responses should appear immediately by their server identity and then refresh the captured scope",
+    /result\.status === "queued"[\s\S]*setServerQueuedRuns\(\(current\) =>[\s\S]*upsertServerQueuedRunProjection\(current, \{[\s\S]*queueItemId,[\s\S]*reservedRunId,[\s\S]*clientMessageId:[\s\S]*\}, projectionScope\),[\s\S]*requestServerQueueProjectionRefresh\(projectionScope\);/s,
+    "accepted queue responses should appear immediately by their server identity and then refresh their guarded projection scope",
   );
   assert.match(
     sessionSource,
@@ -166,8 +166,8 @@ test("accepted server queue work has a separate read-only projection and scoped 
   );
   assert.match(
     sessionSource,
-    /props\.reconnectState\?\.status \?\? ""[\s\S]*requestServerQueueProjectionRefresh\(\{ workspaceId, conversationId, uiConversationKey \}\);/s,
-    "activation and reconnect changes should refresh the visible server queue scope",
+    /selectionGeneration: unchanged[\s\S]*previous\.selectionGeneration[\s\S]*props\.reconnectState\?\.status \?\? ""[\s\S]*requestServerQueueProjectionRefresh\(\{ workspaceId, conversationId, uiConversationKey, selectionGeneration \}\);/s,
+    "activation and reconnect changes should refresh a monotonic visible selection scope, including A-to-B-to-A returns",
   );
   assert.match(
     sessionSource,

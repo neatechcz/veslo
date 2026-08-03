@@ -153,7 +153,7 @@ test("real session route fallback ignores active pending draft context", () => {
   );
   assert.match(
     appSource,
-    /const sessionsLoadedForActiveWorkspace = \(\) => \{[\s\S]*if \(!activeWorkspaceId \|\| !activeWorkspaceIsHydrated\(\) \|\| !ready\) return false;[\s\S]*if \(!workspaceRouting\.entry\(activeWorkspaceId\) && !routedClient\(activeWorkspaceId\)\) return false;[\s\S]*if \(ready\.workspaceId !== activeWorkspaceId\) return false;[\s\S]*ready\.workspaceRoot !== activeWorkspaceRoot/s,
+    /const sessionsLoadedForActiveWorkspace = \(\) => \{[\s\S]*if\s*\(\s*!activeWorkspaceId\s*\|\|\s*!activeWorkspaceIsHydrated\(\)\s*\|\|\s*!ready\s*\)\s*return false;[\s\S]*if\s*\(\s*!workspaceRouting\.entry\(activeWorkspaceId\)\s*&&\s*!routedClient\(activeWorkspaceId\)\s*\)\s*return false;[\s\S]*if\s*\(\s*ready\.workspaceId !== activeWorkspaceId\s*\)\s*return false;[\s\S]*ready\.workspaceRoot !== activeWorkspaceRoot/s,
     "route fallback readiness should be scoped to the hydrated active workspace and root",
   );
   assert.doesNotMatch(

@@ -2282,6 +2282,23 @@ export function createConversationService<
         scope.conversationId,
         scope.runId,
       );
+      const responseWorkspaceId = result.workspaceId?.trim() || "";
+      const responseConversationId = result.conversationId?.trim() || "";
+      if (
+        responseWorkspaceId !== serverWorkspaceId ||
+        responseConversationId !== scope.conversationId
+      ) {
+        // A routed client can outlive a workspace or conversation change. The
+        // server path is scoped, but reject a malformed or stale response here
+        // before it reaches latest-run alias memory or selected UI projection.
+        deps.recordSendTrace("readConversationRunStatus:scope-mismatch", {
+          ...tracePayload,
+          serverWorkspaceId,
+          responseWorkspaceId: responseWorkspaceId || null,
+          responseConversationId: responseConversationId || null,
+        });
+        throw new Error("Conversation run status scope mismatch");
+      }
       if (scope.runId === "latest" && result.runId?.trim()) {
         deps.rememberLatestConversationLifecycleRunId({
           workspaceId: scope.workspaceId,

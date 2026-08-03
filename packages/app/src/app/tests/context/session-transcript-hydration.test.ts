@@ -290,12 +290,12 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
   );
   assert.match(
     source,
-    /const appWorkspaceId = clientOptions\?\.appWorkspaceId\?\.trim\(\) \|\| "";[\s\S]*if \(appWorkspaceId\) \{[\s\S]*rememberConversationScopeFromTranscript\(appWorkspaceId,\s*undefined,\s*item\);/s,
+    /const appWorkspaceId = clientOptions\?\.appWorkspaceId\?\.trim\(\) \|\| "";[\s\S]*if \(appWorkspaceId\) \{[\s\S]*rememberConversationScopeFromTranscript\(\s*appWorkspaceId,\s*undefined,\s*item,?\s*\);/s,
     "prefetch responses should register scope sidecars only under their caller-provided app workspace",
   );
   assert.match(
     source,
-    /getSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*limit = 140,\s*directory,\s*options\)\s*=>/,
+    /getSessionTranscript:\s*async\s*\(\s*workspaceId,\s*sessionId,\s*limit = 140,\s*directory,\s*options,?\s*\)\s*=>/,
     "app should wrap getSessionTranscript through the same hydration path",
   );
   assert.match(
@@ -305,12 +305,12 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
   );
   assert.match(
     source,
-    /const appWorkspaceId = options\?\.appWorkspaceId\?\.trim\(\) \|\| "";[\s\S]*if \(appWorkspaceId\) \{[\s\S]*rememberConversationScopeFromTranscript\(appWorkspaceId,\s*directory,\s*snapshot\);/s,
+    /const appWorkspaceId = options\?\.appWorkspaceId\?\.trim\(\) \|\| "";[\s\S]*if \(appWorkspaceId\) \{[\s\S]*rememberConversationScopeFromTranscript\(\s*appWorkspaceId,\s*directory,\s*snapshot,?\s*\);/s,
     "direct transcript fetches should register scope sidecars only with an explicit app workspace",
   );
   assert.match(
     source,
-    /readScopedSessionStatus\(readSessionStatusForTranscriptProjection\(\), appWorkspaceId, sessionId\)/,
+    /readScopedSessionStatus\(\s*readSessionStatusForTranscriptProjection\(\),\s*appWorkspaceId,\s*sessionId,?\s*\)/,
     "projection activity guards must use the strict app-workspace scoped session status",
   );
   assert.doesNotMatch(

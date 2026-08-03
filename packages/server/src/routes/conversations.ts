@@ -711,6 +711,21 @@ function serializeQueuedRunLifecycleStatus(
   };
 }
 
+// A queue row is durable server evidence, not a fresh lifecycle observation.
+// Keep that distinction explicit so the desktop can render a blocked/queued
+// run during orchestrator startup without arming a lifecycle polling loop.
+function serializeDurableStartupRunStatus(
+  item: ConversationRunQueueItem,
+  terminalization: Record<string, unknown> | null = null,
+  terminalHandoff: Record<string, unknown> | null = null,
+): Record<string, unknown> {
+  return {
+    ...serializeQueuedRunLifecycleStatus(item, terminalization, terminalHandoff),
+    stale: true,
+    observationSource: "durable-startup",
+  };
+}
+
 function serializeTerminalizationPending(
   reservation: ConversationWorkspaceRunReservation | undefined,
 ): Record<string, unknown> | null {
@@ -1575,25 +1590,56 @@ export function registerConversationSessionRoutes(
     if (!conversationId || !runId) {
       throw new ApiError(400, "invalid_payload", "conversationId and runId are required");
     }
-    if (!lifecycleClient) {
-      throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is not configured");
-    }
     const statusTrace = {
       workspaceId: workspace.id,
       conversationId,
       runId,
     };
-    const reservation = conversationRunQueueStore.listWorkspaceRunReservations().find((candidate) =>
-      candidate.workspaceId === workspace.id &&
-      candidate.conversationId === conversationId &&
-      candidate.runId === runId
-    );
-    const terminalization = serializeTerminalizationPending(reservation);
-    const terminalHandoff = serializeTerminalHandoff(
-      reservation,
-      conversationRunQueueStore.getTerminalHandoffBarrier(workspace.id, conversationId, runId) ??
-        conversationRunQueueStore.getActiveTerminalHandoffBarrier(workspace.id, conversationId),
-    );
+    const readDurableSnapshot = () => conversationRunQueueStore.readConversationRunStatusSnapshot({
+      workspaceId: workspace.id,
+      conversationId,
+      runId,
+    });
+    const runProjectionDetails = (
+      durableSnapshot: ReturnType<typeof readDurableSnapshot>,
+      targetRunId: string,
+    ) => {
+      const snapshotMatchesRun =
+        durableSnapshot.item?.reservedRunId === targetRunId ||
+        durableSnapshot.reservation?.runId === targetRunId ||
+        (runId !== "latest" && runId === targetRunId);
+      const reservation = snapshotMatchesRun ? durableSnapshot.reservation ?? undefined : undefined;
+      return {
+        terminalization: serializeTerminalizationPending(reservation),
+        terminalHandoff: serializeTerminalHandoff(
+          reservation,
+          snapshotMatchesRun ? durableSnapshot.terminalHandoff : null,
+        ),
+      };
+    };
+    const readDurableStatus = () => {
+      const durableSnapshot = readDurableSnapshot();
+      const durableQueuedRun = durableSnapshot.item;
+      const durableStatus = durableQueuedRun
+        ? (() => {
+          const { terminalization, terminalHandoff } = runProjectionDetails(durableSnapshot, durableQueuedRun.reservedRunId);
+          return serializeDurableStartupRunStatus(durableQueuedRun, terminalization, terminalHandoff);
+        })()
+        : null;
+      return { durableSnapshot, durableQueuedRun, durableStatus };
+    };
+    if (!lifecycleClient) {
+      const { durableQueuedRun, durableStatus } = readDurableStatus();
+      if (durableStatus) {
+        recordSendWorkflowTrace("server", "server:conversation-run-status:settle", {
+          ...statusTrace,
+          outcome: "durable-startup",
+          resolvedRunId: durableQueuedRun?.reservedRunId ?? null,
+        });
+        return jsonResponse(durableStatus);
+      }
+      throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is not configured");
+    }
     recordSendWorkflowTrace("server", "server:conversation-run-status:start", statusTrace);
     let status;
     try {
@@ -1617,13 +1663,14 @@ export function registerConversationSessionRoutes(
       throw error;
     }
     if (!status) {
-      const queued = conversationRunQueueStore.getForReservedRun(workspace.id, conversationId, runId);
-      if (queued) {
+      const { durableQueuedRun, durableStatus } = readDurableStatus();
+      if (durableStatus) {
         recordSendWorkflowTrace("server", "server:conversation-run-status:settle", {
           ...statusTrace,
-          outcome: "queued",
+          outcome: "durable-startup",
+          resolvedRunId: durableQueuedRun?.reservedRunId ?? null,
         });
-        return jsonResponse(serializeQueuedRunLifecycleStatus(queued, terminalization, terminalHandoff));
+        return jsonResponse(durableStatus);
       }
       recordSendWorkflowTrace("server", "server:conversation-run-status:error", {
         ...statusTrace,
@@ -1631,12 +1678,18 @@ export function registerConversationSessionRoutes(
       });
       throw new ApiError(404, "run_not_found", "Run was not found for this conversation");
     }
+    // SQLite can make queue/reservation/barrier rows mutually coherent, but it
+    // cannot make them atomic with the external lifecycle HTTP observation.
+    // Read durable adjuncts only after a successful lifecycle result so this
+    // response never splices an earlier handoff state onto a newer run status.
+    const durableSnapshot = readDurableSnapshot();
     recordSendWorkflowTrace("server", "server:conversation-run-status:settle", {
       ...statusTrace,
       outcome: "lifecycle-status",
       status: status.status,
       stale: status.stale,
     });
+    const { terminalization, terminalHandoff } = runProjectionDetails(durableSnapshot, status.runId);
     return jsonResponse({
       ok: true,
       workspaceId: workspace.id,
@@ -1653,6 +1706,7 @@ export function registerConversationSessionRoutes(
       noProgressSeconds: status.noProgressSeconds ?? null,
       terminalization,
       terminalHandoff,
+      observationSource: "lifecycle",
     });
   });
 

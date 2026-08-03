@@ -60,7 +60,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
   assert.match(
     stagingWindow,
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)[\s\S]*let routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(routedDraft\.error\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;/s,
+    /deps\.stageAttachmentsIntoSessionDirectory\(\s*resolvedDraft,\s*materializedSessionID,\s*input\.sendPreflight,?\s*\)[\s\S]*let routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(routedDraft\.error\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{[\s\S]*deps\.setError\([\s\S]*error instanceof Error \? error\.message : deps\.safeStringify\(error\),?[\s\S]*\);[\s\S]*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;/s,
     "send flow should hard-fail when attachment staging or routing fails",
   );
 
@@ -76,7 +76,7 @@ test("send flow snapshots pending draft context before materializing a real sess
     "async function sendPrompt",
   );
   const sessionTarget = sessionSendWorkflowSource.indexOf(
-    "const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)",
+    "const explicitTargetSessionId = deps.isPendingSessionInstanceKey(",
     sendStart,
   );
   const pendingSnapshot = sessionSendWorkflowSource.indexOf(
@@ -153,7 +153,7 @@ test("composer clears transferred drafts through the revision-owned handoff", ()
 
   assert.match(
     composerSource,
-    /if \(text\.startsWith\("\/"\)\) \{[\s\S]*draft\.command = \{ name: commandName, arguments: argTokens\.join\(" "\) \};[\s\S]*\}\s*\}\s*recordHistory\(draft\);\s*const submittedDraft = draft;/,
+    /if \(text\.startsWith\("\/"\)\) \{[\s\S]*draft\.command = \{ name: commandName, arguments: argTokens\.join\(" "\) \};[\s\S]*\}[\s\S]*recordHistory\(draft\);\s*const submittedDraft = draft;/,
     "slash command detection and history recording should still happen before snapshot handoff",
   );
 

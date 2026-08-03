@@ -155,7 +155,7 @@ test("send runtime preflight skips duplicate health only for an explicitly healt
   );
 });
 
-test("app wires runtime recovery options through the workspace runtime owner", () => {
+test("app routes SSE bearer recovery through the server-owned control-plane owner", () => {
   assert.match(
     appSource,
     /ensureEngineForWorkspace: \(workspaceId, options\) =>\s*workspaceStore\.ensureEngineForWorkspace\(workspaceId, options\)/,
@@ -163,8 +163,8 @@ test("app wires runtime recovery options through the workspace runtime owner", (
   );
   assert.match(
     appSource,
-    /recoverWorkspaceRuntimeForEventStream: \(workspaceId\) =>[\s\S]*workspaceStore\.ensureEngineForWorkspace\(workspaceId, \{[\s\S]*reason: "event-stream-runtime-recovery",[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/,
-    "event stream recovery should reuse the runtime owner, skip session-list side effects, and force a fresh local runtime",
+    /recoverWorkspaceRuntimeForEventStream:\s*\(workspaceId\)\s*=>\s*rebindWorkspaceControlPlane\(workspaceId, "sse_invalid_bearer"\),/,
+    "event stream recovery should request the server-owned control-plane rebind instead of restarting a runtime from UI state",
   );
 });
 

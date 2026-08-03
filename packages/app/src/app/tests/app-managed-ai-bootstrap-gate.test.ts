@@ -34,7 +34,9 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
   const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend", start);
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
   const prepareSource = conversationRunCompatibilityBridgePrepareSource();
-  const gateIndex = prepareSource.indexOf('deps.prepareSendRuntimeForSend("sendPrompt", input.sendPreflight)');
+  const gateIndex = prepareSource.search(
+    /deps\.prepareSendRuntimeForSend\(\s*"sendPrompt",\s*input\.sendPreflight,?\s*\)/,
+  );
   const clientIndex = prepareSource.indexOf("const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);");
   assert.ok(gateIndex >= 0, "compatibility bridge prepare should call the runtime readiness owner");
   assert.ok(clientIndex >= 0, "compatibility bridge prepare should read the routed client");
@@ -177,7 +179,7 @@ test("managed AI bootstrap primes runtime authorization after config validation"
 
   assert.match(
     ensureSource,
-    /canUseCurrentManagedConfig[\s\S]*deps\.ensureManagedAiRuntimeAuthorizationForSend[\s\S]*deps\.ensureManagedAiRuntimeAuthorizationForSend\(targetWorkspace\)[\s\S]*managedAiRuntimeAuthorizationNotReadyMessage[\s\S]*resolveManagedAiBootstrapWaitDecision/,
+    /canUseCurrentManagedConfig[\s\S]*deps\.ensureManagedAiRuntimeAuthorizationForSend[\s\S]*deps\.ensureManagedAiRuntimeAuthorizationForSend\(\s*targetWorkspace,?\s*\)[\s\S]*managedAiRuntimeAuthorizationNotReadyMessage[\s\S]*resolveManagedAiBootstrapWaitDecision/,
     "managed bootstrap should prime runtime authorization before it allows the send to continue",
   );
   assert.match(

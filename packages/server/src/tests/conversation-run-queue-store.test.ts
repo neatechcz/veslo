@@ -241,6 +241,92 @@ describe("conversation run queue store", () => {
     ]);
   });
 
+  test("persists one OpenCode admission message id through a queue retry and store restart", async () => {
+    const dataDir = await tempDataDir();
+    let timestamp = 2_000;
+    const firstStore = createConversationRunQueueStore({ dataDir, now: () => timestamp });
+    const queued = firstStore.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-a",
+      clientMessageId: "msg-a",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+    });
+
+    const firstClaim = firstStore.claimStartingWithReservation(queued.item.queueItemId);
+    const firstMessageId = firstClaim?.item.opencodeMessageId;
+    expect(firstMessageId).toMatch(/^msg_[0-9a-f]{26}$/);
+    expect(firstStore.releaseWorkspaceRun("ws-a", "run-a")).toBe(true);
+    expect(firstStore.markPending(queued.item.queueItemId)?.opencodeMessageId).toBe(firstMessageId);
+
+    timestamp = 3_000;
+    const restartedStore = createConversationRunQueueStore({ dataDir, now: () => timestamp });
+    const retryClaim = restartedStore.claimStartingWithReservation(queued.item.queueItemId);
+    expect(retryClaim?.item.opencodeMessageId).toBe(firstMessageId);
+    expect(retryClaim?.item.startedAt).toBe(timestamp);
+  });
+
+  test("reads one durable latest-status snapshot with the reservation-backed queue item and blocking fence", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const first = store.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-first",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async" }),
+    }).item;
+    const active = store.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-active",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async" }),
+    }).item;
+    store.reserveWorkspaceRun({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: active.reservedRunId,
+    });
+    store.observeTerminalHandoffBarrier({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-predecessor",
+      fingerprint: "owner-fingerprint",
+      reason: "generation_not_found",
+    });
+    store.markTerminalHandoffBarrierUnresolved({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-predecessor",
+      reason: "generation_not_found",
+    });
+
+    const latest = store.readConversationRunStatusSnapshot({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "latest",
+    });
+    expect(latest.item?.queueItemId).toBe(active.queueItemId);
+    expect(latest.reservation?.runId).toBe(active.reservedRunId);
+    expect(latest.terminalHandoff).toEqual(expect.objectContaining({ runId: "run-predecessor", state: "unresolved" }));
+
+    const exactFirst = store.readConversationRunStatusSnapshot({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: first.reservedRunId,
+    });
+    expect(exactFirst.item?.queueItemId).toBe(first.queueItemId);
+    expect(exactFirst.reservation).toBeNull();
+    expect(exactFirst.terminalHandoff).toEqual(expect.objectContaining({ runId: "run-predecessor" }));
+  });
+
   test("rolls a conflicting admission claim back to pending", async () => {
     const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
     store.reserveWorkspaceRun({

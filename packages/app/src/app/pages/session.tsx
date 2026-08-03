@@ -127,12 +127,14 @@ import type { SidebarSessionOpenTarget } from "../components/session/workspace-s
 import QueuedMessageList from "../components/session/queued-message-list";
 import ServerQueuedRunList from "../components/session/server-queued-run-list";
 import {
+  retainServerQueuedRunProjectionScope,
   replaceServerQueuedRunScope,
   serverQueuedRunsForScope,
   serverQueuedRunsForVisibleConversation,
   upsertServerQueuedRunProjection,
   type ServerQueuedRunProjectionScope,
   type ServerQueuedRunProjection,
+  type ServerQueuedRunVisibilityScope,
 } from "../components/session/server-queue-projection-model.js";
 import { createServerQueueProjectionController } from "../components/session/server-queue-projection-controller.js";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
@@ -328,15 +330,6 @@ type TempRuntimeUiMarkerOptions = Pick<
   "clientMessageId" | "origin" | "detail" | "markerKind"
 > & {
   markerPayload?: Record<string, unknown>;
-};
-
-type ActiveSessionSwitchHandoff = {
-  fromSessionId: string;
-  toSessionId: string;
-  heldMessages: MessageWithParts[];
-  observedLoading: boolean;
-  startedAt: number;
-  token: number;
 };
 
 export type SessionHistoryUnavailableView = {
@@ -1630,94 +1623,12 @@ export default function SessionView(props: SessionViewProps) {
   const renderedMessages = transcriptViewport.renderedMessages;
 
   const effectiveRenderedMessages = transcriptViewport.effectiveRenderedMessages;
-  const [activeSessionSwitchHandoff, setActiveSessionSwitchHandoff] =
-    createSignal<ActiveSessionSwitchHandoff | null>(null);
-  let activeSessionSwitchHandoffToken = 0;
-  let lastSelectedSessionId = untrack(() => props.selectedSessionId?.trim() ?? "");
-  let lastPaintedSessionId = untrack(() => props.selectedSessionId?.trim() ?? "");
-  let lastPaintedMessages: MessageWithParts[] = [];
-  createEffect(
-    on(
-      () => [
-        props.selectedSessionId?.trim() ?? "",
-        effectiveRenderedMessages(),
-        props.loadingEarlierMessages,
-      ] as const,
-      ([sessionId, rendered, loadingEarlierMessages]) => {
-        const messageCount = rendered.length;
-        const currentHandoff = untrack(activeSessionSwitchHandoff);
-
-        if (!sessionId) {
-          setActiveSessionSwitchHandoff(null);
-          lastSelectedSessionId = "";
-          lastPaintedSessionId = "";
-          lastPaintedMessages = [];
-          return;
-        }
-
-        if (
-          lastSelectedSessionId &&
-          sessionId !== lastSelectedSessionId &&
-          lastSelectedSessionId === lastPaintedSessionId &&
-          lastPaintedMessages.length > 0 &&
-          messageCount === 0
-        ) {
-          setActiveSessionSwitchHandoff({
-            fromSessionId: lastPaintedSessionId,
-            toSessionId: sessionId,
-            heldMessages: lastPaintedMessages,
-            observedLoading: loadingEarlierMessages,
-            startedAt: Date.now(),
-            token: ++activeSessionSwitchHandoffToken,
-          });
-        } else if (currentHandoff?.toSessionId === sessionId) {
-          if (messageCount > 0) {
-            setActiveSessionSwitchHandoff(null);
-          } else if (loadingEarlierMessages && !currentHandoff.observedLoading) {
-            setActiveSessionSwitchHandoff({
-              ...currentHandoff,
-              observedLoading: true,
-            });
-          } else if (!loadingEarlierMessages && currentHandoff.observedLoading) {
-            setActiveSessionSwitchHandoff(null);
-          }
-        } else if (currentHandoff) {
-          setActiveSessionSwitchHandoff(null);
-        }
-
-        if (messageCount > 0) {
-          lastPaintedSessionId = sessionId;
-          lastPaintedMessages = rendered;
-        }
-        lastSelectedSessionId = sessionId;
-      },
-    ),
-  );
-  createEffect(() => {
-    const handoff = activeSessionSwitchHandoff();
-    if (!handoff || handoff.observedLoading || typeof window === "undefined") return;
-    const timer = window.setTimeout(() => {
-      setActiveSessionSwitchHandoff((current) =>
-        current?.token === handoff.token && !current.observedLoading ? null : current,
-      );
-    }, 250);
-    onCleanup(() => window.clearTimeout(timer));
-  });
-  const activeSessionSwitchHandoffActive = createMemo(() => {
-    const handoff = activeSessionSwitchHandoff();
-    const sessionId = props.selectedSessionId?.trim() ?? "";
-    return Boolean(
-      handoff &&
-      handoff.toSessionId === sessionId &&
-      effectiveRenderedMessages().length === 0 &&
-      handoff.heldMessages.length > 0,
-    );
-  });
   const displayedEffectiveMessages = createMemo(() => {
-    const displayed = activeSessionSwitchHandoffActive()
-      ? (activeSessionSwitchHandoff()?.heldMessages ?? [])
-      : effectiveRenderedMessages();
-    observeTranscriptProjectionBoundary("session-handoff", props.selectedSessionId, displayed);
+    // A sidebar navigation never shares transcript identity with its previous
+    // selection. Rendering a neutral loader is safe; retaining those messages
+    // here made the new conversation temporarily display foreign history.
+    const displayed = effectiveRenderedMessages();
+    observeTranscriptProjectionBoundary("selected-session", props.selectedSessionId, displayed);
     return displayed;
   });
   const aiAccessLoading = createMemo(() => isAiAccessLoadingMessage(props.aiAccessBlockedReason, tr));
@@ -1739,7 +1650,6 @@ export default function SessionView(props: SessionViewProps) {
   const scheduleScrollToLatest = transcriptViewport.scheduleScrollToLatest;
   const jumpToLatest = transcriptViewport.jumpToLatest;
   const showSessionLoadingState = createMemo(() =>
-    !activeSessionSwitchHandoffActive() &&
     shouldShowSessionLoadingState({
       hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
       selectedSessionId: transcriptDisplaySessionId(),
@@ -1751,14 +1661,12 @@ export default function SessionView(props: SessionViewProps) {
     displayedEffectiveMessages().length === 0 &&
     !composerEntryDismissed() &&
     !showWorkspaceSetupEmptyState() &&
-    !activeSessionSwitchHandoffActive() &&
     !showSessionLoadingState(),
   );
   const showFooterComposerArea = createMemo(() =>
     !showWorkspaceSetupEmptyState() &&
     !showComposerEntryState() &&
-    !showSessionLoadingState() &&
-    !activeSessionSwitchHandoffActive(),
+    !showSessionLoadingState(),
   );
   const showFooterComposerTargetContext = createMemo(() =>
     !props.selectedSessionId &&
@@ -2186,13 +2094,27 @@ export default function SessionView(props: SessionViewProps) {
       );
     });
   }));
-  const activeServerQueueVisibilityScope = createMemo(() => {
+  const activeServerQueueVisibilityScope = createMemo<ServerQueuedRunVisibilityScope>((previous) => {
     const ref = props.activeUiConversationRef;
-    return {
+    const next = {
       workspaceId: resolveVesloWorkspaceId(ref?.workspaceId ?? props.activeWorkspaceId) ?? "",
       conversationId: ref?.conversationId?.trim() ?? "",
       opencodeSessionId: ref?.opencodeSessionId?.trim() || props.selectedSessionId?.trim() || "",
       uiConversationKey: ref?.key?.trim() || currentSessionQueueKey(),
+    };
+    const unchanged =
+      previous &&
+      previous.workspaceId === next.workspaceId &&
+      previous.conversationId === next.conversationId &&
+      previous.opencodeSessionId === next.opencodeSessionId &&
+      previous.uiConversationKey === next.uiConversationKey;
+    return {
+      ...next,
+      // The same UI key can recur after A -> B -> A. A queue-list response
+      // captured before that round trip must not become visible in re-entered A.
+      selectionGeneration: unchanged
+        ? previous.selectionGeneration ?? 0
+        : (previous?.selectionGeneration ?? 0) + 1,
     };
   });
   const activeServerQueueProjectionScope = (): ServerQueuedRunProjectionScope | null => {
@@ -2202,6 +2124,7 @@ export default function SessionView(props: SessionViewProps) {
       workspaceId: scope.workspaceId,
       conversationId: scope.conversationId,
       uiConversationKey: scope.uiConversationKey,
+      selectionGeneration: scope.selectionGeneration ?? 0,
     };
   };
   const visibleServerQueuedRuns = createMemo(() =>
@@ -2415,7 +2338,6 @@ export default function SessionView(props: SessionViewProps) {
     "runPhase",
     "responseStarted",
     "pendingDraftKey",
-    "sessionSwitchHandoffActive",
     "loadingEarlierMessages",
     "appBusy",
     "composerBusy",
@@ -2443,7 +2365,6 @@ export default function SessionView(props: SessionViewProps) {
           runPhase(),
           responseStarted(),
           props.activePendingDraftKey,
-          activeSessionSwitchHandoffActive(),
           props.loadingEarlierMessages,
           props.busy,
           composerBusy(),
@@ -2475,14 +2396,13 @@ export default function SessionView(props: SessionViewProps) {
           runPhase: state[12],
           responseStarted: state[13],
           pendingDraftKey: state[14],
-          sessionSwitchHandoffActive: state[15],
-          loadingEarlierMessages: state[16],
-          appBusy: state[17],
-          composerBusy: state[18],
-          aiAccessLoading: state[19],
-          aiAccessLoadingWithoutMessages: state[20],
-          aiAccessBlockedReason: state[21],
-          visibleAiAccessBlockedReason: state[22],
+          loadingEarlierMessages: state[15],
+          appBusy: state[16],
+          composerBusy: state[17],
+          aiAccessLoading: state[18],
+          aiAccessLoadingWithoutMessages: state[19],
+          aiAccessBlockedReason: state[20],
+          visibleAiAccessBlockedReason: state[21],
         });
       },
     ),
@@ -3503,7 +3423,6 @@ export default function SessionView(props: SessionViewProps) {
       replaceUserMessageAsync: (messageId, draft, options) =>
         props.replaceUserMessageAsync(messageId, draft, options),
       sendPromptAsync: async (draft, options) => {
-        const uiConversationKey = currentSessionQueueKey();
         const result = await props.sendPromptAsync(draft, options);
         const workspaceId = result.workspaceId?.trim() ?? "";
         const conversationId = result.conversationId?.trim() ?? "";
@@ -3518,6 +3437,14 @@ export default function SessionView(props: SessionViewProps) {
           queueItemId &&
           reservedRunId
         ) {
+          const projectionScope = activeServerQueueProjectionScope();
+          if (
+            !projectionScope ||
+            projectionScope.workspaceId !== workspaceId ||
+            projectionScope.conversationId !== conversationId
+          ) {
+            return result;
+          }
           const now = Date.now();
           setServerQueuedRuns((current) =>
             upsertServerQueuedRunProjection(current, {
@@ -3536,9 +3463,9 @@ export default function SessionView(props: SessionViewProps) {
               startedAt: null,
               completedAt: null,
               error: null,
-            }, uiConversationKey),
+            }, projectionScope),
           );
-          requestServerQueueProjectionRefresh({ workspaceId, conversationId, uiConversationKey });
+          requestServerQueueProjectionRefresh(projectionScope);
         }
         return result;
       },
@@ -3714,8 +3641,9 @@ export default function SessionView(props: SessionViewProps) {
     replaceScope: (scope, items) => {
       setServerQueuedRuns((current) => replaceServerQueuedRunScope(current, scope, items));
     },
+    trace: (event, payload) => recordSendTrace(event, payload),
     hasKnownPollingRows: (scope) =>
-      serverQueuedRunsForScope(untrack(serverQueuedRuns), scope.workspaceId, scope.conversationId).some(
+      serverQueuedRunsForScope(untrack(serverQueuedRuns), scope).some(
         (item) => item.status === "pending" || item.status === "starting",
       ),
   });
@@ -3724,20 +3652,33 @@ export default function SessionView(props: SessionViewProps) {
   };
   createEffect(
     on(
+      activeServerQueueProjectionScope,
+      (scope) => {
+        // The durable queue belongs to the server. Keep only the active
+        // selection's presentation while a late response is fenced by the
+        // controller, so navigation cannot become an unbounded local queue
+        // cache or revive a prior conversation's row.
+        setServerQueuedRuns((current) => retainServerQueuedRunProjectionScope(current, scope));
+      },
+    ),
+  );
+  createEffect(
+    on(
       () => [
         activeServerQueueProjectionScope()?.workspaceId ?? "",
         activeServerQueueProjectionScope()?.conversationId ?? "",
         activeServerQueueProjectionScope()?.uiConversationKey ?? "",
+        activeServerQueueProjectionScope()?.selectionGeneration ?? 0,
         props.vesloServerClient,
         props.vesloServerStatus,
         props.reconnectState?.status ?? "",
       ] as const,
-      ([workspaceId, conversationId, uiConversationKey, _client, status]) => {
+      ([workspaceId, conversationId, uiConversationKey, selectionGeneration, _client, status]) => {
         if (!workspaceId || !conversationId || !uiConversationKey || status !== "connected") {
           serverQueueProjectionController.stopPolling();
           return;
         }
-        requestServerQueueProjectionRefresh({ workspaceId, conversationId, uiConversationKey });
+        requestServerQueueProjectionRefresh({ workspaceId, conversationId, uiConversationKey, selectionGeneration });
       },
     ),
   );
@@ -4477,11 +4418,9 @@ export default function SessionView(props: SessionViewProps) {
             editableUserMessage={editableUserMessage()}
             onEditUserMessage={handleEditUserMessage}
             transcriptSurfaceContext={() => ({
-              transcriptSurfaceOwner: activeSessionSwitchHandoffActive()
-                ? "session-switch-handoff"
-                : localSubmittedMessage()
-                  ? "viewport-with-local-submitted"
-                  : "viewport-canonical",
+              transcriptSurfaceOwner: localSubmittedMessage()
+                ? "viewport-with-local-submitted"
+                : "viewport-canonical",
               sourceMessageCount: props.messages.length,
               renderedMessageCount: renderedMessages().length,
               effectiveRenderedMessageCount: effectiveRenderedMessages().length,
@@ -4490,7 +4429,7 @@ export default function SessionView(props: SessionViewProps) {
                 canonical: describeTranscriptProjectionBoundary("canonical", props.selectedSessionId),
                 visible: describeTranscriptProjectionBoundary("visible", props.selectedSessionId),
                 viewportRendered: describeTranscriptProjectionBoundary("viewport-rendered", props.selectedSessionId),
-                sessionHandoff: describeTranscriptProjectionBoundary("session-handoff", props.selectedSessionId),
+                selectedSession: describeTranscriptProjectionBoundary("selected-session", props.selectedSessionId),
               },
             })}
             setScrollToMessageById={(handler) => {

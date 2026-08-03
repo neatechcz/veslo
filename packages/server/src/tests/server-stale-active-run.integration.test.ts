@@ -244,7 +244,16 @@ describe("stale active run integration", () => {
               role: "assistant",
               time: { created: Date.now(), completed: Date.now() },
             },
-            parts: [],
+            // An idle assistant turn with no visible output is intentionally a
+            // failed terminal state. These fixtures model the completed
+            // transcript evidence required before a stale reservation releases.
+            parts: [{
+              id: `assistant-${sessionId}-text`,
+              messageID: `assistant-${sessionId}`,
+              sessionID: sessionId,
+              type: "text",
+              text: "completed stale run",
+            }],
           }]);
         }
 
@@ -402,10 +411,16 @@ describe("stale active run integration", () => {
     expect(runResults.every((result) => typeof result.payload?.runId === "string")).toBe(true);
     expect(submittedSessions.sort()).toEqual(sessionIds.filter(Boolean).sort());
     expect(submittedBodies).toHaveLength(instanceCount);
-    expect(statusProbeTimes).toHaveLength(instanceCount * 2);
-    expect(statusDirectoryQueries).toEqual(Array(instanceCount * 2).fill(workspaceRoot));
-    expect(statusDirectoryHeaders).toEqual(Array(instanceCount * 2).fill(workspaceRoot));
-    expect(messageFallbackSessions.sort()).toEqual(sessionIds.flatMap((sessionId) => [sessionId, sessionId]).sort());
+    // One local candidate probe plus the server's admission and post-claim
+    // lifecycle observations are expected for each successor. The last status
+    // read is what keeps a simultaneous release/claim from admitting behind a
+    // stale terminal observation.
+    expect(statusProbeTimes).toHaveLength(instanceCount * 3);
+    expect(statusDirectoryQueries).toEqual(Array(instanceCount * 3).fill(workspaceRoot));
+    expect(statusDirectoryHeaders).toEqual(Array(instanceCount * 3).fill(workspaceRoot));
+    expect(messageFallbackSessions.sort()).toEqual(
+      sessionIds.flatMap((sessionId) => [sessionId, sessionId, sessionId]).sort(),
+    );
     expect(elapsedMs).toBeLessThan(messageFallbackDelayMs);
     expect(submittedTimes.every((submittedAt) =>
       statusProbeTimes.some((statusAt) => statusAt <= submittedAt)
@@ -482,7 +497,13 @@ describe("stale active run integration", () => {
               role: "assistant",
               time: { created: Date.now(), completed: Date.now() },
             },
-            parts: [],
+            parts: [{
+              id: "part-terminal-text",
+              messageID: "assistant-terminal",
+              sessionID: "sess-transient-idle",
+              type: "text",
+              text: "completed after transient idle",
+            }],
           }]);
         }
 

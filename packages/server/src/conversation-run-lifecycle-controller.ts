@@ -1546,7 +1546,7 @@ export function createConversationRunLifecycleController(
         error instanceof Error ? error.message : String(error),
       );
       unregisterRegisteredAiGatewayRun();
-      if (terminalized) {
+      if (terminalized && lifecycleOwner) {
         // A transport failure is outcome-unknown: OpenCode may have accepted
         // the prompt before the response was lost. A durable failed lifecycle
         // record therefore still has to pass the exact runtime handoff check
@@ -1559,6 +1559,13 @@ export function createConversationRunLifecycleController(
           opencodeSessionId: input.target.opencodeSessionId,
           reason: "upstream-submit-failed-terminalized",
         });
+      } else if (terminalized) {
+        // The legacy direct runtime has no lifecycle evidence with which to
+        // fence an uncertain handoff. It also cannot accept server-queue-only
+        // work (that path is rejected above), so retaining the reservation
+        // would only make a retry permanently conflict with its own failure.
+        releaseRun(input.workspace.id, input.runId, "upstream-submit-failed-no-lifecycle-owner");
+        scheduleQueueDrain(input.workspace.id, input.target.conversationId, 0);
       } else {
         scheduleTerminalizationRetry({
           workspace: input.workspace,
@@ -2775,10 +2782,10 @@ export function createConversationRunLifecycleController(
       }
       // OpenCode orders turns lexicographically by message ID. `createdAt` is
       // the time the user queued this draft, which can predate the assistant
-      // turn that finishes while it waits. Use the atomic queue-claim time
-      // instead, so a dequeued prompt is ordered as a newly admitted turn.
-      // `startedAt` remains stable for this claimed attempt and the submit
-      // transport retry reuses the same generated ID.
+      // turn that finishes while it waits. The queue store therefore derives
+      // and persists the id at the atomic first claim. Reusing that durable id
+      // prevents an uncertain transport retry from becoming a second OpenCode
+      // user message after a controller restart.
       const queuedSubmitInput = withOpenCodeAdmissionMessageId({
         runTrace: queuedRunTrace,
         workspace,
@@ -2788,6 +2795,7 @@ export function createConversationRunLifecycleController(
         body,
         clientMessageId: queuedItem.clientMessageId,
         queueItemId: queuedItem.queueItemId,
+        opencodeMessageId: queuedItem.opencodeMessageId,
         origin: queuedItem.origin,
         expectAiGatewayStart,
         runtimeAuthorizationActorTokenHash,
@@ -3169,6 +3177,20 @@ export function createConversationRunLifecycleController(
         return queueRun(input, null);
       }
       if (input.submitQueuePolicy === "server-queue-only") {
+        // A queued local intent has no safe terminal/release path without the
+        // lifecycle owner. Do not persist an item that the legacy standalone
+        // runtime can never dispatch; callers must restore the draft and retry
+        // once the daemon-backed runtime is available.
+        if (input.workspace.workspaceType !== "remote" && !lifecycleOwner) {
+          input.runTrace.record("server:conversation-run:queue-policy-lifecycle-unavailable", {
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            clientMessageId: input.clientMessageId,
+            origin: input.origin,
+          });
+          throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is not configured");
+        }
         input.runTrace.record("server:conversation-run:queue-policy-server-only", {
           workspaceId: input.workspace.id,
           conversationId: input.target.conversationId,
@@ -3287,7 +3309,6 @@ export function createConversationRunLifecycleController(
         throw new Error("OpenCode submit port is required for admitted conversation runs");
       }
       admittedInput = withOpenCodeAdmissionMessageId(admittedInput);
-      if (!lifecycleOwner) reserveStarting(admittedInput);
       options.onRunAdmitted?.(admittedInput);
       const upstream = await submitAcceptedRun(admittedInput, lifecycleOwner);
       input.runTrace.record("server:conversation-run:submitted", {

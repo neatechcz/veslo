@@ -23,4 +23,5 @@ export const selectors = {
   assistantMessageError: '[data-message-role="assistant"] [role="alert"]',
   projectHeading: 'button[data-project-collapse-toggle] span.truncate, button span.truncate',
   projectNewSession: '[data-testid="sidebar-project-new-session"]',
+  sessionSidebarRow: '[data-session-sidebar-row="true"]',
 };

@@ -37,7 +37,7 @@ test("send preflight snapshots the target workspace before cold-start awaits", (
 
   assert.match(
     sendIntro,
-    /let sendTargetWorkspace = pendingSidebarTargetWorkspace \?\? deps\.resolveSendTargetWorkspaceScope\(sessionID\);[\s\S]*sendPreflight\.targetWorkspace = sendTargetWorkspace;/,
+    /let sendTargetWorkspace =[\s\S]*pendingSidebarTargetWorkspace \?\?[\s\S]*deps\.resolveSendTargetWorkspaceScope\(sessionID\);[\s\S]*sendPreflight\.targetWorkspace = sendTargetWorkspace;/,
     "sendPrompt should snapshot the target workspace before awaits can observe a different active workspace",
   );
   assert.match(
@@ -70,7 +70,7 @@ test("createSessionAndOpen uses preflight target only when send preflight provid
   );
   assert.match(
     createSource,
-    /const activeWorkspaceId = targetWorkspace\?\.workspaceId \|\| deps\.workspace\.activeWorkspaceId\(\)\.trim\(\);/,
+    /const activeWorkspaceId =[\s\S]*targetWorkspace\?\.workspaceId \|\|[\s\S]*deps\.workspace\.activeWorkspaceId\(\)\.trim\(\);/,
     "conversation creation should prefer the target workspace id over the current active workspace id",
   );
   assert.match(
@@ -85,20 +85,25 @@ test("send engine startup uses the snapshotted target workspace", () => {
 
   assert.match(
     prepareSource,
-    /deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\)/,
+    /deps\.prepareSendRuntimeForSend\(\s*"sendPrompt",\s*input\.sendPreflight,?\s*\)/,
     "browsing-mode compatibility bridge should delegate engine startup to the send runtime readiness owner",
   );
   assert.match(
     readinessSource,
-    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-recovery`,[\s\S]*loadSessions: false,[\s\S]*forceFreshRuntime: true,/s,
-    "send runtime readiness owner should start the snapshotted target workspace engine instead of whichever workspace is currently active",
+    /deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined, \{[\s\S]*reason: `\$\{reason\}-runtime-initial-ensure`,[\s\S]*loadSessions: false,[\s\S]*skipManagedAiConfig: true,/s,
+    "initial send runtime readiness should start the snapshotted target workspace instead of whichever workspace is currently active",
+  );
+  assert.match(
+    readinessSource,
+    /deps\.requestServerRuntimeRecovery\?\.\(\{[\s\S]*workspaceId: recoveryWorkspaceId,[\s\S]*reason: recoveryReason,/,
+    "a later recovery should delegate to the server operation owner with the same scoped workspace",
   );
 });
 
 test("scoped send and session creation do not fall back to the active client", () => {
   assert.match(
     source,
-    /const workspaceSendTarget = createWorkspaceSendTarget<Client>\(\{[\s\S]*resolveSessionSendTargetScope: workspaceSessionSelection\.resolveSendTargetWorkspaceScope,[\s\S]*routedClient,[\s\S]*\}\);/,
+    /const workspaceSendTarget = createWorkspaceSendTarget<Client>\(\{[\s\S]*resolveSessionSendTargetScope:[\s\S]*workspaceSessionSelection\.resolveSendTargetWorkspaceScope,[\s\S]*routedClient,[\s\S]*\}\);/,
     "app should wire scoped send target routing through the workspace send target controller",
   );
   assert.match(

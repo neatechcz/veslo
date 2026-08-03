@@ -2,7 +2,7 @@ import { createEffect, createMemo, onCleanup, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
-import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
+import type { VesloRuntimeReadiness, VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 import { currentLocale, t } from "../../i18n";
 
 import type {
@@ -240,6 +240,8 @@ export function createSessionStore(options: {
     appWorkspaceId?: string | null;
     connectionSnapshot?: Record<string, string | null | undefined> | null;
   };
+  /** Control input for deferred lifecycle reads; diagnostics remain trace-only. */
+  lifecycleRecoveryRuntimeReadiness?: () => VesloRuntimeReadiness;
   onConversationRunBecameActive?: (
     scope: SessionLifecycleRecoveryScope,
   ) => void;
@@ -1208,6 +1210,11 @@ export function createSessionStore(options: {
       lifecycleRecoveryController.reconcile();
     });
     createEffect(() => {
+      lifecycleRecoveryController.observeRuntimeReadiness(
+        options.lifecycleRecoveryRuntimeReadiness?.() ?? null,
+      );
+    });
+    createEffect(() => {
       if (!options.selectedSessionId()) return;
       void lifecycleRecoveryController.probeSelectedConversationLatestRun();
     });
@@ -1412,7 +1419,7 @@ export function createSessionStore(options: {
             state.workspaceId,
           );
         }
-        void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
+        void lifecycleRecoveryController?.resumeSelectedConversationLatestRun();
       }
     },
     onAssistantResponseObserved: options.onAssistantResponseObserved,

@@ -499,10 +499,14 @@ test("backend runtime prepare owns orchestrator attach fallback decisions", () =
     /orchestrator_workspace_activate_blocking[\s\S]*falling back to fresh start[\s\S]*engine_start_reserved/s,
     "backend prepare should fall back from orchestrator attach to fresh start inside Rust",
   );
+  const runtimePrepareStart = engineCommandSource.indexOf("pub async fn runtime_prepare_workspace");
+  const runtimePrepareEnd = engineCommandSource.indexOf("#[tauri::command]", runtimePrepareStart + 1);
+  const runtimePrepareSource = engineCommandSource.slice(runtimePrepareStart, runtimePrepareEnd);
+  assert.ok(runtimePrepareStart >= 0 && runtimePrepareEnd > runtimePrepareStart);
   assert.match(
-    engineCommandSource,
-    /start_queue[\s\S]*\.lock\(\)[\s\S]*engine_start_reserved\([\s\S]*\)\?;[\s\S]*Fresh orchestrator start only boots the daemon[\s\S]*orchestrator_workspace_activate_blocking[\s\S]*engine_info/s,
-    "fresh orchestrator start must activate the target workspace before returning engine_info",
+    runtimePrepareSource,
+    /start_queue[\s\S]*\.lock\(\)[\s\S]*engine_start_reserved\([\s\S]*Fresh orchestrator start only boots the daemon[\s\S]*orchestrator_workspace_activate_blocking[\s\S]*engine_info_blocking/s,
+    "fresh orchestrator start must activate the target workspace before returning engine info",
   );
   assert.match(
     orchestratorCommandSource,

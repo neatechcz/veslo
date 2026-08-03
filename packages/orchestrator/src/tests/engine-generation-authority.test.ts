@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import {
   createEngineGenerationAuthority,
   type ProcessInstanceInspector,
 } from "../engine-generation-authority.js";
+import { createRunStore } from "../run-store.js";
 
 const directories: string[] = [];
 
@@ -25,7 +27,7 @@ async function authority(inspector: ProcessInstanceInspector) {
     inspector,
     now: () => 2_000,
   });
-  return { create, value: create() };
+  return { create, value: create(), dbPath };
 }
 
 const owner = {
@@ -107,6 +109,118 @@ describe("engine generation authority", () => {
       kind: "unknown",
       reason: "generation_incomplete",
     });
+  });
+
+  test("durably retires a historical owner without a generation only after its PID is absent", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async () => ({ kind: "absent" }),
+    };
+    const { value, create } = await authority(inspector);
+
+    const recovered = await value.resolveOwnerEvidence({
+      owner,
+      currentPoolEntry: false,
+    });
+
+    expect(recovered).toEqual(expect.objectContaining({ kind: "lost_proven" }));
+    expect(create().get(owner.engineOwnerId)).toMatchObject({
+      state: "exited_confirmed",
+      closureReason: "legacy_process_absent",
+      processBirthToken: null,
+    });
+    await expect(create().resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual(
+      expect.objectContaining({ kind: "lost_proven" }),
+    );
+  });
+
+  test("preserves a historical terminal conversation row while filling its missing generation evidence", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async () => ({ kind: "absent" }),
+    };
+    const { value, dbPath } = await authority(inspector);
+    const runStore = createRunStore({ dbPath });
+    runStore.insert({
+      workspaceId: owner.workspaceId,
+      conversationId: "conv-historical-hidden",
+      runId: "run-historical-hidden",
+      engineSessionId: "ses-historical-hidden",
+      clientMessageId: "msg-historical-hidden",
+      origin: "session:normal",
+      directory: "C:/repo",
+      kind: "prompt",
+      status: "completed",
+      abortRequested: false,
+      createdAt: 1_600,
+      startedAt: 1_600,
+      completedAt: 1_700,
+      error: null,
+      engineSlotId: owner.engineSlotId,
+      engineOwnerState: "attached",
+      engineOwnerId: owner.engineOwnerId,
+      enginePid: owner.enginePid,
+      engineStartedAt: owner.engineStartedAt,
+      engineBaseUrl: owner.engineBaseUrl,
+      activityKind: "idle",
+      waitReason: "none",
+      lastUsefulProgressAt: 1_700,
+      retrySince: null,
+      lastProgressSignature: null,
+    });
+
+    const before = new Database(dbPath, { readonly: true });
+    try {
+      expect(before.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'engine_generation'").get()).toBeNull();
+      expect(before.query("SELECT status, engine_owner_state, engine_owner_id, engine_pid, engine_started_at FROM conversation_run WHERE run_id = 'run-historical-hidden'").get()).toEqual({
+        status: "completed",
+        engine_owner_state: "attached",
+        engine_owner_id: owner.engineOwnerId,
+        engine_pid: owner.enginePid,
+        engine_started_at: owner.engineStartedAt,
+      });
+    } finally {
+      before.close();
+    }
+
+    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual(
+      expect.objectContaining({ kind: "lost_proven" }),
+    );
+    expect(runStore.get(owner.workspaceId, "run-historical-hidden")).toMatchObject({
+      status: "completed",
+      engineOwnerState: "attached",
+      engineOwnerId: owner.engineOwnerId,
+      enginePid: owner.enginePid,
+      engineStartedAt: owner.engineStartedAt,
+    });
+    expect(value.get(owner.engineOwnerId)).toMatchObject({
+      state: "exited_confirmed",
+      closureReason: "legacy_process_absent",
+    });
+  });
+
+  test("does not adopt a historical owner without a generation while its PID is still present", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async (pid) => ({ kind: "alive", identity: { pid, birthToken: "unknown-legacy-birth" } }),
+    };
+    const { value } = await authority(inspector);
+
+    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual({
+      kind: "unknown",
+      reason: "generation_not_found",
+    });
+    expect(value.get(owner.engineOwnerId)).toBeNull();
+  });
+
+  test("keeps a historical owner without a generation closed when its PID cannot be inspected", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async () => ({ kind: "unknown", reason: "inspection_failed" }),
+    };
+    const { value } = await authority(inspector);
+
+    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual({
+      kind: "unknown",
+      reason: "process_identity_unavailable",
+    });
+    expect(value.get(owner.engineOwnerId)).toBeNull();
   });
 
 

@@ -28,6 +28,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 const mode = process.env.VESLO_SERVICE_TEST_FAKE_MODE ?? "success";
+const lifecycleQueueFixture = mode.startsWith("queue-lifecycle");
 const logPath = process.env.VESLO_SERVICE_TEST_FAKE_LOG ?? "";
 const username = process.env.OPENCODE_SERVER_USERNAME ?? "";
 const password = process.env.OPENCODE_SERVER_PASSWORD ?? "";
@@ -39,8 +40,10 @@ const expectedAuthorization = `Basic ${Buffer.from(`${username}:${password}`).to
 let nextSession = 1;
 let promptFailureServed = false;
 let promptConnectionDropServed = false;
+let promptCount = 0;
 let terminalHoldEventCount = 0;
 const eventSubscribers = new Set();
+const sessionMessages = new Map();
 
 async function writeLog(entry) {
   if (!logPath) return;
@@ -149,15 +152,28 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    const messages = /^\/session\/([^/]+)\/message$/.exec(url.pathname);
+    if (request.method === "GET" && messages && lifecycleQueueFixture) {
+      const sessionId = decodeURIComponent(messages[1]);
+      await writeLog({ ...requestSummary, sessionId });
+      sendJson(response, 200, sessionMessages.get(sessionId) ?? []);
+      return;
+    }
+
     const prompt = /^\/session\/([^/]+)\/prompt_async$/.exec(url.pathname);
     if (request.method === "POST" && prompt) {
       const body = await readJson(request);
+      promptCount += 1;
       await writeLog({
         ...requestSummary,
         sessionId: decodeURIComponent(prompt[1]),
         ...summarizeBody(body),
       });
-      if (mode === "prompt-500" || (mode === "prompt-500-once" && !promptFailureServed)) {
+      if (
+        mode === "prompt-500" ||
+        (mode === "prompt-500-once" && !promptFailureServed) ||
+        (mode === "queue-lifecycle-fail-second" && promptCount === 2)
+      ) {
         promptFailureServed = true;
         sendJson(response, 500, { error: "fake prompt failure" });
         return;
@@ -167,10 +183,18 @@ const server = http.createServer(async (request, response) => {
         response.destroy();
         return;
       }
+      const sessionId = decodeURIComponent(prompt[1]);
+      const messageId = typeof body?.messageID === "string" && body.messageID.trim()
+        ? body.messageID.trim()
+        : `msg_fake_user_${nextSession++}`;
+      const sessionEntries = lifecycleQueueFixture ? (sessionMessages.get(sessionId) ?? []) : null;
+      if (sessionEntries) {
+        sessionEntries.push({ info: { id: messageId, role: "user" }, parts: Array.isArray(body?.parts) ? body.parts : [] });
+        sessionMessages.set(sessionId, sessionEntries);
+      }
       if (mode === "prompt-delay") await delay(100);
-      if (mode === "prompt-response-delay") await delay(750);
+      if (mode === "prompt-response-delay" || mode === "queue-lifecycle-delay") await delay(750);
       if (mode === "event-sequence" || mode === "event-terminal-hold") {
-        const sessionId = decodeURIComponent(prompt[1]);
         setTimeout(() => {
           const payload = JSON.stringify(
             mode === "event-terminal-hold"
@@ -200,6 +224,12 @@ const server = http.createServer(async (request, response) => {
           }
         }, mode === "event-terminal-hold" ? 250 + terminalHoldEventCount++ * 300 : 250).unref();
         await delay(600);
+      }
+      if (sessionEntries) {
+        sessionEntries.push({
+          info: { id: `msg_fake_assistant_${nextSession++}`, role: "assistant", parentID: messageId, finish: "stop" },
+          parts: [{ type: "text", text: "fake response" }],
+        });
       }
       sendJson(response, 200, { ok: true });
       return;

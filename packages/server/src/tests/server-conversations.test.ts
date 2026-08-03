@@ -284,6 +284,165 @@ const startTestServer = (input: {
 };
 
 describe("conversation routes", () => {
+  test("run status returns scoped durable queue evidence while lifecycle startup is unavailable", async () => {
+    const dataDir = await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-durable-status-"));
+    tempDirs.push(workspaceRoot);
+    const queueStore = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const queued = queueStore.enqueue({
+      workspaceId: "ws_1",
+      conversationId: "conv-legacy",
+      opencodeSessionId: "sess-legacy",
+      directory: workspaceRoot,
+      reservedRunId: "run-queued",
+      clientMessageId: "msg-queued",
+      origin: "session:normal",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "private prompt" }] }),
+    }).item;
+    queueStore.observeTerminalHandoffBarrier({
+      workspaceId: "ws_1",
+      conversationId: "conv-legacy",
+      runId: "run-historical",
+      fingerprint: "historical-owner-fingerprint",
+      reason: "generation_not_found",
+    });
+    queueStore.markTerminalHandoffBarrierUnresolved({
+      workspaceId: "ws_1",
+      conversationId: "conv-legacy",
+      runId: "run-historical",
+      reason: "generation_not_found",
+    });
+    const server = startTestServer({ workspaceRoot, upstreamPort: 1 });
+
+    for (const requestedRunId of [queued.reservedRunId, "latest"]) {
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-legacy/runs/${requestedRunId}`,
+        { headers: { Authorization: "Bearer client-token" } },
+      );
+      expect(response.status).toBe(200);
+      const payload = await response.json() as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        ok: true,
+        workspaceId: "ws_1",
+        conversationId: "conv-legacy",
+        runId: "run-queued",
+        status: "queued",
+        stale: true,
+        observationSource: "durable-startup",
+        clientMessageId: "msg-queued",
+        queueItemId: queued.queueItemId,
+        queueState: "pending",
+        terminalHandoff: {
+          state: "unresolved",
+          reasonCode: "generation_not_found",
+          blockingRunId: "run-historical",
+        },
+      });
+      expect(JSON.stringify(payload)).not.toContain("private prompt");
+    }
+
+    const unrelated = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-empty/runs/latest`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    expect(unrelated.status).toBe(503);
+    expect(await unrelated.json()).toMatchObject({ code: "lifecycle_unavailable" });
+  });
+
+  test("run status enriches a lifecycle observation from a post-lifecycle durable snapshot", async () => {
+    const dataDir = await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-status-observation-order-"));
+    tempDirs.push(workspaceRoot);
+    const queueStore = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const queued = queueStore.enqueue({
+      workspaceId: "ws_1",
+      conversationId: "conv-observation-order",
+      opencodeSessionId: "sess-observation-order",
+      directory: workspaceRoot,
+      reservedRunId: "run-observation-order",
+      clientMessageId: "msg-observation-order",
+      origin: "session:normal",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [] }),
+    }).item;
+    queueStore.reserveWorkspaceRun({
+      workspaceId: "ws_1",
+      conversationId: queued.conversationId,
+      runId: queued.reservedRunId,
+      directory: workspaceRoot,
+      opencodeSessionId: queued.opencodeSessionId,
+      state: "active",
+    });
+
+    let lifecycleRequests = 0;
+    let mutateDuringStatusRead = false;
+    const lifecycle = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        expect(request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER)).toBe("lifecycle-token");
+        expect(url.pathname).toBe(
+          "/workspace/ws_1/conversations/conv-observation-order/runs/run-observation-order",
+        );
+        lifecycleRequests += 1;
+        if (mutateDuringStatusRead) {
+          // This write happens after the route starts the external lifecycle
+          // observation. The response must not serialize the earlier reservation
+          // snapshot alongside this newer lifecycle answer.
+          queueStore.markWorkspaceRunTerminalizationPending({
+            workspaceId: "ws_1",
+            runId: queued.reservedRunId,
+            reason: "test-terminal-write",
+            attempts: 1,
+            lastError: "safe test error",
+            nextAttemptAt: 2_100,
+            deadlineAt: 3_000,
+          });
+        }
+        return Response.json({
+          ok: true,
+          workspaceId: "ws_1",
+          conversationId: queued.conversationId,
+          runId: queued.reservedRunId,
+          status: "running",
+          stale: false,
+        });
+      },
+    });
+    runningServers.push(lifecycle as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: 1,
+      orchestratorDaemonUrl: `http://127.0.0.1:${lifecycle.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+    });
+    const lifecycleRequestsBeforeStatusRead = lifecycleRequests;
+    mutateDuringStatusRead = true;
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-observation-order/runs/run-observation-order`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(lifecycleRequests).toBeGreaterThan(lifecycleRequestsBeforeStatusRead);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      workspaceId: "ws_1",
+      conversationId: queued.conversationId,
+      runId: queued.reservedRunId,
+      status: "running",
+      observationSource: "lifecycle",
+      terminalization: {
+        state: "pending",
+        reasonCode: "test-terminal-write",
+        attempts: 1,
+      },
+    });
+  });
+
   test("mounted OpenCode session create accepts and reuses a caller-supplied id", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-session-id-contract-"));
@@ -1640,6 +1799,7 @@ describe("conversation routes", () => {
     expect(upstreamRequests).toEqual([
       "/session",
       "/session/sess-submit-created-failed/prompt_async",
+      "/session/sess-submit-created-failed/prompt_async",
     ]);
   });
 
@@ -2907,7 +3067,8 @@ describe("conversation routes", () => {
       conversationId: created.conversationId,
       runId: payload.reservedRunId,
       status: "queued",
-      stale: false,
+      stale: true,
+      observationSource: "durable-startup",
       clientMessageId: "msg-submit-send-now-queued",
       queueItemId: payload.queueItemId,
       queueState: "pending",

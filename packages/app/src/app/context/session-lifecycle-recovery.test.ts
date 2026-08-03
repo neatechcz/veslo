@@ -936,7 +936,7 @@ test("reconcile does not re-arm an exhausted watch without explicit recovery", a
   assert.equal(controller.activeWatchCount(), 1);
 });
 
-test("latest-run probe guard is released after a successful probe", async () => {
+test("latest-run probe suppresses a completed nonterminal selection read without issuing a duplicate", async () => {
   let reads = 0;
   const controller = createSessionLifecycleRecoveryController({
     sessionStatusById: () => ({}),
@@ -950,7 +950,7 @@ test("latest-run probe guard is released after a successful probe", async () => 
     }),
     readConversationRunStatus: async () => {
       reads += 1;
-      return { runId: `run-${reads}`, status: "completed", stale: false };
+      return { runId: `run-${reads}`, status: "queued", stale: true };
     },
     setSessionStatusForWorkspace: () => {},
     notifySessionBusy: () => {},
@@ -959,7 +959,138 @@ test("latest-run probe guard is released after a successful probe", async () => 
   assert.equal(await controller.probeSelectedConversationLatestRun(), true);
   assert.equal(await controller.probeSelectedConversationLatestRun(), false);
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(await controller.probeSelectedConversationLatestRun(), false);
+  assert.equal(await controller.resumeSelectedConversationLatestRun(), false);
+  assert.equal(reads, 1);
+});
+
+test("latest-run probe suppresses a same-selection error until readiness advances", async () => {
+  let reads = 0;
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    currentSelectionVersion: () => 7,
+    resolveConversationRunForSession: () => ({
+      sessionId: "ses-a",
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "ses-a",
+      runId: "latest",
+    }),
+    readConversationRunStatus: async () => {
+      reads += 1;
+      if (reads === 1) throw new Error("lifecycle route unavailable");
+      return { runId: "run-a", status: "queued", stale: true };
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    trace: (event, payload) => traces.push({ event, payload }),
+  });
+
+  assert.equal(controller.observeRuntimeReadiness("degraded"), false);
   assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(await controller.probeSelectedConversationLatestRun(), false);
+  assert.equal(reads, 1);
+  assert.equal(controller.observeRuntimeReadiness("ready"), true);
+  await waitForAsyncPoll();
+  assert.equal(reads, 2);
+  const error = traces.find((entry) => entry.event === "session-lifecycle-recovery:latest-probe-error");
+  assert.equal(error?.payload?.retrySuppressedForSelection, true);
+});
+
+test("durable startup status renders queue evidence without arming a lifecycle poll", async () => {
+  const timers: Timer[] = [];
+  const published: SessionLifecycleRecoveryStatus[] = [];
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => ({
+      sessionId: "ses-a",
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "ses-a",
+      runId: "latest",
+    }),
+    readConversationRunStatus: async () => ({
+      runId: "run-queued",
+      status: "queued",
+      stale: true,
+      observationSource: "durable-startup",
+      terminalHandoff: {
+        state: "unresolved",
+        reasonCode: "generation_not_found",
+        attempts: 1,
+        requestedAt: 1_000,
+        decidedAt: 1_001,
+      },
+    }),
+    onConversationRunStatus: (_scope, status) => {
+      if (status) published.push(status);
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
+    trace: (event, payload) => traces.push({ event, payload }),
+  });
+
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.deepEqual(published.map((status) => status.observationSource), ["durable-startup"]);
+  assert.equal(controller.activeWatchCount(), 0);
+  assert.deepEqual(timers, []);
+  assert.equal(
+    traces.some((entry) => entry.event === "session-lifecycle-recovery:latest-probe-deferred"),
+    true,
+  );
+});
+
+test("a newer ready generation resumes exactly one deferred latest read", async () => {
+  let reads = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    currentSelectionVersion: () => 7,
+    resolveConversationRunForSession: () => ({
+      sessionId: "ses-a",
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "latest",
+    }),
+    readConversationRunStatus: async () => {
+      reads += 1;
+      return reads === 1
+        ? {
+            runId: "run-queued",
+            status: "queued" as const,
+            stale: true,
+            observationSource: "durable-startup" as const,
+          }
+        : {
+            runId: "run-queued",
+            status: "running" as const,
+            stale: false,
+            observationSource: "lifecycle" as const,
+          };
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(controller.observeRuntimeReadiness("starting"), false);
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(reads, 1);
+  assert.equal(controller.observeRuntimeReadiness("ready"), true);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(reads, 2);
+  assert.equal(controller.observeRuntimeReadiness("ready"), false);
   assert.equal(reads, 2);
 });
 
@@ -1554,7 +1685,7 @@ test("terminal transcript recovery error is traced and retried once by the lifec
   assert.deepEqual(hydrated, ["ses-a"]);
 });
 
-test("latest probe releases its dedupe after a transient status failure", async () => {
+test("latest probe retries a transient status failure only after explicit resume", async () => {
   let reads = 0;
   const controller = createSessionLifecycleRecoveryController({
     sessionStatusById: () => ({}),
@@ -1577,8 +1708,11 @@ test("latest probe releases its dedupe after a transient status failure", async 
   });
 
   assert.equal(await controller.probeSelectedConversationLatestRun(), true);
-  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(await controller.probeSelectedConversationLatestRun(), false);
+  assert.equal(reads, 1);
+  assert.equal(await controller.resumeSelectedConversationLatestRun(), true);
   assert.equal(reads, 2);
+  assert.equal(await controller.probeSelectedConversationLatestRun(), false);
 });
 
 test("accepted run exhaustion stays explicit and resumes only on a relevant trigger", async () => {

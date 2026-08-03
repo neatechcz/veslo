@@ -783,6 +783,10 @@ fn resolve_workspace_activation(
     Ok((base_url, workspace_path, workspace_id, server_workspace_id))
 }
 
+// This keeps the boundary fields explicit at the only two callers: the
+// background UI activation and the traced synchronous command. A wrapper
+// struct would only hide independently optional trace and app handles.
+#[allow(clippy::too_many_arguments)]
 fn activate_workspace_blocking(
     base_url: &str,
     workspace_path: &str,

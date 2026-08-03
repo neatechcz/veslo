@@ -270,8 +270,12 @@ non-destructive terminal-handoff recovery. An empty new in-memory pool is only
 a candidate for that check: the orchestrator's durable engine-generation
 authority must also prove that the exact persisted process identity is absent.
 It rejects a live, changed, incomplete, or uninspectable generation and never
-stops a process for this path. Only a `lost_proven` result marks the exact old
-owner lost and makes the terminal result eligible for normal release.
+stops a process for this path. A historical owner that predates the generation
+table is handled as a narrow migration bridge: only direct OS confirmation that
+its recorded PID is absent may create a durable exited-generation record. A
+present PID is not adopted because it may have been reused. Only a
+`lost_proven` result marks the exact old owner lost and makes the terminal
+result eligible for normal release.
 The pooled and shared-engine topologies both publish the same durable
 generation lifecycle. Any current shared engine, including one still starting,
 is a conservative blocker for this recovery just like a current pooled entry.

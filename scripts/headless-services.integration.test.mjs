@@ -1262,7 +1262,7 @@ test("headless services resolve an existing conversation to its canonical OpenCo
   }
 });
 
-test("headless services make a queued existing-conversation submit idempotent before its upstream prompt starts", { timeout: 90_000 }, async () => {
+test("headless services reject a standalone queue-only intent before it can persist", { timeout: 90_000 }, async () => {
   const runtime = await startHeadlessServices();
   let preserve = true;
   try {
@@ -1280,35 +1280,20 @@ test("headless services make a queued existing-conversation submit idempotent be
     };
     queuedBody.options = { submitQueuePolicy: "server-queue-only" };
     const queued = await submitFirstMessage(runtime, workspace, clientMessageId, queuedBody);
-    assert.equal(queued.response.status, 202);
-    assert.equal(queued.body?.status, "queued");
-    assert.equal(queued.body?.conversationId, first.body.conversationId);
-    assert.equal(queued.body?.opencodeSessionId, first.body.opencodeSessionId);
-    assert.equal(typeof queued.body?.queueItemId, "string");
+    assert.equal(queued.response.status, 200);
+    assert.equal(queued.body?.status, "failed");
+    assert.equal(queued.body?.code, "lifecycle_unavailable");
+    assert.equal(queued.body?.draftDisposition, "restore");
 
     const replay = await submitFirstMessage(runtime, workspace, clientMessageId, queuedBody);
     assert.equal(replay.response.status, 200);
-    assert.deepEqual(replay.body, queued.body);
-
-    const conflictBody = structuredClone(queuedBody);
-    conflictBody.draft.text = "conflicting queued text";
-    conflictBody.draft.parts[0].text = "conflicting queued text";
-    const conflict = await submitFirstMessage(runtime, workspace, clientMessageId, conflictBody);
-    assert.equal(conflict.response.status, 409);
-    assert.equal(conflict.body?.code, "idempotency_conflict");
-
-    await waitForFakeRequest(runtime, (_entry, requests) =>
-      requests.filter((entry) =>
-        entry.method === "POST" && entry.path === `/session/${first.body.opencodeSessionId}/prompt_async`).length === 2);
-    const queueStatus = await queuedRunStatus(runtime, workspace, first.body.conversationId, queued.body.queueItemId);
-    assert.equal(queueStatus.response.status, 200);
-    assert.equal(queueStatus.body?.status, "submitted");
-    assert.equal(queueStatus.body?.clientMessageId, clientMessageId);
+    assert.equal(replay.body?.status, "failed");
+    assert.equal(replay.body?.code, "lifecycle_unavailable");
 
     const requests = await readFakeRequests(runtime);
     assert.equal(requests.filter((entry) => entry.method === "POST" && entry.path === "/session").length, 1);
     assert.equal(requests.filter((entry) =>
-      entry.method === "POST" && entry.path === `/session/${first.body.opencodeSessionId}/prompt_async`).length, 2);
+      entry.method === "POST" && entry.path === `/session/${first.body.opencodeSessionId}/prompt_async`).length, 1);
     assertAuthenticatedFakeRequests(requests);
     preserve = false;
   } catch (error) {
@@ -1318,7 +1303,7 @@ test("headless services make a queued existing-conversation submit idempotent be
   }
 });
 
-test("headless services resume a queued follow-up after a full topology restart", { timeout: 90_000 }, async () => {
+test("headless services do not replay a rejected standalone queue-only intent after a full topology restart", { timeout: 90_000 }, async () => {
   const profile = await createHeadlessServicesProfile();
   let firstRuntime;
   let secondRuntime;
@@ -1339,28 +1324,19 @@ test("headless services resume a queued follow-up after a full topology restart"
     };
     queuedBody.options = { submitQueuePolicy: "server-queue-only" };
     const queued = await submitFirstMessage(firstRuntime, firstWorkspace, clientMessageId, queuedBody);
-    assert.equal(queued.response.status, 202);
-    assert.equal(queued.body?.status, "queued");
+    assert.equal(queued.response.status, 200);
+    assert.equal(queued.body?.status, "failed");
+    assert.equal(queued.body?.code, "lifecycle_unavailable");
     await firstRuntime.close({ preserve: true });
 
     secondRuntime = await startHeadlessServices({ profile });
     const secondWorkspace = await activeWorkspace(secondRuntime);
-    await waitForFakeRequest(secondRuntime, (entry) =>
-      entry.method === "POST" && entry.path === `/session/${first.body.opencodeSessionId}/prompt_async`);
-    const queueStatus = await queuedRunStatus(
-      secondRuntime,
-      secondWorkspace,
-      first.body.conversationId,
-      queued.body.queueItemId,
-    );
-    assert.equal(queueStatus.response.status, 200);
-    assert.equal(queueStatus.body?.status, "submitted");
-    assert.equal(queueStatus.body?.clientMessageId, clientMessageId);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
 
     const requests = await readFakeRequests(secondRuntime);
     assert.equal(requests.some((entry) => entry.method === "POST" && entry.path === "/session"), false);
     assert.equal(requests.filter((entry) =>
-      entry.method === "POST" && entry.path === `/session/${first.body.opencodeSessionId}/prompt_async`).length, 1);
+      entry.method === "POST" && entry.path === `/session/${first.body.opencodeSessionId}/prompt_async`).length, 0);
     assertAuthenticatedFakeRequests(requests);
     preserve = false;
   } catch (error) {
@@ -1374,8 +1350,8 @@ test("headless services resume a queued follow-up after a full topology restart"
   }
 });
 
-test("headless services drain fast queued follow-ups for one conversation in FIFO run order", { timeout: 90_000 }, async () => {
-  const runtime = await startHeadlessServices({ fakeMode: "prompt-response-delay" });
+test("headless daemon services drain fast queued follow-ups for one conversation in FIFO run order", { timeout: 90_000 }, async () => {
+  const runtime = await startHeadlessDaemonServices({ fakeMode: "queue-lifecycle-delay" });
   let preserve = true;
   try {
     const workspace = await activeWorkspace(runtime);
@@ -1440,77 +1416,67 @@ test("headless services drain fast queued follow-ups for one conversation in FIF
   }
 });
 
-test("headless services surface a terminal queued failure and admit a new recovery message", { timeout: 90_000 }, async () => {
-  const profile = await createHeadlessServicesProfile();
-  let firstRuntime;
-  let secondRuntime;
+test("headless daemon services fence a recovery message behind an unresolved terminal handoff", { timeout: 90_000 }, async () => {
+  const runtime = await startHeadlessDaemonServices({ fakeMode: "queue-lifecycle-fail-second" });
   let preserve = true;
   try {
-    firstRuntime = await startHeadlessServices({ profile });
-    const firstWorkspace = await activeWorkspace(firstRuntime);
-    const first = await submitFirstMessage(firstRuntime, firstWorkspace, "service-gate-queue-failure-first");
+    const workspace = await activeWorkspace(runtime);
+    const first = await submitFirstMessage(runtime, workspace, "service-gate-queue-failure-first");
     assert.equal(first.response.status, 200);
     assert.equal(first.body?.status, "submitted");
-    await firstRuntime.close({ preserve: true });
 
-    secondRuntime = await startHeadlessServices({ profile, fakeMode: "prompt-500-once" });
-    const secondWorkspace = await activeWorkspace(secondRuntime);
     const failedMessageId = "service-gate-queue-failure";
-    const failedBody = submitBody(secondRuntime, failedMessageId);
+    const failedBody = submitBody(runtime, failedMessageId);
     failedBody.target = {
-      directory: secondRuntime.workspace,
+      directory: runtime.workspace,
       conversationId: first.body.conversationId,
       opencodeSessionId: first.body.opencodeSessionId,
     };
     failedBody.options = { submitQueuePolicy: "server-queue-only" };
-    const queued = await submitFirstMessage(secondRuntime, secondWorkspace, failedMessageId, failedBody);
+    const queued = await submitFirstMessage(runtime, workspace, failedMessageId, failedBody);
     assert.equal(queued.response.status, 202);
     assert.equal(queued.body?.status, "queued");
     const failedQueueStatus = await waitForQueuedRunStatus(
-      secondRuntime,
-      secondWorkspace,
+      runtime,
+      workspace,
       first.body.conversationId,
       queued.body.queueItemId,
       "failed",
     );
     assert.equal(failedQueueStatus.body?.clientMessageId, failedMessageId);
 
-    const replay = await submitFirstMessage(secondRuntime, secondWorkspace, failedMessageId, failedBody);
+    const replay = await submitFirstMessage(runtime, workspace, failedMessageId, failedBody);
     assert.equal(replay.response.status, 200);
     assert.equal(replay.body?.status, "failed");
     assert.equal(replay.body?.code, "queued_run_failed");
     assert.equal(replay.body?.draftDisposition, "restore");
 
     const recoveryMessageId = "service-gate-queue-failure-recovery";
-    const recoveryBody = submitBody(secondRuntime, recoveryMessageId);
+    const recoveryBody = submitBody(runtime, recoveryMessageId);
     recoveryBody.target = failedBody.target;
     recoveryBody.options = { submitQueuePolicy: "server-queue-only" };
-    const recovery = await submitFirstMessage(secondRuntime, secondWorkspace, recoveryMessageId, recoveryBody);
+    const recovery = await submitFirstMessage(runtime, workspace, recoveryMessageId, recoveryBody);
     assert.equal(recovery.response.status, 202);
     assert.equal(recovery.body?.status, "queued");
-    const submittedQueueStatus = await waitForQueuedRunStatus(
-      secondRuntime,
-      secondWorkspace,
+    const pendingQueueStatus = await waitForQueuedRunStatus(
+      runtime,
+      workspace,
       first.body.conversationId,
       recovery.body.queueItemId,
-      "submitted",
+      "pending",
     );
-    assert.equal(submittedQueueStatus.body?.clientMessageId, recoveryMessageId);
+    assert.equal(pendingQueueStatus.body?.clientMessageId, recoveryMessageId);
 
-    const requests = await readFakeRequests(secondRuntime);
-    assert.equal(requests.some((entry) => entry.method === "POST" && entry.path === "/session"), false);
+    const requests = await readFakeRequests(runtime);
+    assert.equal(requests.filter((entry) => entry.method === "POST" && entry.path === "/session").length, 1);
     assert.equal(requests.filter((entry) =>
       entry.method === "POST" && entry.path === `/session/${first.body.opencodeSessionId}/prompt_async`).length, 2);
     assertAuthenticatedFakeRequests(requests);
     preserve = false;
   } catch (error) {
-    const runtime = secondRuntime ?? firstRuntime;
-    if (runtime) throw preservedRuntimeError(runtime, error);
-    throw new Error(`Headless services queued-failure test failed; preserved runtime diagnostics at ${profile.root}`, { cause: error });
+    throw preservedRuntimeError(runtime, error);
   } finally {
-    await firstRuntime?.close({ preserve: true });
-    await secondRuntime?.close({ preserve: true });
-    if (!preserve) await profile.cleanup();
+    await runtime.close({ preserve });
   }
 });
 

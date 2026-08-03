@@ -37,7 +37,7 @@ test("background SSE events update scoped runtime state without merging messages
   );
   assert.match(
     appSource,
-    /onSessionBusyChange: \(sessionId, busy, sourceWorkspaceId\) => \{[\s\S]*const wsId = sourceWorkspaceId\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*workspaceStore\.markWorkspaceBusy\(wsId, sessionId\);[\s\S]*workspaceStore\.clearWorkspaceBusy\(wsId, sessionId\);[\s\S]*\},/,
+    /onSessionBusyChange: \(sessionId, busy, sourceWorkspaceId\) => \{[\s\S]*const wsId =[\s\S]*sourceWorkspaceId\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*workspaceStore\.markWorkspaceBusy\(wsId, sessionId\);[\s\S]*workspaceStore\.clearWorkspaceBusy\(wsId, sessionId\);[\s\S]*\},/,
     "app should use the SSE source workspace id instead of assuming the active workspace",
   );
 });

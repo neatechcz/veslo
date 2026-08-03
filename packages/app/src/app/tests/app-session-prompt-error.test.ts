@@ -33,7 +33,7 @@ test("prompt send failures only update the still-displayed conversation error st
   const helperSource = source.slice(helperStart, helperEnd);
   assert.match(
     helperSource,
-    /if \(!sendTargetStillDisplayed\(\)\) \{[\s\S]*deps\.recordSendTrace\("sendPrompt:error-skipped-stale-display"[\s\S]*return;[\s\S]*\}[\s\S]*const hintedMessage = deps\.addOpencodeCacheHint\(message\);[\s\S]*deps\.setError\(hintedMessage\);[\s\S]*deps\.sessionStoreAppendSessionErrorTurn\(materializedSessionID, hintedMessage\);/s,
+    /if \(!sendTargetStillDisplayed\(\)\) \{[\s\S]*deps\.recordSendTrace\("sendPrompt:error-skipped-stale-display"[\s\S]*return;[\s\S]*\}[\s\S]*const hintedMessage = deps\.addOpencodeCacheHint\(message\);[\s\S]*deps\.setError\(hintedMessage\);[\s\S]*deps\.sessionStoreAppendSessionErrorTurn\(\s*materializedSessionID,\s*hintedMessage,\s*\);/s,
     "stale sends should not write the active error banner or synthetic error turn",
   );
 });

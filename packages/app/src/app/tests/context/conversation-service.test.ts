@@ -1961,6 +1961,41 @@ test("latest status reads remember the resolved durable lifecycle run", async ()
   ]);
 });
 
+test("status reads reject a response for another workspace or conversation before caching a latest run", async () => {
+  const { service, rememberedLifecycleRuns, sendTraces } = createService({
+    runStatusResult: {
+      workspaceId: "server-ws-other",
+      conversationId: "conv-other",
+      runId: "run-foreign",
+    },
+  });
+
+  await assert.rejects(
+    service.readConversationRunStatus({
+      workspaceId: "app-ws",
+      directory: "/repo",
+      conversationId: "conv-a",
+      opencodeSessionId: "open-a",
+      sessionId: "sess-a",
+      runId: "latest",
+    }),
+    /scope mismatch/,
+  );
+  assert.deepEqual(rememberedLifecycleRuns, []);
+  const mismatch = sendTraces.find(
+    (entry) => entry.event === "readConversationRunStatus:scope-mismatch",
+  );
+  assert.deepEqual(mismatch?.payload, {
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    runId: "latest",
+    serverWorkspaceId: "server-ws",
+    responseWorkspaceId: "server-ws-other",
+    responseConversationId: "conv-other",
+  });
+});
+
 test("latest lifecycle resolution fails closed when the selected session lacks an exact workspace scope", () => {
   const { service, sendTraces } = createService();
 

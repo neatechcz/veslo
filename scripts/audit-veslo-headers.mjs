@@ -61,7 +61,7 @@ const allowRules = [
   {
     path: "packages/app/src/app/lib/opencode.ts",
     reason: "OpenCode generated provider header template owner",
-    tokens: ["x-veslo-session-id", "x-veslo-workspace-id"],
+    tokens: ["x-veslo-session-id", "x-veslo-workspace-id", "X-Veslo-Send-Trace-Id"],
   },
   {
     path: "packages/app/src/app/lib/ai-access.ts",
@@ -149,6 +149,7 @@ const allowRules = [
       "x-veslo-engine-pid",
       "x-veslo-engine-started-at",
       "x-veslo-engine-base-url",
+      "x-veslo-engine-if-running",
     ],
   },
   {
@@ -159,7 +160,21 @@ const allowRules = [
   {
     path: "packages/desktop/src-tauri/src/commands/orchestrator.rs",
     reason: "desktop orchestrator skill-view revision boundary",
-    tokens: ["x-veslo-skill-view-revision"],
+    tokens: ["x-veslo-skill-view-revision", "x-veslo-skill-authorization-revision"],
+  },
+  {
+    path: "packages/desktop/src-tauri/src/user_diagnostic_capture.rs",
+    reason: "desktop feedback diagnostic attachment identity boundary",
+    tokens: ["x-veslo-org-id"],
+  },
+  {
+    path: "packages/orchestrator/src/engine-launch-contract.ts",
+    reason: "orchestrator engine launch identity boundary",
+    tokens: [
+      "x-veslo-engine-skill-view-revision",
+      "x-veslo-engine-authorization-revision",
+      "x-veslo-engine-config-digest",
+    ],
   },
   {
     path: "packages/server/src/skill-registry-client.ts",

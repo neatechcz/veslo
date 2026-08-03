@@ -101,7 +101,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     conversationRunCompatibilityBridgeSource(),
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)/,
+    /deps\.stageAttachmentsIntoSessionDirectory\(\s*resolvedDraft,\s*materializedSessionID,\s*input\.sendPreflight,?\s*\)/,
     "send pipeline should stage attachments after session selection and before provider calls",
   );
 

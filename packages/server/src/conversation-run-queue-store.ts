@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
+import { createConversationRunOpenCodeMessageId } from "./conversation-run-message-id.js";
 
 export type ConversationRunQueueState = "pending" | "starting" | "submitted" | "failed" | "cancelled" | "conflict";
 export type ConversationRunQueueReadableState = Extract<ConversationRunQueueState, "pending" | "starting" | "failed">;
@@ -48,6 +49,16 @@ export type ConversationRunQueueAdmissionClaim = {
   reservation: ConversationWorkspaceRunReservation;
 };
 
+/**
+ * One read-only view of the durable evidence that can safely answer a run
+ * status request while the orchestrator lifecycle owner is unavailable.
+ */
+export type ConversationRunStatusSnapshot = {
+  item: ConversationRunQueueItem | null;
+  reservation: ConversationWorkspaceRunReservation | null;
+  terminalHandoff: ConversationTerminalHandoffBarrier | null;
+};
+
 export const CONVERSATION_RUN_QUEUE_READABLE_STATES = ["pending", "starting", "failed"] as const;
 const conversationRunQueueReadableStateSet = new Set<string>(CONVERSATION_RUN_QUEUE_READABLE_STATES);
 export const CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT = 100;
@@ -60,6 +71,8 @@ export type ConversationRunQueueItem = {
   directory: string;
   reservedRunId: string;
   clientMessageId: string | null;
+  /** Immutable at first queue claim so an uncertain submit retry keeps OpenCode idempotence. */
+  opencodeMessageId: string | null;
   origin: string | null;
   kind: string;
   bodyJson: string;
@@ -173,6 +186,11 @@ export type ConversationRunQueueStore = {
     conversationId: string,
     reservedRunId: string,
   ): ConversationRunQueueItem | null;
+  readConversationRunStatusSnapshot(input: {
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+  }): ConversationRunStatusSnapshot;
   listStarting(): ConversationRunQueueItem[];
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }>;
   reserveWorkspaceRun(input: {
@@ -300,6 +318,7 @@ type QueueRow = {
   directory: string;
   reserved_run_id: string;
   client_message_id: string | null;
+  opencode_message_id: string | null;
   origin: string | null;
   kind: string;
   body_json: string;
@@ -428,6 +447,7 @@ function createDatabase(dbPath: string): Database {
       directory TEXT NOT NULL,
       reserved_run_id TEXT NOT NULL,
       client_message_id TEXT,
+      opencode_message_id TEXT,
       origin TEXT,
       kind TEXT NOT NULL,
       body_json TEXT NOT NULL,
@@ -512,6 +532,9 @@ function ensureQueueSchema(db: Database): void {
   const columns = db.query<{ name: string }, []>("PRAGMA table_info(conversation_run_queue)").all();
   if (!columns.some((column) => column.name === "request_hash")) {
     db.exec("ALTER TABLE conversation_run_queue ADD COLUMN request_hash TEXT");
+  }
+  if (!columns.some((column) => column.name === "opencode_message_id")) {
+    db.exec("ALTER TABLE conversation_run_queue ADD COLUMN opencode_message_id TEXT");
   }
   if (!columns.some((column) => column.name === "idempotency_conflict_client_message_id")) {
     db.exec("ALTER TABLE conversation_run_queue ADD COLUMN idempotency_conflict_client_message_id TEXT");
@@ -628,6 +651,7 @@ function rowToItem(row: QueueRow): ConversationRunQueueItem {
     directory: row.directory,
     reservedRunId: row.reserved_run_id,
     clientMessageId: row.client_message_id,
+    opencodeMessageId: row.opencode_message_id?.trim() || null,
     origin: row.origin,
     kind: row.kind,
     bodyJson: row.body_json,
@@ -861,6 +885,7 @@ export function createConversationRunQueueStore(options?: {
             directory,
             reserved_run_id,
             client_message_id,
+            opencode_message_id,
             origin,
             kind,
             body_json,
@@ -874,7 +899,7 @@ export function createConversationRunQueueStore(options?: {
             submitted_at,
             completed_at,
             error
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12, 0, ?13, ?13, NULL, NULL, NULL, NULL)`,
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?10, ?11, 'pending', ?12, 0, ?13, ?13, NULL, NULL, NULL, NULL)`,
         ).run(
           queueItemId,
           workspaceId,
@@ -1065,6 +1090,91 @@ export function createConversationRunQueueStore(options?: {
       });
     },
 
+    readConversationRunStatusSnapshot(input) {
+      return withDb((db) => db.transaction(() => {
+        const workspaceId = normalizeText(input.workspaceId);
+        const conversationId = normalizeText(input.conversationId);
+        const runId = normalizeText(input.runId);
+        if (!workspaceId || !conversationId || !runId) {
+          throw new Error("workspaceId, conversationId, and runId are required");
+        }
+
+        // A status response must not splice a queue row from before a claim
+        // together with a reservation or handoff barrier from after it. Keep
+        // this read-only selection in one SQLite transaction so the route has
+        // one durable observation to serialize.
+        const itemRow = runId === "latest"
+          ? db.query<QueueRow, [string, string]>(
+            `SELECT queue.*
+             FROM conversation_run_queue AS queue
+             INNER JOIN conversation_workspace_run_reservation AS reservation
+               ON reservation.workspace_id = queue.workspace_id
+              AND reservation.conversation_id = queue.conversation_id
+              AND reservation.run_id = queue.reserved_run_id
+             WHERE queue.workspace_id = ?1
+               AND queue.conversation_id = ?2
+               AND queue.state IN ('pending', 'starting')
+               AND reservation.state IN (
+                 'starting', 'active', 'terminalization_pending',
+                 'terminal_handoff_pending', 'terminal_handoff_unresolved'
+               )
+             ORDER BY reservation.created_at ASC, queue.created_at ASC, queue.queue_item_id ASC
+             LIMIT 1`,
+          ).get(workspaceId, conversationId) ?? db.query<QueueRow, [string, string]>(
+            `SELECT * FROM conversation_run_queue
+             WHERE workspace_id = ?1
+               AND conversation_id = ?2
+               AND state IN ('pending', 'starting')
+             ORDER BY created_at ASC, queue_item_id ASC
+             LIMIT 1`,
+          ).get(workspaceId, conversationId)
+          : db.query<QueueRow, [string, string, string]>(
+            `SELECT * FROM conversation_run_queue
+             WHERE workspace_id = ?1
+               AND conversation_id = ?2
+               AND reserved_run_id = ?3
+             LIMIT 1`,
+          ).get(workspaceId, conversationId, runId);
+        const item = itemRow ? rowToItem(itemRow) : null;
+        const reservationRunId = item?.reservedRunId ?? (runId === "latest" ? null : runId);
+        const reservationRow = reservationRunId
+          ? db.query<WorkspaceRunReservationRow, [string, string, string]>(
+            `SELECT * FROM conversation_workspace_run_reservation
+             WHERE workspace_id = ?1
+               AND conversation_id = ?2
+               AND run_id = ?3
+             LIMIT 1`,
+          ).get(workspaceId, conversationId, reservationRunId)
+          : null;
+        const directBarrierRunId = item?.reservedRunId ?? (runId === "latest" ? null : runId);
+        const directBarrier = directBarrierRunId
+          ? db.query<TerminalHandoffBarrierRow, [string, string, string]>(
+            `SELECT * FROM conversation_terminal_handoff_barrier
+             WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3
+             LIMIT 1`,
+          ).get(workspaceId, conversationId, directBarrierRunId)
+          : null;
+        const activeBarrier = db.query<TerminalHandoffBarrierRow, [string, string]>(
+          `SELECT * FROM conversation_terminal_handoff_barrier
+           WHERE workspace_id = ?1
+             AND conversation_id = ?2
+             AND state IN ('observed', 'evidence_requested', 'unresolved')
+           ORDER BY created_at ASC, run_id ASC
+           LIMIT 1`,
+        ).get(workspaceId, conversationId);
+
+        return {
+          item,
+          reservation: reservationRow ? reservationRowToItem(reservationRow) : null,
+          // A successor is blocked by the active conversation fence. For an
+          // exact historical run with no queue item, expose only its own fence.
+          terminalHandoff: item
+            ? (activeBarrier ? terminalHandoffBarrierRowToItem(activeBarrier) : null)
+            : (directBarrier ? terminalHandoffBarrierRowToItem(directBarrier) : null),
+        };
+      })());
+    },
+
     listStarting() {
       return withDb((db) => {
         return db.query<QueueRow, []>(
@@ -1078,12 +1188,34 @@ export function createConversationRunQueueStore(options?: {
     claimStartingWithReservation(queueItemId) {
       return withDb((db) => db.transaction(() => {
         const timestamp = now();
+        const candidate = db.query<QueueRow, [string]>(
+          `SELECT * FROM conversation_run_queue
+           WHERE queue_item_id = ?1 AND state = 'pending'
+           LIMIT 1`,
+        ).get(queueItemId);
+        if (!candidate) return null;
+        // The timestamp must be chosen at first admission, not enqueue, so the
+        // prompt sorts after the assistant turn that completed while it waited.
+        // Persisting this exact value in the claim transaction makes retry and
+        // restart safe: a second submit can never get a different OpenCode id.
+        const admissionMessageId = candidate.opencode_message_id?.trim() || (
+          candidate.kind === "prompt_async" && candidate.client_message_id?.trim()
+            ? createConversationRunOpenCodeMessageId({
+              workspaceId: candidate.workspace_id,
+              engineSessionId: candidate.opencode_session_id,
+              clientMessageId: candidate.client_message_id,
+              runId: candidate.reserved_run_id,
+              timestamp,
+            })
+            : null
+        );
         const result = db.query(
           `UPDATE conversation_run_queue
            SET state = 'starting',
                attempts = attempts + 1,
                started_at = ?2,
                updated_at = ?2,
+               opencode_message_id = COALESCE(opencode_message_id, ?3),
                error = NULL
            WHERE queue_item_id = ?1
              AND state = 'pending'
@@ -1096,7 +1228,7 @@ export function createConversationRunQueueStore(options?: {
                  AND barrier.conversation_id = conversation_run_queue.conversation_id
                  AND barrier.state IN ('observed', 'evidence_requested', 'unresolved')
              )`,
-        ).run(queueItemId, timestamp);
+        ).run(queueItemId, timestamp, admissionMessageId);
         if (result.changes !== 1) return null;
         const row = db.query<QueueRow, [string]>(
           `SELECT * FROM conversation_run_queue WHERE queue_item_id = ?1 LIMIT 1`,

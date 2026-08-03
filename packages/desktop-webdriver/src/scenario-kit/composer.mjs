@@ -68,6 +68,40 @@ export async function writeComposer(browser, message, workspaceLabel) {
     fail(`Composer is not empty before writing the message for ${workspaceLabel}.`);
   }
   await composer.addValue(message);
+  const acceptedByNativeDriver = await browser.waitUntil(
+    async () => (await browser.execute(visibleComposerText, selectors.composerInput)).includes(message),
+    { timeout: 750, interval: 50 },
+  ).then(() => true, () => false);
+  if (acceptedByNativeDriver) return;
+
+  const dispatched = await browser.execute((selector, text) => {
+    const editor = Array.from(document.querySelectorAll(selector)).find((element) => {
+      const style = window.getComputedStyle(element);
+      return element.getClientRects().length > 0
+        && style.visibility !== "hidden"
+        && style.display !== "none";
+    });
+    if (!(editor instanceof HTMLElement) || editor.getAttribute("contenteditable") !== "true") {
+      return false;
+    }
+    // The loopback Tauri driver can acknowledge elementSendKeys for a
+    // freshly replaced contenteditable without delivering characters. Keep
+    // normal WebDriver input as the primary path; this fallback exercises the
+    // mounted Composer's real bubbling `input` handler, then all submission,
+    // server, and projection assertions stay on the visible app path.
+    if (!(editor.textContent ?? "").includes(text)) {
+      editor.textContent = text;
+      editor.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: text,
+      }));
+    }
+    return true;
+  }, selectors.composerInput, message);
+  if (!dispatched) {
+    fail(`Composer cannot accept driver input for ${workspaceLabel}.`);
+  }
   await browser.waitUntil(
     async () => (await browser.execute(visibleComposerText, selectors.composerInput)).includes(message),
     { timeout: 5_000, timeoutMsg: `Composer did not receive the message for ${workspaceLabel}.` },

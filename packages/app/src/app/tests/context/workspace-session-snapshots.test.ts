@@ -117,7 +117,7 @@ test("workspace switch clears stale selected session when incoming workspace has
   );
   assert.match(
     snapshotWiringSource,
-    /createWorkspaceSessionSnapshots\(\{[\s\S]*enabled: \(\) => activeWorkspaceIsHydrated\(\) && !workspaceStore\.connectingWorkspaceId\(\),[\s\S]*canClearSelectedSession: \(\{ selectedSessionId \}\) =>[\s\S]*activeWorkspaceIsHydrated\(\) && !isRouteSelectedSession\(selectedSessionId\),[\s\S]*clearSelectedSession: \(\) => \{[\s\S]*wsDebug\("snapshot:clearSelectedSession:app",[\s\S]*setSelectedSessionId\(null\);[\s\S]*debug: wsDebug,/s,
+    /createWorkspaceSessionSnapshots\(\{[\s\S]*enabled: \(\) =>[\s\S]*activeWorkspaceIsHydrated\(\) && !workspaceStore\.connectingWorkspaceId\(\),[\s\S]*canClearSelectedSession: \(\{ selectedSessionId \}\) =>[\s\S]*activeWorkspaceIsHydrated\(\) && !isRouteSelectedSession\(selectedSessionId\),[\s\S]*clearSelectedSession: \(\) => \{[\s\S]*wsDebug\("snapshot:clearSelectedSession:app",[\s\S]*setSelectedSessionId\(null\);[\s\S]*debug: wsDebug,/s,
     "app wiring should defer snapshot work during activation and avoid clearing an explicitly routed session before the route guard validates it",
   );
   assert.doesNotMatch(

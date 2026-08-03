@@ -305,7 +305,7 @@ test("session queue controller and live-read boundaries stay behind extracted ow
   );
   assert.match(
     source,
-    /const liveTranscriptReadPolicy = createLiveTranscriptReadPolicy\(\{[\s\S]*\}\);[\s\S]*const isLiveTranscriptReadAllowedForWorkspace = liveTranscriptReadPolicy\.isAllowedForWorkspace;[\s\S]*emitLiveTranscriptPolicyEvent: \(event\) => liveTranscriptReadPolicy\.emit\(event\),/s,
+    /const liveTranscriptReadPolicy\s*=\s*createLiveTranscriptReadPolicy\(\{[\s\S]*\}\);[\s\S]*const isLiveTranscriptReadAllowedForWorkspace\s*=\s*liveTranscriptReadPolicy\.isAllowedForWorkspace;[\s\S]*emitLiveTranscriptPolicyEvent:\s*\(event\)\s*=>\s*liveTranscriptReadPolicy\.emit\(event\),/s,
     "app.tsx should keep live transcript read policy in the policy owner and pass send workflow only an event sink",
   );
   assert.doesNotMatch(

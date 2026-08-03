@@ -153,7 +153,7 @@ test("session right-sidebar MCP capabilities refresh after MCP list updates", ()
   const sessionCapabilitiesSetup =
     appSource.match(/const sessionCapabilitiesStore = createSessionCapabilitiesStore\(\{[\s\S]*?\n  \}\);/)?.[0] ?? "";
 
-  assert.match(appSource, /const \[mcpLastUpdatedAt, setMcpLastUpdatedAt\] = createSignal<number \| null>\(null\)/);
+  assert.match(appSource, /const \[mcpLastUpdatedAt, setMcpLastUpdatedAt\] =[\s\S]*createSignal<number \| null>\([\s\S]*null,[\s\S]*\)/);
   assert.match(sessionCapabilitiesSetup, /mcpRefreshFingerprint:\s*mcpLastUpdatedAt/);
   assert.match(sessionCapabilitiesStoreSource, /mcpRefreshFingerprint\?:\s*Accessor<string \| number \| null \| undefined>/);
   assert.match(sessionCapabilitiesStoreSource, /mcpRefreshFingerprint:\s*deps\.mcpRefreshFingerprint\?\.\(\) \?\? ""/);
@@ -266,8 +266,8 @@ test("app prompts once to install the managed SharePoint MCP from the Den catalo
   assert.match(appSource, /markSharePointMcpPromptDismissed/);
   assert.match(appSource, /markSharePointMcpPromptAccepted/);
   assert.match(appSource, /await reloadWorkspaceEngine\(\)/);
-  assert.match(appSource, /markReloadRequired\("mcp", \{ type: "mcp", name: SHAREPOINT_MCP_ID, action: "added" \}\)/);
-  assert.match(appSource, /setMcpStatus\(t\("mcp\.sharepoint_prompt_reload_required"/);
+  assert.match(appSource, /markReloadRequired\(\s*"mcp",\s*\{[\s\S]*type: "mcp",[\s\S]*name: SHAREPOINT_MCP_ID,[\s\S]*action: "added",?[\s\S]*\}\s*\)/);
+  assert.match(appSource, /setMcpStatus\(\s*t\("mcp\.sharepoint_prompt_reload_required",\s*currentLocale\(\),?\s*\),?\s*\)/);
   assert.match(appSource, /data-testid="sharepoint-mcp-install-prompt"/);
   assert.match(appSource, /cancelTestId="sharepoint-mcp-install-dismiss"/);
   assert.match(appSource, /confirmTestId="sharepoint-mcp-install-confirm"/);

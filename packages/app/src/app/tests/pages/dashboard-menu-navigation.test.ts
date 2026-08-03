@@ -290,7 +290,7 @@ test("app derives the active workspace last session and passes it into Dashboard
   );
   assert.match(
     appSource,
-    /const currentWorkspaceStoreRef = \(\) => lateWorkspaceStore\.current\(\);[\s\S]*const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*\}\);[\s\S]*lateWorkspaceStore\.bind\(workspaceStore\);/,
+    /const currentWorkspaceStoreRef = \(\) => lateWorkspaceStore\.current\(\);[\s\S]*const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId:[\s\S]*currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)[\s\S]*\}\);[\s\S]*lateWorkspaceStore\.bind\(workspaceStore\);/,
     "app should wire active workspace last-session fallback through the workspace session selection controller",
   );
   assert.match(
