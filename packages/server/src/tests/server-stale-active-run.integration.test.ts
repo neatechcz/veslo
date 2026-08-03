@@ -70,7 +70,18 @@ async function loadOrchestratorRunModules() {
         directory: string;
         kind: RunKind;
       }): Promise<RunRecord>;
-      active(workspaceId: string, conversationId: string): Promise<{ record: RunRecord; stale: boolean } | null>;
+      active(workspaceId: string, conversationId: string): Promise<{
+        record: RunRecord;
+        stale: boolean;
+        runtimeReadyForSuccessor?: boolean | null;
+        unavailableReason?: string | null;
+      } | null>;
+      latest(workspaceId: string, conversationId: string): Promise<{
+        record: RunRecord;
+        stale: boolean;
+        runtimeReadyForSuccessor?: boolean | null;
+        unavailableReason?: string | null;
+      } | null>;
     },
     createRunStore: storeModule.createRunStore as (options: { dbPath: string }) => RunStoreLike,
     RunAlreadyActiveError: registryModule.RunAlreadyActiveError as {
@@ -319,12 +330,20 @@ describe("stale active run integration", () => {
           }
         }
 
-        const activeMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/active$/.exec(url.pathname);
-        if (request.method === "GET" && activeMatch) {
-          const conversationId = decodeURIComponent(activeMatch[1] ?? "");
-          const active = await registry.active("ws_1", conversationId);
-          if (!active) return Response.json({ error: "run not found" }, { status: 404 });
-          return Response.json({ ok: true, ...active.record, stale: active.stale });
+        const lifecycleMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/(active|latest)$/.exec(url.pathname);
+        if (request.method === "GET" && lifecycleMatch) {
+          const conversationId = decodeURIComponent(lifecycleMatch[1] ?? "");
+          const lifecycle = lifecycleMatch[2] === "active"
+            ? await registry.active("ws_1", conversationId)
+            : await registry.latest("ws_1", conversationId);
+          if (!lifecycle) return Response.json({ error: "run not found" }, { status: 404 });
+          return Response.json({
+            ok: true,
+            ...lifecycle.record,
+            stale: lifecycle.stale,
+            runtimeReadyForSuccessor: lifecycle.runtimeReadyForSuccessor,
+            unavailableReason: lifecycle.unavailableReason,
+          });
         }
 
         if (request.method === "POST" && url.pathname.includes("/failed")) {
@@ -411,15 +430,14 @@ describe("stale active run integration", () => {
     expect(runResults.every((result) => typeof result.payload?.runId === "string")).toBe(true);
     expect(submittedSessions.sort()).toEqual(sessionIds.filter(Boolean).sort());
     expect(submittedBodies).toHaveLength(instanceCount);
-    // One local candidate probe plus the server's admission and post-claim
-    // lifecycle observations are expected for each successor. The last status
-    // read is what keeps a simultaneous release/claim from admitting behind a
-    // stale terminal observation.
-    expect(statusProbeTimes).toHaveLength(instanceCount * 3);
-    expect(statusDirectoryQueries).toEqual(Array(instanceCount * 3).fill(workspaceRoot));
-    expect(statusDirectoryHeaders).toEqual(Array(instanceCount * 3).fill(workspaceRoot));
+    // One local candidate probe, direct active/latest classification, and the
+    // post-claim lifecycle read are expected for each successor. The latest
+    // read prevents a terminal predecessor being hidden by `active()`.
+    expect(statusProbeTimes).toHaveLength(instanceCount * 4);
+    expect(statusDirectoryQueries).toEqual(Array(instanceCount * 4).fill(workspaceRoot));
+    expect(statusDirectoryHeaders).toEqual(Array(instanceCount * 4).fill(workspaceRoot));
     expect(messageFallbackSessions.sort()).toEqual(
-      sessionIds.flatMap((sessionId) => [sessionId, sessionId, sessionId]).sort(),
+      sessionIds.flatMap((sessionId) => [sessionId, sessionId, sessionId, sessionId]).sort(),
     );
     expect(elapsedMs).toBeLessThan(messageFallbackDelayMs);
     expect(submittedTimes.every((submittedAt) =>
@@ -536,11 +554,20 @@ describe("stale active run integration", () => {
         if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
-        const activeMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/active$/.exec(url.pathname);
-        if (request.method === "GET" && activeMatch) {
-          const active = await registry.active("ws_1", decodeURIComponent(activeMatch[1] ?? ""));
-          if (!active) return Response.json({ error: "run not found" }, { status: 404 });
-          return Response.json({ ok: true, ...active.record, stale: active.stale });
+        const lifecycleMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/(active|latest)$/.exec(url.pathname);
+        if (request.method === "GET" && lifecycleMatch) {
+          const conversationId = decodeURIComponent(lifecycleMatch[1] ?? "");
+          const lifecycle = lifecycleMatch[2] === "active"
+            ? await registry.active("ws_1", conversationId)
+            : await registry.latest("ws_1", conversationId);
+          if (!lifecycle) return Response.json({ error: "run not found" }, { status: 404 });
+          return Response.json({
+            ok: true,
+            ...lifecycle.record,
+            stale: lifecycle.stale,
+            runtimeReadyForSuccessor: lifecycle.runtimeReadyForSuccessor,
+            unavailableReason: lifecycle.unavailableReason,
+          });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
           const body = await request.json() as Record<string, unknown>;

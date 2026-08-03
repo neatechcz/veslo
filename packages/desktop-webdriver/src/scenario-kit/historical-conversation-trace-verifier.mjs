@@ -3,6 +3,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const CONTINUATION_STEP = "historical.continuation.submit";
 const SERVER_TRACE_FILE = "send-workflow-trace.server.ndjson";
+const HISTORICAL_SCENARIOS = new Set([
+  "historical-conversation-roundtrip",
+  "historical-existing-conversation-continuation",
+]);
 // The visible assistant turn can settle shortly before the server's next
 // lifecycle reconcile records runtimeReadyForSuccessor. Keep that durable
 // handoff evidence in the same bounded operation window without turning the
@@ -76,7 +80,7 @@ const sortedWorkspaceCounts = (entries) => {
 
 export function verifyHistoricalConversationTrace({ artifact, traceEntries, traceReadError = false }) {
   const failures = [];
-  if (artifact?.scenario !== "historical-conversation-roundtrip") {
+  if (!HISTORICAL_SCENARIOS.has(artifact?.scenario)) {
     failures.push(failureRecord("unexpected_scenario"));
   }
   const startedAtMs = asTimestamp(artifact?.startedAt);
@@ -86,7 +90,7 @@ export function verifyHistoricalConversationTrace({ artifact, traceEntries, trac
   const continuationOffsetMs = Number.isFinite(continuationStep?.startedOffsetMs)
     ? continuationStep.startedOffsetMs
     : null;
-  const seedSessionId = asText(artifact?.result?.seedSessionId);
+  const seedSessionId = asText(artifact?.result?.seedSessionId) || asText(artifact?.result?.historicalSessionId);
   const interludeSessionId = asText(artifact?.result?.interludeSessionId);
   if (startedAtMs === null || finishedAtMs === null || finishedAtMs < startedAtMs) {
     failures.push(failureRecord("invalid_scenario_window"));
@@ -94,7 +98,8 @@ export function verifyHistoricalConversationTrace({ artifact, traceEntries, trac
   if (!continuationStep || continuationStep.status !== "passed" || continuationOffsetMs === null) {
     failures.push(failureRecord("missing_continuation_submit_step"));
   }
-  if (!seedSessionId || !interludeSessionId || seedSessionId === interludeSessionId) {
+  if (!seedSessionId || (artifact?.scenario === "historical-conversation-roundtrip" &&
+    (!interludeSessionId || seedSessionId === interludeSessionId))) {
     failures.push(failureRecord("invalid_scenario_session_identity"));
   }
   if (!Array.isArray(traceEntries)) {
@@ -200,7 +205,7 @@ export function verifyHistoricalConversationTrace({ artifact, traceEntries, trac
 
   return {
     schema: "veslo-historical-conversation-causal-summary/v1",
-    scenario: "historical-conversation-roundtrip",
+    scenario: artifact?.scenario ?? "historical-conversation-roundtrip",
     outcome: failures.length === 0 ? "passed" : "failed",
     window: {
       startedAt: artifact?.startedAt ?? null,

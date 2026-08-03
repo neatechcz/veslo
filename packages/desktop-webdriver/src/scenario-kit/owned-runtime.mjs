@@ -161,6 +161,19 @@ export async function stopOwnedDevRuntime(child, { platform = process.platform }
   throw new Error("The owned Veslo development runtime did not stop.");
 }
 
+// A restart scenario must release only the desktop and sidecars it started.
+// Keeping this teardown beside launch prevents a second phase from inheriting
+// a stale server/orchestrator while preserving any user-owned runtime.
+export async function stopOwnedLiveWebDriverRuntime(runtime, options = {}) {
+  const shutdown = await stopOwnedDevRuntime(runtime?.child, options);
+  const currentBackgroundPids = await ownedBackgroundProcessIds(options.platform);
+  await stopOwnedBackgroundProcesses(
+    currentBackgroundPids.filter((pid) => !runtime.preexistingBackgroundPids.includes(pid)),
+    options.platform,
+  );
+  return shutdown;
+}
+
 export async function startOwnedLiveWebDriverRuntime({
   runDirectory,
   env = process.env,
@@ -215,15 +228,10 @@ export async function withOwnedLiveWebDriverRuntime({ runDirectory, execute, ...
   } catch (error) {
     thrown = error instanceof Error ? error : new Error(String(error));
   } finally {
-    shutdown = await stopOwnedDevRuntime(runtime.child, options).catch((error) => {
+    shutdown = await stopOwnedLiveWebDriverRuntime(runtime, options).catch((error) => {
       if (!thrown) thrown = error instanceof Error ? error : new Error(String(error));
       return "failed";
     });
-    const currentBackgroundPids = await ownedBackgroundProcessIds(options.platform);
-    await stopOwnedBackgroundProcesses(
-      currentBackgroundPids.filter((pid) => !runtime.preexistingBackgroundPids.includes(pid)),
-      options.platform,
-    );
   }
   if (thrown) {
     thrown.runtimeInfoPath = runtime.runtimeInfoPath;

@@ -135,6 +135,11 @@ export function summarizeDiagnosticLine(line) {
   } else if (/opencode-json:fallback-orchestrator/.test(event)) kind = "opencode_fallback";
   else if (/opencode-json:error-status/.test(event)) kind = "opencode_status_error";
   else if (/lifecycle-reconcile/.test(event) && data.status === "failed") kind = "run_failed";
+  else if (event === "server:conversation-run:predecessor-classified" && data.classification === "terminal_handoff_unresolved") {
+    kind = "terminal_handoff_unresolved";
+  } else if (event === "server:conversation-run:queue-drain-terminal-handoff-unresolved") {
+    kind = "terminal_handoff_unresolved";
+  }
   if (!kind) return null;
 
   return {
@@ -147,6 +152,13 @@ export function summarizeDiagnosticLine(line) {
     code: textOrNull(data.code),
     reason: textOrNull(data.reason),
     terminalError: textOrNull(data.terminalError),
+    classification: textOrNull(data.classification),
+    runtimeReadyForSuccessor: data.runtimeReadyForSuccessor === true || data.runtimeReadyForSuccessor === false
+      ? data.runtimeReadyForSuccessor
+      : null,
+    engineOwnerState: textOrNull(data.engineOwnerState),
+    unavailableReason: textOrNull(data.unavailableReason),
+    generationEvidenceKind: textOrNull(data.generationEvidenceKind),
   };
 }
 
@@ -190,6 +202,18 @@ function textOrNull(value) {
   return text || null;
 }
 
+/**
+ * Keep the display cap for the whole capture and for an attributed workspace
+ * independent. A noisy unrelated workspace must not hide the feedback
+ * workspace's own anomalies.
+ */
+export function appendDiagnosticAnomaly(diagnostics, scopedSummary, anomaly, maxAnomalies) {
+  if (diagnostics.anomalies.length < maxAnomalies) diagnostics.anomalies.push(anomaly);
+  if (scopedSummary && scopedSummary.anomalies.length < maxAnomalies) {
+    scopedSummary.anomalies.push(anomaly);
+  }
+}
+
 export function buildRemoteProgram(options) {
   const request = JSON.stringify(options);
   return String.raw`
@@ -197,6 +221,7 @@ const { createHash, createDecipheriv, createSecretKey } = require("node:crypto")
 const { createRequire } = require("node:module");
 const { existsSync } = require("node:fs");
 const request = ${request};
+${appendDiagnosticAnomaly.toString()}
 const denPackagePath = ["/app/services/den/package.json", "/workspace/services/den/package.json"].find(existsSync);
 if (!denPackagePath) throw new Error("Den package manifest is unavailable in the running container.");
 const mysql = createRequire(denPackagePath)("mysql2");
@@ -232,6 +257,8 @@ function traceSummary(line) {
   else if (/opencode-json:fallback-orchestrator/.test(event)) kind = "opencode_fallback";
   else if (/opencode-json:error-status/.test(event)) kind = "opencode_status_error";
   else if (/lifecycle-reconcile/.test(event) && data.status === "failed") kind = "run_failed";
+  else if (event === "server:conversation-run:predecessor-classified" && data.classification === "terminal_handoff_unresolved") kind = "terminal_handoff_unresolved";
+  else if (event === "server:conversation-run:queue-drain-terminal-handoff-unresolved") kind = "terminal_handoff_unresolved";
   return { event, data, kind };
 }
 
@@ -280,6 +307,20 @@ function addOperationObservation(operations, entry, at) {
   if (entry.phase) existing.phases[entry.phase] = (existing.phases[entry.phase] || 0) + 1;
   if (entry.outcome) existing.outcomes[entry.outcome] = (existing.outcomes[entry.outcome] || 0) + 1;
   operations.set(key, existing);
+}
+
+function workspaceIdFor(trace, correlationResult) {
+  const fromTrace = optional(trace?.data?.workspaceId);
+  if (fromTrace) return fromTrace;
+  return correlationResult?.kind === "valid" ? correlationResult.value.scope.workspaceId : null;
+}
+
+function workspaceSummary(diagnostics, workspaceId) {
+  const existing = diagnostics.workspaceSummaries.get(workspaceId);
+  if (existing) return existing;
+  const summary = { eventCount: 0, signals: {}, anomalies: [] };
+  diagnostics.workspaceSummaries.set(workspaceId, summary);
+  return summary;
 }
 
 function optional(value) {
@@ -356,6 +397,9 @@ async function main() {
       operations: new Map(),
       malformedCorrelationEvents: 0,
       omittedRunObservations: 0,
+      captureWorkspaceIds: new Set(),
+      workspaceSummaries: new Map(),
+      unscopedEventCount: 0,
     };
     await streamRows(connection, "SELECT event_timestamp AS eventTimestamp, source, stream, level, sequence_no AS sequenceNo, payload_bytes AS payloadBytes, payload_ciphertext, payload_iv, payload_auth_tag FROM debug_log_event WHERE capture_id = ? ORDER BY event_timestamp ASC, sequence_no ASC", [report.diagnosticCaptureId], (row) => {
       diagnostics.eventCount += 1;
@@ -385,6 +429,13 @@ async function main() {
       } else if (correlationResult.kind === "valid") {
         addOperationObservation(diagnostics.operations, correlationResult.value, at);
       }
+      if (/user capture/i.test(String(row.source)) && correlationResult.kind === "valid" && correlationResult.value.scope.workspaceId) {
+        diagnostics.captureWorkspaceIds.add(correlationResult.value.scope.workspaceId);
+      }
+      const workspaceId = workspaceIdFor(trace, correlationResult);
+      const scopedSummary = workspaceId ? workspaceSummary(diagnostics, workspaceId) : null;
+      if (scopedSummary) scopedSummary.eventCount += 1;
+      else diagnostics.unscopedEventCount += 1;
       if (!trace) return;
       const runId = optional(trace.data.runId);
       if (runId) {
@@ -394,6 +445,7 @@ async function main() {
         } else {
           const run = existing ?? {
             runId,
+            workspaceId,
             clientMessageId: optional(trace.data.clientMessageId),
             origin: optional(trace.data.origin),
             firstAt: at,
@@ -404,6 +456,7 @@ async function main() {
             submitError: false,
           };
           run.lastAt = at;
+          run.workspaceId ||= workspaceId;
           run.clientMessageId ||= optional(trace.data.clientMessageId);
           run.origin ||= optional(trace.data.origin);
           run.providerStarted ||= trace.event === "server:ai-gateway:provider-hit";
@@ -415,8 +468,8 @@ async function main() {
       }
       if (!trace.kind) return;
       diagnostics.signals[trace.kind] = (diagnostics.signals[trace.kind] ?? 0) + 1;
-      if (diagnostics.anomalies.length < request.maxAnomalies) {
-        diagnostics.anomalies.push({
+      if (scopedSummary) scopedSummary.signals[trace.kind] = (scopedSummary.signals[trace.kind] ?? 0) + 1;
+      const anomaly = {
           at,
           kind: trace.kind,
           event: trace.event,
@@ -427,12 +480,41 @@ async function main() {
           code: optional(trace.data.code),
           reason: optional(trace.data.reason),
           terminalError: optional(trace.data.terminalError),
-        });
-      }
+          classification: optional(trace.data.classification),
+          runtimeReadyForSuccessor: trace.data.runtimeReadyForSuccessor === true || trace.data.runtimeReadyForSuccessor === false
+            ? trace.data.runtimeReadyForSuccessor
+            : null,
+          engineOwnerState: optional(trace.data.engineOwnerState),
+          unavailableReason: optional(trace.data.unavailableReason),
+          generationEvidenceKind: optional(trace.data.generationEvidenceKind),
+      };
+      appendDiagnosticAnomaly(diagnostics, scopedSummary, anomaly, request.maxAnomalies);
     });
+    const captureWorkspaceIds = [...diagnostics.captureWorkspaceIds].sort();
+    const primaryWorkspaceId = captureWorkspaceIds.length === 1 ? captureWorkspaceIds[0] : null;
+    const primaryWorkspaceSummary = primaryWorkspaceId
+      ? diagnostics.workspaceSummaries.get(primaryWorkspaceId) ?? null
+      : null;
+    const outOfScopeEventCount = primaryWorkspaceId
+      ? [...diagnostics.workspaceSummaries.entries()]
+        .filter(([workspaceId]) => workspaceId !== primaryWorkspaceId)
+        .reduce((total, [, summary]) => total + summary.eventCount, 0)
+      : 0;
+    const visibleRuns = primaryWorkspaceId
+      ? [...diagnostics.runs.values()].filter((run) => run.workspaceId === primaryWorkspaceId)
+      : [...diagnostics.runs.values()];
+    const {
+      runs: ignoredRuns,
+      operations: ignoredOperations,
+      workspaceSummaries: ignoredWorkspaceSummaries,
+      captureWorkspaceIds: ignoredCaptureWorkspaceIds,
+      ...diagnosticFields
+    } = diagnostics;
     result.diagnostics = {
-      ...diagnostics,
-      runs: [...diagnostics.runs.values()],
+      ...diagnosticFields,
+      signals: primaryWorkspaceSummary?.signals ?? diagnostics.signals,
+      anomalies: primaryWorkspaceSummary?.anomalies ?? diagnostics.anomalies,
+      runs: visibleRuns,
       operations: [
         {
           operation: { kind: "feedback", id: report.id },
@@ -446,6 +528,14 @@ async function main() {
         ...diagnostics.operations.values(),
       ],
       runsTruncated: diagnostics.omittedRunObservations > 0,
+      scope: {
+        primaryWorkspaceId,
+        captureWorkspaceIds,
+        primaryWorkspaceEventCount: primaryWorkspaceSummary?.eventCount ?? null,
+        outOfScopeEventCount,
+        unscopedEventCount: diagnostics.unscopedEventCount,
+        status: primaryWorkspaceId ? "scoped_from_user_capture" : "capture_scope_unavailable",
+      },
     };
     return result;
   } finally {
@@ -558,6 +648,11 @@ export function formatReport(report, includeFeedbackText) {
     `Diagnostics: ${diagnostics.eventCount} events, ${diagnostics.payloadBytes} bytes, ${diagnostics.firstEventAt ?? "unknown"} to ${diagnostics.lastEventAt ?? "unknown"}.`,
     `Sources: ${Object.entries(diagnostics.sources).map(([source, count]) => `${source}=${count}`).join(", ") || "none"}.`,
   );
+  if (diagnostics.scope?.status === "scoped_from_user_capture") {
+    lines.push(`Scope: workspace ${diagnostics.scope.primaryWorkspaceId}; ${diagnostics.scope.primaryWorkspaceEventCount ?? 0} scoped events, ${diagnostics.scope.outOfScopeEventCount ?? 0} out-of-scope events, ${diagnostics.scope.unscopedEventCount ?? 0} unscoped events.`);
+  } else if (diagnostics.scope) {
+    lines.push("Scope: user-capture workspace correlation unavailable; diagnostics are not attributed to one workspace.");
+  }
   const signals = Object.entries(diagnostics.signals);
   lines.push(`Signals: ${signals.length ? signals.map(([kind, count]) => `${kind}=${count}`).join(", ") : "none"}.`);
   const operations = diagnostics.operations ?? [];
@@ -577,7 +672,14 @@ export function formatReport(report, includeFeedbackText) {
   if (diagnostics.anomalies.length) {
     lines.push("Anomalies:");
     for (const anomaly of diagnostics.anomalies) {
-      lines.push(`- ${anomaly.at} ${anomaly.kind}: ${anomaly.event}${anomaly.status ? ` (${anomaly.status})` : ""}${anomaly.code ? ` [${anomaly.code}]` : ""}${anomaly.terminalError ? ` - ${anomaly.terminalError}` : ""}`);
+      const evidence = [
+        anomaly.classification ? `classification=${anomaly.classification}` : null,
+        anomaly.runtimeReadyForSuccessor === null ? null : `ready=${anomaly.runtimeReadyForSuccessor}`,
+        anomaly.engineOwnerState ? `owner=${anomaly.engineOwnerState}` : null,
+        anomaly.generationEvidenceKind ? `evidence=${anomaly.generationEvidenceKind}` : null,
+        anomaly.reason ? `reason=${anomaly.reason}` : null,
+      ].filter(Boolean).join(", ");
+      lines.push(`- ${anomaly.at} ${anomaly.kind}: ${anomaly.event}${anomaly.status ? ` (${anomaly.status})` : ""}${anomaly.code ? ` [${anomaly.code}]` : ""}${evidence ? ` — ${evidence}` : ""}${anomaly.terminalError ? ` - ${anomaly.terminalError}` : ""}`);
     }
   }
   return lines.join("\n");

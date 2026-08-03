@@ -4,6 +4,7 @@ import {
   ensureWritable,
   jsonResponse,
   readJsonBody,
+  requireClientScope,
 } from "../route-helpers.js";
 
 type SessionArchiveStore = {
@@ -23,12 +24,14 @@ export type SessionArchiveRouteDependencies = {
 
 export function registerSessionArchiveRoutes(routes: Route[], dependencies: SessionArchiveRouteDependencies): void {
   addRoute(routes, "GET", "/session-archives", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
     const ownerKey = dependencies.resolveArchiveOwnerKey(ctx.request);
     return jsonResponse({ items: await dependencies.sessionArchives.list(ownerKey) });
   });
 
   addRoute(routes, "PUT", "/session-archives/:sessionId", "client", async (ctx) => {
     ensureWritable(ctx.config);
+    requireClientScope(ctx, "collaborator");
     const ownerKey = dependencies.resolveArchiveOwnerKey(ctx.request);
     const body = await readJsonBody(ctx.request);
     const archivedAt = typeof body.archivedAt === "number" && Number.isFinite(body.archivedAt) ? body.archivedAt : Date.now();
@@ -69,6 +72,7 @@ export function registerSessionArchiveRoutes(routes: Route[], dependencies: Sess
 
   addRoute(routes, "DELETE", "/session-archives/:sessionId", "client", async (ctx) => {
     ensureWritable(ctx.config);
+    requireClientScope(ctx, "collaborator");
     const ownerKey = dependencies.resolveArchiveOwnerKey(ctx.request);
     const workspaceId = ctx.url.searchParams.get("workspaceId")?.trim() || undefined;
     const workspaceIdentity = ctx.url.searchParams.get("workspaceIdentity")?.trim() || undefined;

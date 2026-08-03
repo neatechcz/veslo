@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { buildRemoteCommand, buildRemoteProgram, feedbackDiagnosticArtifactName, formatReport, normalizeOperationCorrelation, parseArgs, summarizeDiagnosticLine, writeReportOutput } from "./feedback-diagnostic-report.mjs";
+import { appendDiagnosticAnomaly, buildRemoteCommand, buildRemoteProgram, feedbackDiagnosticArtifactName, formatReport, normalizeOperationCorrelation, parseArgs, summarizeDiagnosticLine, writeReportOutput } from "./feedback-diagnostic-report.mjs";
 
 test("feedback diagnostic report defaults to the latest feedback without exposing text", () => {
   assert.deepEqual(parseArgs([]), {
@@ -44,6 +44,33 @@ test("feedback diagnostic report summarizes provider start timeout without retur
     code: null,
     reason: null,
     terminalError: null,
+    classification: null,
+    runtimeReadyForSuccessor: null,
+    engineOwnerState: null,
+    unavailableReason: null,
+    generationEvidenceKind: null,
+  });
+});
+
+test("feedback diagnostic report names an unresolved historical handoff with its evidence fields", () => {
+  const summary = summarizeDiagnosticLine(
+    '[veslo:runtime-trace] server:conversation-run:predecessor-classified {"runId":"run_old","conversationId":"conv_old","classification":"terminal_handoff_unresolved","reason":"process_identity_unavailable","runtimeReadyForSuccessor":null,"engineOwnerState":"attached","unavailableReason":"no_current_engine"}',
+  );
+  assert.deepEqual(summary, {
+    kind: "terminal_handoff_unresolved",
+    event: "server:conversation-run:predecessor-classified",
+    runId: "run_old",
+    conversationId: "conv_old",
+    clientMessageId: null,
+    status: null,
+    code: null,
+    reason: "process_identity_unavailable",
+    terminalError: null,
+    classification: "terminal_handoff_unresolved",
+    runtimeReadyForSuccessor: null,
+    engineOwnerState: "attached",
+    unavailableReason: "no_current_engine",
+    generationEvidenceKind: null,
   });
 });
 
@@ -108,6 +135,34 @@ test("feedback diagnostic report prints authoritative operation groups when pres
   assert.match(output, /Operations: feedback:fb_1=1\./);
 });
 
+test("feedback diagnostic report labels a capture-scoped incident without mixing other workspaces", () => {
+  const output = formatReport({
+    feedback: { id: "fb_1", status: "stored", submittedAt: null, screenshotStatus: "captured" },
+    diagnostics: {
+      eventCount: 4, payloadBytes: 1, firstEventAt: null, lastEventAt: null, sources: {}, signals: {}, runs: [], runsTruncated: false,
+      operations: [], anomalies: [],
+      scope: {
+        status: "scoped_from_user_capture",
+        primaryWorkspaceId: "workspace_feedback",
+        primaryWorkspaceEventCount: 2,
+        outOfScopeEventCount: 1,
+        unscopedEventCount: 1,
+      },
+    },
+  }, false);
+  assert.match(output, /workspace workspace_feedback; 2 scoped events, 1 out-of-scope events, 1 unscoped events/);
+});
+
+test("feedback diagnostic report keeps primary-workspace anomalies after the capture-wide cap is full", () => {
+  const diagnostics = { anomalies: [{ kind: "outside" }] };
+  const primaryWorkspace = { anomalies: [] };
+
+  appendDiagnosticAnomaly(diagnostics, primaryWorkspace, { kind: "primary" }, 1);
+
+  assert.deepEqual(diagnostics.anomalies, [{ kind: "outside" }]);
+  assert.deepEqual(primaryWorkspace.anomalies, [{ kind: "primary" }]);
+});
+
 test("feedback diagnostic report writes to an explicit path and creates its parent directory", async () => {
   const directory = await mkdtemp(join(tmpdir(), "veslo-feedback-diagnostics-"));
   try {
@@ -157,4 +212,6 @@ test("feedback diagnostic report streams full event rows instead of retaining th
   assert.match(remoteProgram, /runsTruncated: diagnostics\.omittedRunObservations > 0/);
   assert.match(remoteProgram, /malformedCorrelationEvents/);
   assert.match(remoteProgram, /correlation_malformed/);
+  assert.match(remoteProgram, /scoped_from_user_capture/);
+  assert.match(remoteProgram, /outOfScopeEventCount/);
 });

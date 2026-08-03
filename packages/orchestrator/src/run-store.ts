@@ -73,6 +73,8 @@ export type RunStore = {
     engineBaseUrl: string;
   }): RunRecord | null;
   activeForEngineOwner(engineOwnerId: string): RunRecord[];
+  /** Terminal records that still claim an exact engine owner after restart. */
+  terminalAttachedWithEngineOwner(limit?: number): RunRecord[];
   activeCreatedBefore(createdBefore: number, limit?: number): RunRecord[];
   migrateWorkspaceId(sourceWorkspaceId: string, targetWorkspaceId: string): RunStoreWorkspaceMigrationResult;
   /**
@@ -456,6 +458,24 @@ export function createRunStore(options: { dbPath: string }): RunStore {
            ORDER BY created_at ASC`,
         ).all(engineOwnerId);
         return row.map(rowToRecord);
+      });
+    },
+
+    terminalAttachedWithEngineOwner(limit = 500) {
+      const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5_000) : 500;
+      return withDb((db) => {
+        const rows = db.query<RunRow, [number]>(
+          `SELECT * FROM conversation_run
+           WHERE engine_owner_state = 'attached'
+             AND engine_owner_id IS NOT NULL
+             AND engine_pid IS NOT NULL
+             AND engine_started_at IS NOT NULL
+             AND engine_base_url IS NOT NULL
+             AND status IN ('completed', 'failed', 'aborted')
+           ORDER BY completed_at ASC, created_at ASC
+           LIMIT ?1`,
+        ).all(safeLimit);
+        return rows.map(rowToRecord);
       });
     },
 

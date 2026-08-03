@@ -816,23 +816,43 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     workspaceId: string;
     startedAt: number;
   }): boolean {
+    return providerStartObservation(input).providerHitCount > 0;
+  }
+
+  function providerStartObservation(input: {
+    sessionId: string;
+    workspaceId: string;
+    startedAt: number;
+  }): {
+    providerHitScope: "session" | "workspace" | "none";
+    providerHitCount: number;
+    firstProviderHitAt: number | null;
+    lastProviderHitAt: number | null;
+  } {
     const normalizedSessionId = normalizeAiGatewaySessionId(input.sessionId);
     const normalizedWorkspaceId = input.workspaceId.trim();
     pruneSessionHits();
-    if (
-      normalizedSessionId &&
-      (sessionHits.get(normalizedSessionId) ?? []).some((hit) => hit.at >= input.startedAt)
-    ) {
-      return true;
+    const summarize = (scope: "session" | "workspace", hits: AiGatewaySessionHit[]) => {
+      const observed = hits.filter((hit) => hit.at >= input.startedAt);
+      return {
+        providerHitScope: observed.length > 0 ? scope : "none" as const,
+        providerHitCount: observed.length,
+        firstProviderHitAt: observed[0]?.at ?? null,
+        lastProviderHitAt: observed.at(-1)?.at ?? null,
+      };
+    };
+    if (normalizedSessionId) {
+      return summarize("session", sessionHits.get(normalizedSessionId) ?? []);
     }
-    if (normalizedSessionId) return false;
-    if (
-      normalizedWorkspaceId &&
-      (workspaceHits.get(normalizedWorkspaceId) ?? []).some((hit) => hit.at >= input.startedAt)
-    ) {
-      return true;
+    if (normalizedWorkspaceId) {
+      return summarize("workspace", workspaceHits.get(normalizedWorkspaceId) ?? []);
     }
-    return false;
+    return {
+      providerHitScope: "none",
+      providerHitCount: 0,
+      firstProviderHitAt: null,
+      lastProviderHitAt: null,
+    };
   }
 
   function logProviderStartTimeout(input: Record<string, unknown>): void {
@@ -859,11 +879,27 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     clientMessageId?: string | null;
     origin?: string | null;
     startedAt: number;
-  }): Promise<{ started: boolean; timeoutMs: number }> {
+  }): Promise<{
+    started: boolean;
+    timeoutMs: number;
+    providerHitScope: "session" | "workspace" | "none";
+    providerHitCount: number;
+    firstProviderHitAt: number | null;
+    lastProviderHitAt: number | null;
+  }> {
     const timeoutMs = providerStartTimeoutMs();
     const opencodeSessionId = input.opencodeSessionId.trim();
     const workspaceId = input.workspaceId.trim();
-    if (!opencodeSessionId) return { started: false, timeoutMs };
+    if (!opencodeSessionId) {
+      return {
+        started: false,
+        timeoutMs,
+        providerHitScope: "none",
+        providerHitCount: 0,
+        firstProviderHitAt: null,
+        lastProviderHitAt: null,
+      };
+    }
 
     logProviderStartWatch({
       workspaceId: input.workspaceId,
@@ -877,14 +913,23 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
 
     const deadline = now() + timeoutMs;
     while (now() < deadline) {
-      if (hasProviderHitAfter({ sessionId: opencodeSessionId, workspaceId, startedAt: input.startedAt })) {
-        return { started: true, timeoutMs };
+      const observation = providerStartObservation({
+        sessionId: opencodeSessionId,
+        workspaceId,
+        startedAt: input.startedAt,
+      });
+      if (observation.providerHitCount > 0) {
+        return { started: true, timeoutMs, ...observation };
       }
       await sleep(Math.min(100, Math.max(5, deadline - now())));
     }
 
-    const started = hasProviderHitAfter({ sessionId: opencodeSessionId, workspaceId, startedAt: input.startedAt });
-    if (!started) {
+    const observation = providerStartObservation({
+      sessionId: opencodeSessionId,
+      workspaceId,
+      startedAt: input.startedAt,
+    });
+    if (observation.providerHitCount === 0) {
       logProviderStartTimeout({
         workspaceId: input.workspaceId,
         conversationId: input.conversationId,
@@ -893,9 +938,10 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
         clientMessageId: input.clientMessageId ?? null,
         origin: input.origin ?? null,
         timeoutMs,
+        ...observation,
       });
     }
-    return { started, timeoutMs };
+    return { started: observation.providerHitCount > 0, timeoutMs, ...observation };
   }
 
   function resetForTests(): void {

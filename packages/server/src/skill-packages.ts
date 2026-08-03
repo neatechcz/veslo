@@ -48,6 +48,9 @@ type SkillPackageFileSystem = {
 const IGNORED_SYSTEM_FILE_NAMES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const TRANSIENT_RENAME_ERROR_CODES = new Set(["EACCES", "EBUSY", "ENOTEMPTY", "EPERM"]);
+const RENAME_ATTEMPTS = 3;
+const RENAME_RETRY_DELAY_MS = 25;
 const DEFAULT_FILE_SYSTEM: SkillPackageFileSystem = {
   mkdir: async (path, options) => {
     await mkdir(path, options);
@@ -67,6 +70,26 @@ const DEFAULT_FILE_SYSTEM: SkillPackageFileSystem = {
 };
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+const retryTransientRename = async (
+  fileSystem: SkillPackageFileSystem,
+  from: string,
+  to: string,
+): Promise<void> => {
+  for (let attempt = 1; attempt <= RENAME_ATTEMPTS; attempt += 1) {
+    try {
+      await fileSystem.rename(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const retryable = code && TRANSIENT_RENAME_ERROR_CODES.has(code);
+      if (!retryable || attempt === RENAME_ATTEMPTS) throw error;
+      // A filesystem can retain a just-written directory briefly (on Windows,
+      // Defender is one source). The package transaction is otherwise safe to retry.
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, RENAME_RETRY_DELAY_MS * attempt));
+    }
+  }
+};
 
 const comparePaths = (left: string, right: string) => {
   if (left < right) return -1;
@@ -362,18 +385,18 @@ const unpackSkillPackageWithFileSystem = async (
     // move the old target aside, then install the temp tree. Before install,
     // failures restore the backup; after install is visible, cleanup is best effort.
     try {
-      await fileSystem.rename(targetDir, backupDir);
+      await retryTransientRename(fileSystem, targetDir, backupDir);
       movedExistingTarget = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
 
     try {
-      await fileSystem.rename(tempDir, targetDir);
+      await retryTransientRename(fileSystem, tempDir, targetDir);
       installedTarget = true;
     } catch (error) {
       if (movedExistingTarget) {
-        await fileSystem.rename(backupDir, targetDir).catch(() => undefined);
+        await retryTransientRename(fileSystem, backupDir, targetDir).catch(() => undefined);
       }
       throw error;
     }
@@ -385,7 +408,7 @@ const unpackSkillPackageWithFileSystem = async (
     if (!installedTarget) {
       await fileSystem.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
       if (movedExistingTarget) {
-        await fileSystem.rename(backupDir, targetDir).catch(() => undefined);
+        await retryTransientRename(fileSystem, backupDir, targetDir).catch(() => undefined);
       }
     }
     throw error;

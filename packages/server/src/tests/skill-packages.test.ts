@@ -299,6 +299,70 @@ test("unpackSkillPackage restores the previous target if install rename fails af
   expect(await readFile(join(targetDir, "existing.txt"), "utf8")).toBe("keep me\n");
 });
 
+test("unpackSkillPackage retries transient rollback locks before restoring the previous target", async () => {
+  const targetDir = await tempDir("veslo-skill-package-unpack-rollback-transient-");
+  const sourceDir = await tempDir("veslo-skill-package-unpack-rollback-transient-source-");
+  await writeFile(join(targetDir, "existing.txt"), "keep me\n", "utf8");
+  await writeFile(join(sourceDir, "SKILL.md"), "# New target\n", "utf8");
+  const archive = await packSkillDirectory(sourceDir);
+  let movedExistingTarget = false;
+  let rollbackAttempts = 0;
+
+  await expect(
+    __skillPackageTestHooks.unpackSkillPackageWithFileSystem(
+      { archive, targetDir },
+      {
+        rename: async (from, to) => {
+          if (from === targetDir && to.includes(".backup-")) {
+            movedExistingTarget = true;
+          }
+          if (movedExistingTarget && from.includes(".tmp-") && to === targetDir) {
+            throw new Error("install rename failed");
+          }
+          if (movedExistingTarget && from.includes(".backup-") && to === targetDir && rollbackAttempts < 2) {
+            rollbackAttempts += 1;
+            const error = new Error("transient rollback lock") as NodeJS.ErrnoException;
+            error.code = "EPERM";
+            throw error;
+          }
+          await fsRename(from, to);
+        },
+      },
+    ),
+  ).rejects.toThrow(/install rename failed/);
+
+  expect(rollbackAttempts).toBe(2);
+  expect(await readFile(join(targetDir, "existing.txt"), "utf8")).toBe("keep me\n");
+});
+
+test("unpackSkillPackage retries a transient Windows target rename", async () => {
+  const targetDir = await tempDir("veslo-skill-package-unpack-transient-rename-");
+  const sourceDir = await tempDir("veslo-skill-package-unpack-transient-source-");
+  await writeFile(join(targetDir, "existing.txt"), "remove me\n", "utf8");
+  await writeFile(join(sourceDir, "SKILL.md"), "# Replaced\n", "utf8");
+  const archive = await packSkillDirectory(sourceDir);
+  let transientFailureInjected = false;
+
+  await __skillPackageTestHooks.unpackSkillPackageWithFileSystem(
+    { archive, targetDir },
+    {
+      rename: async (from, to) => {
+        if (!transientFailureInjected && from === targetDir && to.includes(".backup-")) {
+          transientFailureInjected = true;
+          const error = new Error("transient Windows directory lock") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        }
+        await fsRename(from, to);
+      },
+    },
+  );
+
+  expect(transientFailureInjected).toBe(true);
+  expect(await readFile(join(targetDir, "SKILL.md"), "utf8")).toBe("# Replaced\n");
+  await expect(readFile(join(targetDir, "existing.txt"), "utf8")).rejects.toThrow();
+});
+
 test("unpackSkillPackage ignores backup cleanup failure after the new target is installed", async () => {
   const targetDir = await tempDir("veslo-skill-package-unpack-cleanup-failure-");
   const sourceDir = await tempDir("veslo-skill-package-unpack-cleanup-source-");

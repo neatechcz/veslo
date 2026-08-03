@@ -47,6 +47,7 @@ Archived session management is surfaced through Settings rather than a permanent
 
 The archived list is derived from the app's archive model and can show whether an archived session is still available on the current device.
 Local desktop archive state can exist without cloud sign-in when a local Veslo server connection is available. Cloud or other remote archive state remains scoped to the signed-in account.
+Archive and restore mutations are ordered per archive owner, and legacy local archive state is merged into existing server state without discarding entries that cannot yet be resolved from the loaded session list.
 If all visible sessions in a local non-private workspace are archived, the workspace remains visible in the session sidebar as an empty project; Settings remains the place to restore the archived sessions themselves.
 
 ## Model and Thinking Controls

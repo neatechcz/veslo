@@ -34,6 +34,17 @@ test("historical trace verifier proves one direct continuation while retaining o
   assert.deepEqual(summary.evidence.outOfScopeFailureCounts, [{ workspaceId: "ws-other", count: 1 }]);
 });
 
+test("historical trace verifier accepts one direct continuation of an already persisted chat", () => {
+  const existingArtifact = {
+    ...artifact,
+    scenario: "historical-existing-conversation-continuation",
+    result: { historicalSessionId: "seed" },
+  };
+  const summary = verifyHistoricalConversationTrace({ artifact: existingArtifact, traceEntries: continuationTrace });
+  assert.equal(summary.outcome, "passed");
+  assert.equal(summary.scenario, "historical-existing-conversation-continuation");
+});
+
 test("historical trace verifier fails closed for a queued or ambiguous continuation", () => {
   const summary = verifyHistoricalConversationTrace({
     artifact,

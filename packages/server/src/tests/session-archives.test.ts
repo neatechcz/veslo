@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -157,4 +158,40 @@ test("session archive scoped delete preserves identity-only records outside the 
     afterIdentityDelete.map((entry) => entry.workspaceIdentity),
     ["local:/workspace/b"],
   );
+});
+
+test("session archive store serializes concurrent owner mutations", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "veslo-session-archives-"));
+  const store = createSessionArchiveStore({ dir });
+
+  const results = await Promise.all(
+    Array.from({ length: 8 }, (_, index) => store.put("usr_123", {
+      sessionId: `session-${index}`,
+      archivedAt: index,
+      titleSnapshot: `Session ${index}`,
+    })),
+  );
+
+  assert.equal(results.length, 8);
+  assert.deepEqual(
+    (await store.list("usr_123")).map((entry) => entry.sessionId).sort(),
+    Array.from({ length: 8 }, (_, index) => `session-${index}`),
+  );
+});
+
+test("session archive store surfaces corrupt state instead of overwriting it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "veslo-session-archives-"));
+  const ownerKey = "usr_123";
+  const path = join(dir, `${createHash("sha256").update(ownerKey).digest("hex")}.json`);
+  const corruptContent = '[{"sessionId":"valuable-record"}';
+  await writeFile(path, corruptContent, "utf8");
+  const store = createSessionArchiveStore({ dir });
+
+  await assert.rejects(() => store.list(ownerKey), SyntaxError);
+  await assert.rejects(() => store.put(ownerKey, {
+    sessionId: "new-record",
+    archivedAt: 2,
+    titleSnapshot: "New",
+  }), SyntaxError);
+  assert.equal(await readFile(path, "utf8"), corruptContent);
 });

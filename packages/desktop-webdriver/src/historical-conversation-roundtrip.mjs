@@ -19,11 +19,7 @@ function requiredOption(options, name) {
   return value;
 }
 
-export function parseHistoricalConversationRoundtripArguments(argv) {
-  const [runtimeInfoPath, ...tokens] = argv;
-  if (!normalize(runtimeInfoPath)) {
-    fail("Usage: pnpm test:webdriver:historical-conversation-roundtrip -- <runtime-info.json> --workspace <exact label> --seed-message <text> --interlude-message <text> --continuation-message <text>");
-  }
+export function parseHistoricalConversationOptions(tokens) {
   const options = {};
   const allowed = new Set([
     "--workspace",
@@ -40,11 +36,21 @@ export function parseHistoricalConversationRoundtripArguments(argv) {
     options[name] = value;
   }
   return {
-    runtimeInfoPath: resolve(runtimeInfoPath),
     workspace: requiredOption(options, "--workspace"),
     seedMessage: requiredOption(options, "--seed-message"),
     interludeMessage: requiredOption(options, "--interlude-message"),
     continuationMessage: requiredOption(options, "--continuation-message"),
+  };
+}
+
+export function parseHistoricalConversationRoundtripArguments(argv) {
+  const [runtimeInfoPath, ...tokens] = argv;
+  if (!normalize(runtimeInfoPath)) {
+    fail("Usage: pnpm test:webdriver:historical-conversation-roundtrip -- <runtime-info.json> --workspace <exact label> --seed-message <text> --interlude-message <text> --continuation-message <text>");
+  }
+  return {
+    runtimeInfoPath: resolve(runtimeInfoPath),
+    ...parseHistoricalConversationOptions(tokens),
   };
 }
 

@@ -16,7 +16,7 @@ export async function waitForAppReady(browser, timeout = 15_000) {
 // A fresh desktop runtime exposes WebDriver before the asynchronously hydrated
 // workspace list is ready. Keep this wait scoped to the visible sidebar rather
 // than treating normal cold-start hydration as a failed workspace scenario.
-export async function waitForWorkspaceVisible(browser, workspaceLabel, timeout = 30_000) {
+export async function waitForWorkspaceVisible(browser, workspaceLabel, timeout = 90_000) {
   await browser.waitUntil(
     () => browser.execute((label) => Array.from(document.querySelectorAll("[data-project-key]")).some((project) => {
       const style = window.getComputedStyle(project);

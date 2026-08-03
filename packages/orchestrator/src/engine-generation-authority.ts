@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
+import { dlopen, FFIType } from "bun:ffi";
 import { execFile } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
@@ -100,6 +102,63 @@ const validPid = (value: number | null | undefined): value is number =>
 const validStartedAt = (value: number | null | undefined): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
+// `struct proc_bsdinfo` from XNU `sys/proc_info.h`: sizeof is 136 on the
+// macOS architectures Veslo supports; the two uint64 start-time fields follow
+// the 120-byte fixed prefix. Keep these literal ABI values independent from
+// the parser test so a copied-but-wrong layout cannot validate itself.
+const MACOS_PROC_BSDINFO_SIZE = 136;
+const MACOS_PROC_BSDINFO_PID_OFFSET = 12;
+const MACOS_PROC_BSDINFO_START_SECONDS_OFFSET = 120;
+const MACOS_PROC_BSDINFO_START_MICROSECONDS_OFFSET = 128;
+const MACOS_PROC_PIDTBSDINFO = 3;
+
+type MacosProcPidInfo = (
+  pid: number,
+  flavor: number,
+  arg: bigint,
+  buffer: Uint8Array,
+  bufferSize: number,
+) => number;
+
+let macosProcPidInfo: MacosProcPidInfo | null | undefined;
+
+/** Parse Linux field 22 without being confused by spaces in a process name. */
+export function linuxProcStartTimeTicks(stat: string): string | null {
+  const closingName = stat.lastIndexOf(")");
+  if (closingName < 0) return null;
+  const fieldsFromState = stat.slice(closingName + 1).trim().split(/\s+/);
+  const startTime = fieldsFromState[19]?.trim() ?? "";
+  return /^\d+$/.test(startTime) ? startTime : null;
+}
+
+export function linuxProcReadFailure(
+  target: "boot_id" | "stat",
+  error: unknown,
+): ProcessInstanceObservation {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+  // `/proc/<pid>/stat` names the process being inspected. boot_id does not,
+  // so an ENOENT there is an environment failure, never death evidence.
+  return target === "stat" && code === "ENOENT"
+    ? { kind: "absent" }
+    : { kind: "unknown", reason: "inspection_failed" };
+}
+
+/**
+ * `proc_bsdinfo` is fixed-width on supported macOS architectures. Keep this
+ * parser isolated so a malformed native response fails closed instead of
+ * turning a PID lookup into process-death evidence.
+ */
+export function macosProcBsdInfoBirthToken(pid: number, buffer: Uint8Array): string | null {
+  if (buffer.byteLength < MACOS_PROC_BSDINFO_SIZE) return null;
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  if (view.getUint32(MACOS_PROC_BSDINFO_PID_OFFSET, true) !== pid) return null;
+  const seconds = view.getBigUint64(MACOS_PROC_BSDINFO_START_SECONDS_OFFSET, true);
+  const microseconds = view.getBigUint64(MACOS_PROC_BSDINFO_START_MICROSECONDS_OFFSET, true);
+  return `darwin:${seconds}:${microseconds}`;
+}
+
 function rowToRecord(row: GenerationRow): EngineGenerationRecord {
   const state: EngineGenerationState = row.state === "creating" || row.state === "live" ||
     row.state === "stopping" || row.state === "exited_confirmed" ||
@@ -184,16 +243,87 @@ async function inspectWindowsProcess(pid: number): Promise<ProcessInstanceObserv
   }
 }
 
+function loadMacosProcPidInfo(): MacosProcPidInfo | null {
+  if (macosProcPidInfo !== undefined) return macosProcPidInfo;
+  try {
+    macosProcPidInfo = dlopen("/usr/lib/libproc.dylib", {
+      proc_pidinfo: {
+        args: [FFIType.i32, FFIType.i32, FFIType.u64, FFIType.ptr, FFIType.i32],
+        returns: FFIType.i32,
+      },
+    }).symbols.proc_pidinfo as MacosProcPidInfo;
+  } catch {
+    macosProcPidInfo = null;
+  }
+  return macosProcPidInfo;
+}
+
+async function inspectMacosProcess(pid: number): Promise<ProcessInstanceObservation> {
+  const procPidInfo = loadMacosProcPidInfo();
+  if (!procPidInfo) return { kind: "unknown", reason: "inspection_failed" };
+  try {
+    const buffer = new Uint8Array(MACOS_PROC_BSDINFO_SIZE);
+    const written = procPidInfo(pid, MACOS_PROC_PIDTBSDINFO, 0n, buffer, buffer.byteLength);
+    const birthToken = written === buffer.byteLength
+      ? macosProcBsdInfoBirthToken(pid, buffer)
+      : null;
+    if (birthToken) return { kind: "alive", identity: { pid, birthToken } };
+    // `kill(pid, 0)` is never used as identity proof. It only distinguishes
+    // an absent PID from a failed libproc inspection after libproc returned no
+    // usable fixed-width record.
+    try {
+      process.kill(pid, 0);
+      return { kind: "unknown", reason: "inspection_failed" };
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: unknown }).code ?? "")
+        : "";
+      return code === "ESRCH"
+        ? { kind: "absent" }
+        : { kind: "unknown", reason: "inspection_failed" };
+    }
+  } catch {
+    return { kind: "unknown", reason: "inspection_failed" };
+  }
+}
+
+async function inspectLinuxProcess(pid: number): Promise<ProcessInstanceObservation> {
+  let stat: string;
+  try {
+    stat = await readFile(`/proc/${pid}/stat`, "utf8");
+  } catch (error) {
+    return linuxProcReadFailure("stat", error);
+  }
+
+  // A restricted container can hide boot_id while still exposing a live PID.
+  // Only the target process's missing stat entry proves absence; every other
+  // /proc read failure must preserve the terminal handoff fence.
+  let bootId: string;
+  try {
+    bootId = await readFile("/proc/sys/kernel/random/boot_id", "utf8");
+  } catch (error) {
+    return linuxProcReadFailure("boot_id", error);
+  }
+  const startTime = linuxProcStartTimeTicks(stat);
+  const normalizedBootId = bootId.trim();
+  if (!normalizedBootId || !startTime) return { kind: "unknown", reason: "inspection_failed" };
+  return { kind: "alive", identity: { pid, birthToken: `linux:${normalizedBootId}:${startTime}` } };
+}
+
 /**
- * The production resolver deliberately fails closed outside Windows until a
- * platform-specific exact process-birth implementation is added. `kill(pid,
- * 0)` cannot distinguish PID reuse and is therefore not authority evidence.
+ * Every production resolver returns a process-birth token, never merely PID
+ * liveness. `kill(pid, 0)` cannot distinguish PID reuse and is therefore not
+ * authority evidence; macOS uses it only to classify an already-failed libproc
+ * read as absent versus unknown.
  */
 export function createDefaultProcessInstanceInspector(): ProcessInstanceInspector {
   return {
-    inspect: async (pid) => process.platform === "win32"
-      ? await inspectWindowsProcess(pid)
-      : { kind: "unknown", reason: "unsupported" },
+    inspect: async (pid) => {
+      if (process.platform === "win32") return await inspectWindowsProcess(pid);
+      if (process.platform === "darwin") return await inspectMacosProcess(pid);
+      if (process.platform === "linux") return await inspectLinuxProcess(pid);
+      return { kind: "unknown", reason: "unsupported" };
+    },
   };
 }
 

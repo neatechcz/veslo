@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 
 import { ensureDir } from "./utils.js";
 
@@ -86,6 +86,7 @@ const matchesDeleteScope = (
 
 export function createSessionArchiveStore(options?: { dir?: string }) {
   const dir = resolve(options?.dir?.trim() || defaultArchiveStoreDir());
+  const ownerMutationTails = new Map<string, Promise<void>>();
 
   const ownerPath = (ownerKey: string) => {
     const digest = createHash("sha256").update(ownerKey).digest("hex");
@@ -97,24 +98,54 @@ export function createSessionArchiveStore(options?: { dir?: string }) {
     try {
       const raw = await readFile(path, "utf8");
       const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
+      if (!Array.isArray(parsed)) {
+        throw new Error(`Session archive store is not an array: ${path}`);
+      }
       return sortRecords(
         parsed
-          .filter((value): value is SessionArchiveRecord => Boolean(value && typeof value === "object"))
+          .map((value) => {
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw new Error(`Session archive store contains an invalid record: ${path}`);
+            }
+            return value as SessionArchiveRecord;
+          })
           .map((value) => normalizeRecord(value))
           .filter((value) => Boolean(value.sessionId)),
       );
-    } catch {
-      return [];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return [];
+      throw error;
     }
   };
 
   const writeOwnerRecords = async (ownerKey: string, records: SessionArchiveRecord[]) => {
     const path = ownerPath(ownerKey);
-    const tempPath = `${path}.tmp`;
+    const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
     await ensureDir(dirname(path));
-    await writeFile(tempPath, `${JSON.stringify(sortRecords(records), null, 2)}\n`, "utf8");
-    await rename(tempPath, path);
+    try {
+      await writeFile(tempPath, `${JSON.stringify(sortRecords(records), null, 2)}\n`, "utf8");
+      await rename(tempPath, path);
+    } finally {
+      await rm(tempPath, { force: true }).catch(() => undefined);
+    }
+  };
+
+  const withOwnerMutation = async <T>(ownerKey: string, task: () => Promise<T>): Promise<T> => {
+    const previous = ownerMutationTails.get(ownerKey) ?? Promise.resolve();
+    let release!: () => void;
+    const tail = new Promise<void>((resolveTail) => {
+      release = resolveTail;
+    });
+    ownerMutationTails.set(ownerKey, tail);
+    await previous;
+    try {
+      return await task();
+    } finally {
+      release();
+      if (ownerMutationTails.get(ownerKey) === tail) {
+        ownerMutationTails.delete(ownerKey);
+      }
+    }
   };
 
   return {
@@ -122,26 +153,30 @@ export function createSessionArchiveStore(options?: { dir?: string }) {
       return readOwnerRecords(ownerKey);
     },
     async put(ownerKey: string, input: SessionArchiveRecord): Promise<SessionArchiveRecord[]> {
-      const record = normalizeRecord(input);
-      const existing = await readOwnerRecords(ownerKey);
-      const key = archiveRecordKey(record);
-      const next = existing.filter((entry) => archiveRecordKey(entry) !== key);
-      next.push(record);
-      await writeOwnerRecords(ownerKey, next);
-      return sortRecords(next);
+      return withOwnerMutation(ownerKey, async () => {
+        const record = normalizeRecord(input);
+        const existing = await readOwnerRecords(ownerKey);
+        const key = archiveRecordKey(record);
+        const next = existing.filter((entry) => archiveRecordKey(entry) !== key);
+        next.push(record);
+        await writeOwnerRecords(ownerKey, next);
+        return sortRecords(next);
+      });
     },
     async delete(
       ownerKey: string,
       sessionId: string,
       options?: { workspaceId?: string | null; workspaceIdentity?: string | null; directory?: string | null },
     ): Promise<SessionArchiveRecord[]> {
-      const normalizedId = sessionId.trim();
-      const existing = await readOwnerRecords(ownerKey);
-      const next = existing.filter((entry) =>
-        !matchesDeleteScope(entry, normalizedId, options?.workspaceId, options?.workspaceIdentity, options?.directory)
-      );
-      await writeOwnerRecords(ownerKey, next);
-      return sortRecords(next);
+      return withOwnerMutation(ownerKey, async () => {
+        const normalizedId = sessionId.trim();
+        const existing = await readOwnerRecords(ownerKey);
+        const next = existing.filter((entry) =>
+          !matchesDeleteScope(entry, normalizedId, options?.workspaceId, options?.workspaceIdentity, options?.directory)
+        );
+        await writeOwnerRecords(ownerKey, next);
+        return sortRecords(next);
+      });
     },
   };
 }

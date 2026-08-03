@@ -5571,6 +5571,60 @@ async function runRouterDaemon(args: ParsedArgs) {
     });
   }
 
+  // An unclean orchestrator restart keeps terminal run history but loses the
+  // in-memory pool that owned its exact OpenCode process. Sweep only durable
+  // owner tuples and only mark one lost after generation authority proves the
+  // original process absent; an empty new pool is never that proof.
+  const priorGenerationSweep = {
+    inspected: 0,
+    markedLost: 0,
+    activePeerBlocked: 0,
+    unresolved: 0,
+  };
+  for (const record of runStore.terminalAttachedWithEngineOwner()) {
+    if (
+      !record.engineOwnerId ||
+      record.enginePid === null ||
+      record.engineStartedAt === null ||
+      !record.engineBaseUrl
+    ) {
+      continue;
+    }
+    priorGenerationSweep.inspected += 1;
+    if (runStore.activeForEngineOwner(record.engineOwnerId).length > 0) {
+      priorGenerationSweep.activePeerBlocked += 1;
+      continue;
+    }
+    const owner: RunEngineOwner = {
+      engineSlotId: record.engineSlotId,
+      engineOwnerId: record.engineOwnerId,
+      engineOwnerState: "attached",
+      enginePid: record.enginePid,
+      engineStartedAt: record.engineStartedAt,
+      engineBaseUrl: record.engineBaseUrl,
+    };
+    const currentEngine = usesSharedOpenCodeEngine(engineTopology.mode)
+      ? sharedOpenCodeEngine?.getRunning() ?? null
+      : pool.get(record.workspaceId) ?? null;
+    const sharedEngineStarting = usesSharedOpenCodeEngine(engineTopology.mode) &&
+      sharedOpenCodeEngine?.snapshot().pending === true;
+    const evidence = await engineGenerationAuthority.resolveOwnerEvidence({
+      owner,
+      currentPoolEntry: Boolean(currentEngine) || sharedEngineStarting,
+    });
+    if (evidence.kind === "lost_proven") {
+      const marked = runRegistry.markTerminalRunEngineLost({
+        workspaceId: record.workspaceId,
+        runId: record.runId,
+        ...owner,
+      });
+      if (marked) priorGenerationSweep.markedLost += 1;
+      continue;
+    }
+    priorGenerationSweep.unresolved += 1;
+  }
+  traceRuntime("orchestrator:run-lifecycle:prior-generation-terminal-owner-sweep", priorGenerationSweep);
+
   const resolveLifecycleRunEngineOwner = (workspaceId: string): RunEngineOwner => {
     if (usesSharedOpenCodeEngine(engineTopology.mode)) {
       // A shared-view fallback run must not claim the currently running
@@ -6375,6 +6429,7 @@ async function runRouterDaemon(args: ParsedArgs) {
                   error: evidence.kind === "live_or_ambiguous"
                     ? "terminal_handoff_recovery_owner_live_or_ambiguous"
                     : "terminal_handoff_recovery_owner_unknown",
+                  evidenceKind: evidence.kind,
                   reason: evidence.reason,
                 });
                 return;

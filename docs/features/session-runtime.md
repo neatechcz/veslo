@@ -440,6 +440,8 @@ Adding a local directory follows the same empty-workspace visibility rule. The d
 
 In local desktop mode, archive state can be persisted through the local Veslo server without a cloud sign-in by using a local desktop archive owner key. Remote/cloud archive state still requires a stable signed-in account identity so records do not mix across users.
 
+Archive mutations are serialized per archive owner in both the app and server. The server writes each complete owner snapshot through a unique temporary file and treats malformed or unreadable persisted state as an error instead of an empty archive. Legacy browser-storage migration merges missing records into an existing server archive and retains unresolved legacy session ids for a later retry.
+
 If archive semantics change, update this doc and `docs/features/settings-and-preferences.md`.
 
 ## Feedback

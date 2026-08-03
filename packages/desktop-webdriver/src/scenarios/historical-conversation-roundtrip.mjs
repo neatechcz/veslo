@@ -39,21 +39,35 @@ async function waitForHistoricalTranscript(browser, seedMessage, interludeMessag
   });
 }
 
-export async function executeHistoricalConversationRoundtripScenario(context, input) {
-  const { browser, step, snapshot, expectNoVisibleRuntimeError } = context;
+async function submitAndProveSingleAssistantTurn(context, message, workspace, stepPrefix) {
+  const { browser, step, expectNoVisibleRuntimeError } = context;
+  const assistantBaseline = await visibleAssistantMessages(browser);
+  const assistantErrorBaseline = await visibleAssistantErrors(browser);
+  await step(`${stepPrefix}.submit`, () => sendComposerMessage(browser, message, workspace));
+  await step(`${stepPrefix}.settle`, () => waitForSubmittedRunToSettle(browser, workspace));
+  const outputs = await step(`${stepPrefix}.output`, () =>
+    waitForVisibleAssistantOutputCount(browser, assistantBaseline, 1));
+  if (outputs.length !== 1) {
+    throw new Error(`${stepPrefix} produced ${outputs.length} new visible assistant turns instead of exactly one.`);
+  }
+  await expectNoVisibleRuntimeError();
+  await step(`${stepPrefix}.no-terminal-error`, () =>
+    waitForNoVisibleAssistantError(browser, assistantErrorBaseline));
+}
+
+export async function seedHistoricalConversationScenario(context, input) {
+  const { browser, step, expectNoVisibleRuntimeError } = context;
 
   await step("historical.seed.open-new", () =>
     selectWorkspaceForNewConversation(browser, input.workspace, { requireDistinctConversation: true }));
-  await step("historical.seed.submit", () => sendComposerMessage(browser, input.seedMessage, input.workspace));
-  await step("historical.seed.settle", () => waitForSubmittedRunToSettle(browser, input.workspace));
+  await submitAndProveSingleAssistantTurn(context, input.seedMessage, input.workspace, "historical.seed");
   const seedSessionId = await step("historical.seed.capture-session", async () => {
     return sidebarSessionIdForVisibleText(browser, input.seedMessage);
   });
 
   await step("historical.interlude.open-new", () =>
     selectWorkspaceForNewConversation(browser, input.workspace, { requireDistinctConversation: true }));
-  await step("historical.interlude.submit", () => sendComposerMessage(browser, input.interludeMessage, input.workspace));
-  await step("historical.interlude.settle", () => waitForSubmittedRunToSettle(browser, input.workspace));
+  await submitAndProveSingleAssistantTurn(context, input.interludeMessage, input.workspace, "historical.interlude");
   const interludeSessionId = await step("historical.interlude.capture-session", async () => {
     const sessionId = await sidebarSessionIdForVisibleText(browser, input.interludeMessage);
     if (!sessionId || sessionId === seedSessionId) {
@@ -61,6 +75,21 @@ export async function executeHistoricalConversationRoundtripScenario(context, in
     }
     return sessionId;
   });
+
+  await expectNoVisibleRuntimeError();
+  return {
+    workspace: input.workspace,
+    seedSessionId,
+    interludeSessionId,
+  };
+}
+
+export async function continueHistoricalConversationScenario(context, input, sessions) {
+  const { browser, step, snapshot, expectNoVisibleRuntimeError } = context;
+  const { seedSessionId, interludeSessionId } = sessions;
+  if (!seedSessionId || !interludeSessionId || seedSessionId === interludeSessionId) {
+    throw new Error("Historical continuation requires two distinct persisted conversation identities.");
+  }
 
   await step("historical.seed.reopen", () => openSidebarSession(browser, seedSessionId, input.workspace));
   await step("historical.seed.projection-isolated", () =>
@@ -88,4 +117,42 @@ export async function executeHistoricalConversationRoundtripScenario(context, in
     interludeSessionId,
     continuationOutputCount: outputs.length,
   };
+}
+
+export async function executeExistingHistoricalContinuationScenario(context, input) {
+  const { browser, step, snapshot, expectNoVisibleRuntimeError } = context;
+  await step("historical.existing.reopen", () => openSidebarSession(browser, input.sessionId, input.workspace));
+  await step("historical.existing.transcript-present", async () => {
+    await browser.waitUntil(async () => (await visibleUserTranscriptText(browser)).length > 0, {
+      timeout: 30_000,
+      interval: 150,
+      timeoutMsg: "Reopened historical conversation did not render an existing user transcript.",
+    });
+  });
+  await snapshot("historical-existing-reopened");
+
+  const assistantBaseline = await visibleAssistantMessages(browser);
+  const assistantErrorBaseline = await visibleAssistantErrors(browser);
+  await step("historical.continuation.submit", () =>
+    sendComposerMessage(browser, input.continuationMessage, input.workspace));
+  await step("historical.continuation.started", () => waitForRunToStart(browser));
+  await step("historical.continuation.settle", () => waitForSubmittedRunToSettle(browser, input.workspace));
+  const outputs = await step("historical.continuation.output", () =>
+    waitForVisibleAssistantOutputCount(browser, assistantBaseline, 1));
+  if (outputs.length !== 1) {
+    throw new Error(`Historical continuation produced ${outputs.length} new visible assistant turns instead of exactly one.`);
+  }
+  await expectNoVisibleRuntimeError();
+  await step("historical.continuation.no-terminal-error", () =>
+    waitForNoVisibleAssistantError(browser, assistantErrorBaseline));
+  return {
+    workspace: input.workspace,
+    historicalSessionId: input.sessionId,
+    continuationOutputCount: outputs.length,
+  };
+}
+
+export async function executeHistoricalConversationRoundtripScenario(context, input) {
+  const sessions = await seedHistoricalConversationScenario(context, input);
+  return continueHistoricalConversationScenario(context, input, sessions);
 }

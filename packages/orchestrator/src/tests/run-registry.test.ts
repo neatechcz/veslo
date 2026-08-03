@@ -96,6 +96,16 @@ function createMemoryRunStore(): RunStore {
         .sort((a, b) => a.createdAt - b.createdAt);
     },
 
+    terminalAttachedWithEngineOwner(limit = 500) {
+      return [...records.values()]
+        .filter((record) =>
+          !isActiveRunStatus(record.status) &&
+          record.engineOwnerState === "attached" &&
+          Boolean(record.engineOwnerId && record.enginePid && record.engineStartedAt && record.engineBaseUrl)
+        )
+        .slice(0, limit);
+    },
+
     activeCreatedBefore(createdBefore, limit = 200) {
       return [...records.values()]
         .filter((record) =>

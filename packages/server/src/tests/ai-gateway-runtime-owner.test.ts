@@ -773,4 +773,55 @@ describe("createAiGatewayRuntimeOwner", () => {
       startedAt: now - 1,
     })).toBe(true);
   });
+
+  test("provider-start observation distinguishes no gateway request from a session-correlated hit", async () => {
+    let now = 1_000;
+    const owner = createAiGatewayRuntimeOwner({
+      now: () => now,
+      providerStartTimeoutMs: () => 10,
+      sleep: async (delayMs) => {
+        now += delayMs;
+      },
+    });
+
+    const missing = await owner.waitForProviderStart({
+      workspaceId: "workspace-1",
+      conversationId: "conversation-1",
+      runId: "run-1",
+      opencodeSessionId: "session-1",
+      startedAt: now,
+    });
+    expect(missing).toEqual({
+      started: false,
+      timeoutMs: 10,
+      providerHitScope: "none",
+      providerHitCount: 0,
+      firstProviderHitAt: null,
+      lastProviderHitAt: null,
+    });
+
+    owner.recordSessionHit({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      requestId: "request-1",
+      provider: "openai",
+      gatewayPath: "/providers/openai/v1/chat/completions",
+      at: now,
+    });
+    const observed = await owner.waitForProviderStart({
+      workspaceId: "workspace-1",
+      conversationId: "conversation-1",
+      runId: "run-1",
+      opencodeSessionId: "session-1",
+      startedAt: now - 1,
+    });
+    expect(observed).toEqual({
+      started: true,
+      timeoutMs: 10,
+      providerHitScope: "session",
+      providerHitCount: 1,
+      firstProviderHitAt: now,
+      lastProviderHitAt: now,
+    });
+  });
 });

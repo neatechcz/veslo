@@ -5388,6 +5388,15 @@ describe("conversation routes", () => {
         if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
+        // Direct admission reads latest after an empty active read. Before the
+        // first register this fixture has no lifecycle record yet.
+        if (
+          request.method === "GET" &&
+          !conversationIdFromRegister &&
+          /^\/workspace\/ws_1\/conversations\/[^/]+\/runs\/(?:active|latest)$/.test(url.pathname)
+        ) {
+          return Response.json({ error: "run not found" }, { status: 404 });
+        }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
           events.push("orchestrator-register");
           if (registerShouldConflict) {
@@ -5829,6 +5838,13 @@ describe("conversation routes", () => {
           lifecycleStatus = "running";
           return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: lifecycleStatus, stale: false });
         }
+        if (
+          request.method === "GET" &&
+          !conversationIdFromRegister &&
+          /^\/workspace\/ws_1\/conversations\/[^/]+\/runs\/(?:active|latest)$/.test(url.pathname)
+        ) {
+          return Response.json({ error: "run not found" }, { status: 404 });
+        }
         if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/failed`) {
           failedRequests.push(body);
           lifecycleStatus = "failed";
@@ -6034,6 +6050,9 @@ describe("conversation routes", () => {
           const conversationId = decodeURIComponent(activeMatch[1] ?? "");
           const runId = decodeURIComponent(activeMatch[2] ?? "");
           const match = registeredRuns.find((item) => item.conversationId === conversationId && item.runId === runId);
+          if (!match && (runId === "active" || runId === "latest")) {
+            return Response.json({ error: "run not found" }, { status: 404 });
+          }
           return Response.json({
             ok: true,
             workspaceId: "ws_1",
@@ -6132,11 +6151,13 @@ describe("conversation routes", () => {
     const [firstRun, secondRun] = await Promise.all([firstRunPromise, secondRunPromise]);
     expect(firstRun.status).toBe(200);
     expect(secondRun.status).toBe(200);
-    await new Promise((resolve) => setTimeout(resolve, 180));
     // The placeholder was intentionally rejected as ambiguous, so neither
     // accepted run can observe a provider request. Both must terminalize
     // rather than retaining a durable reservation indefinitely.
-    expect(failedRequests).toHaveLength(2);
+    await waitForCondition(
+      () => failedRequests.length === 2,
+      { timeoutMs: 1_000, message: "expected both ambiguous placeholder runs to terminalize" },
+    );
   });
 
   test("managed prompt provider-start watchdog matches placeholder session ids by workspace header", async () => {
@@ -6255,6 +6276,13 @@ describe("conversation routes", () => {
           conversationIdFromRegister = typeof body?.conversationId === "string" ? body.conversationId : "";
           lifecycleStatus = "running";
           return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: lifecycleStatus, stale: false });
+        }
+        if (
+          request.method === "GET" &&
+          !conversationIdFromRegister &&
+          /^\/workspace\/ws_1\/conversations\/[^/]+\/runs\/(?:active|latest)$/.test(url.pathname)
+        ) {
+          return Response.json({ error: "run not found" }, { status: 404 });
         }
         if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/failed`) {
           failedRequests.push(body);
@@ -6500,15 +6528,8 @@ describe("conversation routes", () => {
         if (request.method === "GET" && activeMatch?.[1]) {
           const workspaceId = decodeURIComponent(activeMatch[1]);
           const state = runsByWorkspace.get(workspaceId);
-          if (!state && activeMatch[3] === "active") {
-            return Response.json({
-              ok: true,
-              workspaceId,
-              conversationId: decodeURIComponent(activeMatch[2] ?? ""),
-              runId: null,
-              status: "completed",
-              stale: false,
-            });
+          if (!state && (activeMatch[3] === "active" || activeMatch[3] === "latest")) {
+            return Response.json({ error: "run not found" }, { status: 404 });
           }
           return Response.json({
             ok: true,

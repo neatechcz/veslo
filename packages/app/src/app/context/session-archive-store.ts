@@ -13,6 +13,7 @@ import {
   normalizeVesloServerResponseDiagnostic,
   VesloServerError,
 } from "../lib/veslo-server/transport";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import type {
   VesloServerClient,
   VesloServerStatus,
@@ -51,6 +52,7 @@ export type SessionArchiveStoreDeps = {
   getError?: Accessor<string | null | undefined>;
   isTauriRuntime?: () => boolean;
   recordBootstrapDiagnostic?: (eventType: string, payload: unknown) => Promise<void> | void;
+  recordTrace?: (event: string, payload: Record<string, unknown>) => void;
   storage?: SessionArchiveStorage | null;
   effect?: (fn: () => void) => void;
 };
@@ -135,6 +137,26 @@ function buildSessionArchiveClientKey(client: SessionArchiveClient, ownerKey: st
   return JSON.stringify([client.baseUrl, client.token ?? "", ownerKey]);
 }
 
+function writeLegacyArchivedSessionIds(storage: SessionArchiveStorage | null, sessionIds: string[]) {
+  if (!storage) return;
+  try {
+    storage.setItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY, JSON.stringify(sessionIds));
+  } catch {
+    // ignore
+  }
+}
+
+function archiveMutationErrorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof VesloServerError) {
+    return {
+      errorKind: "veslo_server",
+      errorCode: error.code ?? null,
+      errorStatus: error.status ?? null,
+    };
+  }
+  return { errorKind: "unknown" };
+}
+
 function sameSessionArchiveSnapshot(
   left: SessionArchiveSnapshot | null,
   right: SessionArchiveSnapshot | null,
@@ -153,6 +175,9 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
   const [sessionArchiveRecords, setSessionArchiveRecords] = createSignal<VesloSessionArchiveRecord[]>([]);
   const [sessionArchiveReady, setSessionArchiveReady] = createSignal(false);
   const [sessionArchivePendingIds, setSessionArchivePendingIds] = createSignal<Set<string>>(new Set());
+  const recordArchiveTrace = deps.recordTrace ?? ((event, payload) => {
+    recordSendWorkflowTrace("session-archive", event, payload);
+  });
 
   const applySessionArchiveRecords = (items: VesloSessionArchiveRecord[]) => {
     setSessionArchiveRecords(sortArchivedSessionsByRecency(items));
@@ -223,6 +248,28 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
   let lastStartedSessionArchiveGeneration: number | null = null;
   let sessionArchiveLoadInFlight: SessionArchiveSnapshot | null = null;
   let sessionArchiveMigrationRunning: SessionArchiveSnapshot | null = null;
+  const sessionArchiveMutationTails = new Map<string, Promise<void>>();
+
+  const enqueueSessionArchiveMutation = async (
+    snapshot: SessionArchiveSnapshot,
+    task: () => Promise<void>,
+  ) => {
+    const previous = sessionArchiveMutationTails.get(snapshot.key) ?? Promise.resolve();
+    let release!: () => void;
+    const tail = new Promise<void>((resolveTail) => {
+      release = resolveTail;
+    });
+    sessionArchiveMutationTails.set(snapshot.key, tail);
+    await previous;
+    try {
+      await task();
+    } finally {
+      release();
+      if (sessionArchiveMutationTails.get(snapshot.key) === tail) {
+        sessionArchiveMutationTails.delete(snapshot.key);
+      }
+    }
+  };
 
   const resolveSessionArchiveScope = () => {
     const client = deps.vesloArchiveClient();
@@ -408,17 +455,16 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
       return;
     }
 
-    if (records.length > 0) {
-      clearLegacyArchivedSessionIds(storage);
-      writeArchiveMigrationDone(storage, snapshot.ownerKey);
-      return;
-    }
-
-    const migrationRecords = buildLegacyArchiveMigration(legacyIds, groups);
+    const archivedLegacyIds = new Set(records.map((record) => record.sessionId.trim()).filter(Boolean));
+    const migrationRecords = buildLegacyArchiveMigration(legacyIds, groups)
+      .filter((record) => !archivedLegacyIds.has(record.sessionId));
+    const resolvedLegacyIds = new Set([
+      ...archivedLegacyIds,
+      ...migrationRecords.map((record) => record.sessionId),
+    ]);
+    const remainingLegacyIds = legacyIds.filter((sessionId) => !resolvedLegacyIds.has(sessionId));
     if (migrationRecords.length === 0) {
-      const allGroupsSettled =
-        groups.length > 0 && groups.every((group) => group.status === "ready" || group.status === "error");
-      if (allGroupsSettled) {
+      if (remainingLegacyIds.length === 0) {
         clearLegacyArchivedSessionIds(storage);
         writeArchiveMigrationDone(storage, snapshot.ownerKey);
       }
@@ -428,22 +474,28 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
     sessionArchiveMigrationRunning = snapshot;
     void (async () => {
       try {
-        let latest: VesloSessionArchiveRecord[] = records;
-        for (const record of migrationRecords) {
-          const { sessionId, ...payload } = record;
-          latest = (await snapshot.client.putSessionArchive(sessionId, payload)).items ?? [];
-          if (
-            !isCurrentSessionArchiveSnapshot(snapshot)
-            || !isConfirmedSessionArchiveSnapshot(snapshot)
-          ) {
-            return;
+        await enqueueSessionArchiveMutation(snapshot, async () => {
+          let latest: VesloSessionArchiveRecord[] = records;
+          for (const record of migrationRecords) {
+            const { sessionId, ...payload } = record;
+            latest = (await snapshot.client.putSessionArchive(sessionId, payload)).items ?? [];
+            if (
+              !isCurrentSessionArchiveSnapshot(snapshot)
+              || !isConfirmedSessionArchiveSnapshot(snapshot)
+            ) {
+              return;
+            }
+            sessionArchiveRecordsRevision += 1;
           }
-          sessionArchiveRecordsRevision += 1;
-        }
-        if (!applyCurrentSessionArchiveRecords(snapshot, latest)) return;
+          if (!applyCurrentSessionArchiveRecords(snapshot, latest)) return;
+        });
         if (!isConfirmedSessionArchiveSnapshot(snapshot)) return;
-        clearLegacyArchivedSessionIds(storage);
-        writeArchiveMigrationDone(storage, snapshot.ownerKey);
+        if (remainingLegacyIds.length === 0) {
+          clearLegacyArchivedSessionIds(storage);
+          writeArchiveMigrationDone(storage, snapshot.ownerKey);
+        } else {
+          writeLegacyArchivedSessionIds(storage, remainingLegacyIds);
+        }
       } catch (error) {
         if (isCurrentSessionArchiveSnapshot(snapshot)) {
           deps.reportError(error, "sessionArchives.migrateLegacy");
@@ -463,6 +515,12 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
   ) => {
     const snapshot = syncSessionArchiveScope();
     if (!snapshot) {
+      recordArchiveTrace("session-archive:mutation-rejected", {
+        operation: "archive",
+        workspaceId,
+        sessionId,
+        reason: "archive_scope_unavailable",
+      });
       deps.setError("A Veslo server connection or cloud sign-in is required to archive sessions.");
       return;
     }
@@ -480,20 +538,73 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
       }
       return true;
     }) ?? null;
-    if (!group || !session) return;
-
-    await withPendingArchivedSession(workspaceId, sessionId, async () => {
-      const response = await snapshot.client.putSessionArchive(
+    if (!group || !session) {
+      recordArchiveTrace("session-archive:mutation-rejected", {
+        operation: "archive",
+        workspaceId,
         sessionId,
-        buildSessionArchiveSnapshot({ session, workspace: group.workspace }),
-      );
-      if (!applyCurrentSessionArchiveMutation(snapshot, response.items ?? [])) return;
-      clearOwnSessionArchiveLoadError();
-      if (isConfirmedSessionArchiveSnapshot(snapshot)) {
-        clearLegacyArchivedSessionIds(storage);
-        writeArchiveMigrationDone(storage, snapshot.ownerKey);
+        scopeGeneration: snapshot.generation,
+        reason: group ? "session_target_unavailable" : "workspace_target_unavailable",
+      });
+      return;
+    }
+
+    await withPendingArchivedSession(workspaceId, sessionId, () => enqueueSessionArchiveMutation(snapshot, async () => {
+      recordArchiveTrace("session-archive:mutation-requested", {
+        operation: "archive",
+        workspaceId,
+        sessionId,
+        scopeGeneration: snapshot.generation,
+        hasConversationTarget: Boolean(targetConversationId),
+        hasOpenCodeSessionTarget: Boolean(targetOpencodeSessionId),
+      });
+      try {
+        const response = await snapshot.client.putSessionArchive(
+          sessionId,
+          buildSessionArchiveSnapshot({ session, workspace: group.workspace }),
+        );
+        const itemCount = response.items?.length ?? 0;
+        recordArchiveTrace("session-archive:mutation-committed", {
+          operation: "archive",
+          workspaceId,
+          sessionId,
+          scopeGeneration: snapshot.generation,
+          itemCount,
+        });
+        if (!applyCurrentSessionArchiveMutation(snapshot, response.items ?? [])) {
+          recordArchiveTrace("session-archive:projection-superseded", {
+            operation: "archive",
+            workspaceId,
+            sessionId,
+            scopeGeneration: snapshot.generation,
+          });
+          return;
+        }
+        clearOwnSessionArchiveLoadError();
+        if (
+          isConfirmedSessionArchiveSnapshot(snapshot)
+          && readLegacyArchivedSessionIds(storage).length === 0
+        ) {
+          writeArchiveMigrationDone(storage, snapshot.ownerKey);
+        }
+        recordArchiveTrace("session-archive:projection-applied", {
+          operation: "archive",
+          workspaceId,
+          sessionId,
+          scopeGeneration: snapshot.generation,
+          itemCount,
+        });
+      } catch (error) {
+        recordArchiveTrace("session-archive:mutation-failed", {
+          operation: "archive",
+          workspaceId,
+          sessionId,
+          scopeGeneration: snapshot.generation,
+          ...archiveMutationErrorDetails(error),
+        });
+        throw error;
       }
-    }, null, targetDirectory);
+    }), null, targetDirectory);
   };
 
   const unarchiveSession = async (
@@ -504,6 +615,12 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
   ) => {
     const snapshot = syncSessionArchiveScope();
     if (!snapshot) {
+      recordArchiveTrace("session-archive:mutation-rejected", {
+        operation: "unarchive",
+        workspaceId,
+        sessionId,
+        reason: "archive_scope_unavailable",
+      });
       deps.setError("A Veslo server connection or cloud sign-in is required to unarchive sessions.");
       return;
     }
@@ -521,21 +638,65 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
       );
     const workspaceIdentity = normalizedIdentityHint || archiveItem?.workspaceIdentity?.trim() || undefined;
 
-    await withPendingArchivedSession(workspaceId, sessionId, async () => {
-      const deleteOptions: { workspaceId: string; workspaceIdentity?: string; directory?: string } = {
+    await withPendingArchivedSession(workspaceId, sessionId, () => enqueueSessionArchiveMutation(snapshot, async () => {
+      recordArchiveTrace("session-archive:mutation-requested", {
+        operation: "unarchive",
         workspaceId,
-      };
-      if (workspaceIdentity) deleteOptions.workspaceIdentity = workspaceIdentity;
-      if (targetDirectory) deleteOptions.directory = targetDirectory;
+        sessionId,
+        scopeGeneration: snapshot.generation,
+        hasDirectoryTarget: Boolean(targetDirectory),
+        hasWorkspaceIdentity: Boolean(workspaceIdentity),
+      });
+      try {
+        const deleteOptions: { workspaceId: string; workspaceIdentity?: string; directory?: string } = {
+          workspaceId,
+        };
+        if (workspaceIdentity) deleteOptions.workspaceIdentity = workspaceIdentity;
+        if (targetDirectory) deleteOptions.directory = targetDirectory;
 
-      const response = await snapshot.client.deleteSessionArchive(sessionId, deleteOptions);
-      if (!applyCurrentSessionArchiveMutation(snapshot, response.items ?? [])) return;
-      clearOwnSessionArchiveLoadError();
-      if (isConfirmedSessionArchiveSnapshot(snapshot)) {
-        clearLegacyArchivedSessionIds(storage);
-        writeArchiveMigrationDone(storage, snapshot.ownerKey);
+        const response = await snapshot.client.deleteSessionArchive(sessionId, deleteOptions);
+        const itemCount = response.items?.length ?? 0;
+        recordArchiveTrace("session-archive:mutation-committed", {
+          operation: "unarchive",
+          workspaceId,
+          sessionId,
+          scopeGeneration: snapshot.generation,
+          itemCount,
+        });
+        if (!applyCurrentSessionArchiveMutation(snapshot, response.items ?? [])) {
+          recordArchiveTrace("session-archive:projection-superseded", {
+            operation: "unarchive",
+            workspaceId,
+            sessionId,
+            scopeGeneration: snapshot.generation,
+          });
+          return;
+        }
+        clearOwnSessionArchiveLoadError();
+        if (
+          isConfirmedSessionArchiveSnapshot(snapshot)
+          && readLegacyArchivedSessionIds(storage).length === 0
+        ) {
+          writeArchiveMigrationDone(storage, snapshot.ownerKey);
+        }
+        recordArchiveTrace("session-archive:projection-applied", {
+          operation: "unarchive",
+          workspaceId,
+          sessionId,
+          scopeGeneration: snapshot.generation,
+          itemCount,
+        });
+      } catch (error) {
+        recordArchiveTrace("session-archive:mutation-failed", {
+          operation: "unarchive",
+          workspaceId,
+          sessionId,
+          scopeGeneration: snapshot.generation,
+          ...archiveMutationErrorDetails(error),
+        });
+        throw error;
       }
-    }, workspaceIdentity, targetDirectory || archiveItem?.resolvedDirectory);
+    }), workspaceIdentity, targetDirectory || archiveItem?.resolvedDirectory);
   };
 
   return {

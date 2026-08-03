@@ -229,7 +229,47 @@ test("archive store handles missing client or owner without mutating records", a
   });
 });
 
-test("legacy archive migration is marked complete only after sidebar groups settle", async () => {
+test("archive mutations trace the durable commit and the visible projection without recording content", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const { client } = createArchiveClient();
+      const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: () => client,
+        sessionArchiveOwnerKey: () => "owner-a",
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: () => 1,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: () => {},
+        setError: () => {},
+        recordTrace: (event, payload) => traces.push({ event, payload }),
+        storage: createMemoryStorage(),
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+      await store.archiveSession("ws-1", "sess-a");
+      await store.unarchiveSession("ws-1", "sess-a");
+
+      const hasTrace = (event: string, operation: string) => traces.some((entry) =>
+        entry.event === event && entry.payload.operation === operation,
+      );
+      assert.equal(hasTrace("session-archive:mutation-requested", "archive"), true);
+      assert.equal(hasTrace("session-archive:mutation-committed", "archive"), true);
+      assert.equal(hasTrace("session-archive:projection-applied", "archive"), true);
+      assert.equal(hasTrace("session-archive:mutation-requested", "unarchive"), true);
+      assert.equal(hasTrace("session-archive:mutation-committed", "unarchive"), true);
+      assert.equal(hasTrace("session-archive:projection-applied", "unarchive"), true);
+      assert.equal(traces.some(({ payload }) => "directory" in payload || "title" in payload), false);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("legacy archive migration retains unresolved ids until their sidebar session is available", async () => {
   await createRoot(async (dispose) => {
     try {
       const storage = createMemoryStorage({
@@ -263,6 +303,50 @@ test("legacy archive migration is marked complete only after sidebar groups sett
       await effects.flush();
 
       assert.equal(calls.puts.length, 0);
+      assert.equal(storage.getItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY), JSON.stringify(["missing-session"]));
+      assert.equal(storage.getItem(`${SESSION_ARCHIVE_MIGRATION_KEY_PREFIX}owner-a`), null);
+
+      setGroups([readyGroup({
+        sessions: [{ id: "missing-session", title: "Recovered", directory: "/repo" }],
+      })]);
+      await effects.flush();
+
+      assert.equal(calls.puts.length, 1);
+      assert.equal(calls.puts[0]?.sessionId, "missing-session");
+      assert.equal(storage.getItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY), null);
+      assert.equal(storage.getItem(`${SESSION_ARCHIVE_MIGRATION_KEY_PREFIX}owner-a`), "true");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("legacy archive migration merges into an existing server archive", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const storage = createMemoryStorage({
+        [LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY]: JSON.stringify(["sess-a"]),
+      });
+      const effects = createManualEffectRunner();
+      const { client, calls } = createArchiveClient([archiveRecord("server-session")]);
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: () => client,
+        sessionArchiveOwnerKey: () => "owner-a",
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: () => 1,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: () => {},
+        setError: () => {},
+        storage,
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+
+      assert.equal(calls.puts.length, 1);
+      assert.equal(calls.puts[0]?.sessionId, "sess-a");
+      assert.deepEqual(store.sessionArchives().map((item) => item.sessionId).sort(), ["server-session", "sess-a"]);
       assert.equal(storage.getItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY), null);
       assert.equal(storage.getItem(`${SESSION_ARCHIVE_MIGRATION_KEY_PREFIX}owner-a`), "true");
     } finally {
@@ -573,6 +657,61 @@ test("archive mutation wins over an older list response in the same archive scop
       await effects.flush();
 
       assert.deepEqual(store.sessionArchives().map((item) => item.sessionId), ["sess-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("archive store serializes same-scope mutations so an older snapshot cannot arrive last", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const firstPut = createDeferred<{ items: VesloSessionArchiveRecord[] }>();
+      const secondPut = createDeferred<{ items: VesloSessionArchiveRecord[] }>();
+      const putCalls: string[] = [];
+      const client: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "archive-token",
+        listSessionArchives: async () => ({ items: [] }),
+        putSessionArchive: async (sessionId) => {
+          putCalls.push(sessionId);
+          return sessionId === "sess-a" ? firstPut.promise : secondPut.promise;
+        },
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: () => client,
+        sessionArchiveOwnerKey: () => "owner-a",
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: () => 1,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup({
+          sessions: [
+            { id: "sess-a", title: "A", directory: "/repo" },
+            { id: "sess-b", title: "B", directory: "/repo" },
+          ],
+        })],
+        reportError: () => {},
+        setError: () => {},
+        storage: createMemoryStorage(),
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+      const archiveA = store.archiveSession("ws-1", "sess-a");
+      const archiveB = store.archiveSession("ws-1", "sess-b");
+      await settleEffects();
+      assert.deepEqual(putCalls, ["sess-a"]);
+
+      firstPut.resolve({ items: [archiveRecord("sess-a")] });
+      await settleEffects();
+      assert.deepEqual(putCalls, ["sess-a", "sess-b"]);
+
+      secondPut.resolve({ items: [archiveRecord("sess-a"), archiveRecord("sess-b", { archivedAt: 20 })] });
+      await Promise.all([archiveA, archiveB]);
+
+      assert.deepEqual(store.sessionArchives().map((item) => item.sessionId), ["sess-b", "sess-a"]);
     } finally {
       dispose();
     }

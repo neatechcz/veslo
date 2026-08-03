@@ -34,8 +34,14 @@ test("historical conversation scenario reopens a visible old sidebar row and rej
   assert.match(scenarioSource, /waitForHistoricalTranscript/);
   assert.match(scenarioSource, /!messages\.some\(\(text\) => text\.includes\(interludeMessage\)\)/);
   assert.match(scenarioSource, /historical\.continuation\.output/);
+  assert.match(scenarioSource, /step\(`\$\{stepPrefix\}\.output`/);
+  assert.match(scenarioSource, /submitAndProveSingleAssistantTurn\(context, input\.seedMessage/);
+  assert.match(scenarioSource, /submitAndProveSingleAssistantTurn\(context, input\.interludeMessage/);
   assert.match(scenarioSource, /outputs\.length !== 1/);
   assert.match(scenarioSource, /waitForNoVisibleAssistantError/);
+  const workspaceSource = readFileSync(resolve(__dirname, "./scenario-kit/workspace.mjs"), "utf8");
+  assert.match(workspaceSource, /setWorkspaceConversationListExpanded\(browser, workspaceLabel, true\)/);
+  assert.match(workspaceSource, /Historical conversation is not visible in/);
   const launcherSource = readFileSync(resolve(__dirname, "./historical-conversation-roundtrip.mjs"), "utf8");
   assert.match(launcherSource, /verifyHistoricalConversationArtifact\(result\.artifactPath\)/);
   assert.match(launcherSource, /causal\.summary\.outcome !== "passed"/);

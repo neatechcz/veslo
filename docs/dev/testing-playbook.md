@@ -228,6 +228,20 @@ pnpm test:webdriver:historical-conversation-trace-verify -- `
   .tmp/webdriver-scenarios/<historical-scenario-artifact>.json
 ```
 
+For the stronger preserved-state regression, the owned scenario starts a
+desktop, creates both conversations, stops only that owned runtime, then starts
+a new desktop against the same development profile before continuing the first
+conversation. It has the same direct-admission causal proof:
+
+```powershell
+$env:WEBDRIVER_ALLOW_MUTATION = "1"
+pnpm test:webdriver:historical-conversation-restart-owned -- `
+  --workspace "Disposable workspace" `
+  --seed-message "Reply with exactly: historical restart seed" `
+  --interlude-message "Reply with exactly: historical restart interlude" `
+  --continuation-message "Reply with exactly: historical restart continuation"
+```
+
 The scenario fails if the reopened chat displays the intervening user's
 transcript, or if its continuation ends with a visible app or assistant error.
 The read-only verifier derives the continuation's durable scope from the
@@ -235,6 +249,19 @@ server trace and requires one direct admission, one successful OpenCode submit,
 and terminal readiness. It writes a redacted local companion summary, records
 unrelated workspace failures separately, and fails closed if the trace cannot
 prove the exact operation.
+
+To audit an already persisted conversation, first select its visible sidebar
+row through the desktop UI and use its visible `data-session-id` with an
+explicit workspace. The scenario proves that an existing transcript rendered
+before it sends the continuation; it does not create a second local queue.
+
+```powershell
+$env:WEBDRIVER_ALLOW_MUTATION = "1"
+pnpm test:webdriver:historical-existing-continuation -- <runtime-info.json> `
+  --workspace "Disposable workspace" `
+  --session-id "<visible-sidebar-session-id>" `
+  --continuation-message "Reply with exactly: historical existing continuation"
+```
 
 WebDriverIO is the desktop test driver. It uses an explicit loopback endpoint
 and records redacted per-scenario evidence under `.tmp/webdriver-scenarios/`.

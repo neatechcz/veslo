@@ -259,11 +259,13 @@ reservation remain in place. Its pending marker, exact session target, attempt
 count, last error, next retry, and deadline are persisted with the reservation,
 so restart resumes the same recovery rather than resetting its budget. Recovery
 uses at most three attempts during a two-minute window; exhaustion stops the
-automatic retry loop and keeps admission conservatively blocked for explicit
-operator/user recovery. Lifecycle status is checked before each retry, so a
-naturally completed run is released normally; a missing or still-active status
-never admits a successor behind a potentially still-busy OpenCode assistant
-message.
+automatic retry loop, then schedules one normal exact-run lifecycle read. That
+read may release the reservation only when it authoritatively observes a
+terminal run with `runtimeReadyForSuccessor=true`; otherwise admission stays
+conservatively blocked for explicit operator/user recovery. Lifecycle status
+is checked before each retry, so a naturally completed run is released
+normally; a missing or still-active status never admits a successor behind a
+potentially still-busy OpenCode assistant message.
 When a terminal result is stale and its recorded owner belongs to a previous
 daemon generation, the server may ask the lifecycle owner once for a separate,
 non-destructive terminal-handoff recovery. An empty new in-memory pool is only

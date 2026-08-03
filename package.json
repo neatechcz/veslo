@@ -40,6 +40,8 @@
     "test:webdriver:workspace-roundtrip": "pnpm --filter @neatech/veslo-webdriver-live test:workspace-roundtrip",
     "test:webdriver:same-conversation-queue-roundtrip": "pnpm --filter @neatech/veslo-webdriver-live test:same-conversation-queue-roundtrip",
     "test:webdriver:historical-conversation-roundtrip": "pnpm --filter @neatech/veslo-webdriver-live test:historical-conversation-roundtrip",
+    "test:webdriver:historical-existing-continuation": "pnpm --filter @neatech/veslo-webdriver-live test:historical-existing-continuation",
+    "test:webdriver:historical-conversation-restart-owned": "pnpm --filter @neatech/veslo-webdriver-live test:historical-conversation-restart-owned",
     "test:webdriver:historical-conversation-trace-verify": "pnpm --filter @neatech/veslo-webdriver-live test:historical-conversation-trace-verify",
     "test:webdriver:sidebar-flicker": "pnpm --filter @neatech/veslo-webdriver-live test:sidebar-flicker",
     "test:webdriver:skill-sidebar-refresh": "pnpm --filter @neatech/veslo-webdriver-live test:skill-sidebar-refresh",

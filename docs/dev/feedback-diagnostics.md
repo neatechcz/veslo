@@ -71,6 +71,10 @@ The first version of the correlation record is diagnostic metadata only. Lifecyc
 
 The per-run section is intentionally a bounded convenience summary. It tracks at most 2,000 distinct `runId` values recognized in structured Veslo traces. It does not cap, delete, or omit raw stored events. If the summary says that further observations were omitted, use the full NDJSON export for the complete context; the number is observations after the summary capacity was reached, not a count of distinct omitted runs.
 
+Historical-continuation diagnostics name `terminal_handoff_unresolved` separately from provider and submit errors. Its structured fields identify the blocking run, readiness, engine-owner state, unavailable reason, and finite recovery reason; they never include prompt or transcript text. A missing field is reported as missing evidence, not interpreted as proof that an old process was gone.
+
+When the capture contains one valid user-capture workspace correlation, the helper reports that workspace as the incident scope and keeps signals, anomalies, and run counts from other workspaces out of the incident summary. It reports those records as out-of-scope and also counts unattributed records. If the capture correlation is absent or ambiguous, the helper says so rather than guessing an affected workspace. Historical handoff recovery additionally records the classification, owner state, proof outcome, and finite reason code; the summary never treats missing owner evidence as an absent process.
+
 ## Troubleshooting
 
 | Symptom | Meaning and next action |

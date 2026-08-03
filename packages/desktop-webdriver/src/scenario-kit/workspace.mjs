@@ -152,6 +152,21 @@ export async function sidebarSessionIdForVisibleText(browser, expectedText) {
 export async function openSidebarSession(browser, sessionId, workspaceLabel) {
   const targetSessionId = normalize(sessionId);
   if (!targetSessionId) fail("A session id is required to open an existing conversation.");
+  // A restarted desktop restores workspace selection independently from the
+  // conversation accordion. Reopen the visible workspace first, otherwise a
+  // historical row can be durable but temporarily absent from the DOM and the
+  // scenario would mistake presentation state for a lost conversation.
+  await setWorkspaceConversationListExpanded(browser, workspaceLabel, true);
+  await browser.waitUntil(async () => browser.execute((selector, expectedSessionId) =>
+    Array.from(document.querySelectorAll(selector)).some((candidate) => {
+      const style = window.getComputedStyle(candidate);
+      return candidate.getAttribute("data-session-id") === expectedSessionId &&
+        candidate.getClientRects().length > 0 && style.display !== "none" && style.visibility !== "hidden";
+    }), selectors.sessionSidebarRow, targetSessionId), {
+    timeout: 30_000,
+    interval: 150,
+    timeoutMsg: `Historical conversation is not visible in ${workspaceLabel}.`,
+  });
   const opened = await browser.execute((selector, expectedSessionId) => {
     const row = Array.from(document.querySelectorAll(selector)).find((candidate) => {
       const style = window.getComputedStyle(candidate);
@@ -167,7 +182,7 @@ export async function openSidebarSession(browser, sessionId, workspaceLabel) {
     row.click();
     return true;
   }, selectors.sessionSidebarRow, targetSessionId);
-  if (!opened) fail(`Historical conversation is not visible in ${workspaceLabel}.`);
+  if (!opened) fail(`Historical conversation did not accept the visible sidebar selection in ${workspaceLabel}.`);
   // Some sidebar render modes intentionally do not expose `aria-current` for
   // the active leaf. The caller proves selection from the target transcript,
   // which is stronger than inferring it from a presentation-only attribute.

@@ -6,6 +6,9 @@ import { join } from "node:path";
 
 import {
   createEngineGenerationAuthority,
+  linuxProcReadFailure,
+  linuxProcStartTimeTicks,
+  macosProcBsdInfoBirthToken,
   type ProcessInstanceInspector,
 } from "../engine-generation-authority.js";
 import { createRunStore } from "../run-store.js";
@@ -45,6 +48,36 @@ async function activate(value: ReturnType<typeof createEngineGenerationAuthority
 }
 
 describe("engine generation authority", () => {
+  test("parses the Linux process-start field after a spaced process name", () => {
+    const fields: string[] = Array.from({ length: 20 }, (_, index) => index === 0 ? "S" : "0");
+    fields[19] = "987654";
+
+    expect(linuxProcStartTimeTicks(`42 (OpenCode Worker) ${fields.join(" ")}`)).toBe("987654");
+    expect(linuxProcStartTimeTicks("malformed")).toBeNull();
+  });
+
+  test("keeps Linux owner recovery closed when boot_id is unavailable", () => {
+    expect(linuxProcReadFailure("boot_id", { code: "ENOENT" })).toEqual({
+      kind: "unknown",
+      reason: "inspection_failed",
+    });
+    expect(linuxProcReadFailure("stat", { code: "ENOENT" })).toEqual({ kind: "absent" });
+  });
+
+  test("parses the XNU 136-byte macOS proc_bsdinfo layout only for the requested PID", () => {
+    // XNU: pbi_pid=12, pbi_start_tvsec=120, pbi_start_tvusec=128, sizeof=136.
+    // Deliberately do not use implementation constants here.
+    const buffer = new Uint8Array(136);
+    const view = new DataView(buffer.buffer);
+    view.setUint32(12, 42, true);
+    view.setBigUint64(120, 123n, true);
+    view.setBigUint64(128, 456n, true);
+
+    expect(macosProcBsdInfoBirthToken(42, buffer)).toBe("darwin:123:456");
+    expect(macosProcBsdInfoBirthToken(43, buffer)).toBeNull();
+    expect(macosProcBsdInfoBirthToken(42, buffer.subarray(0, 135))).toBeNull();
+  });
+
   test("confirms one exact absent process as lost across a fresh authority instance", async () => {
     let observation: "alive" | "absent" = "alive";
     const inspector: ProcessInstanceInspector = {
@@ -166,6 +199,10 @@ describe("engine generation authority", () => {
       retrySince: null,
       lastProgressSignature: null,
     });
+
+    expect(runStore.terminalAttachedWithEngineOwner()).toEqual([
+      expect.objectContaining({ runId: "run-historical-hidden", engineOwnerId: owner.engineOwnerId }),
+    ]);
 
     const before = new Database(dbPath, { readonly: true });
     try {

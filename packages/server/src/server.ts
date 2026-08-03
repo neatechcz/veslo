@@ -3208,7 +3208,7 @@ async function waitForAiGatewayProviderStart(input: {
   clientMessageId?: string | null;
   origin?: string | null;
   startedAt: number;
-}): Promise<{ started: boolean; timeoutMs: number }> {
+}) {
   return aiGatewayRuntimeOwner.waitForProviderStart(input);
 }
 

@@ -110,6 +110,10 @@ export type ConversationRunLifecycleProviderStartWatchInput = {
 export type ConversationRunLifecycleProviderStartWatchResult = {
   started: boolean;
   timeoutMs: number;
+  providerHitScope?: "session" | "workspace" | "none";
+  providerHitCount?: number;
+  firstProviderHitAt?: number | null;
+  lastProviderHitAt?: number | null;
 };
 
 export type ConversationRunLifecycleAiGatewayProviderWatchPort = {
@@ -150,6 +154,15 @@ export type ConversationRunLifecycleScheduleReconcileInput = {
   abortRequested?: boolean;
   delayMs?: number;
   attempt?: number;
+  /**
+   * Set only when the caller already holds orchestrator proof that this exact
+   * run is terminal and its engine owner is lost. It suppresses the
+   * provider-start abort deferral, which would otherwise keep retrying a
+   * provider start against an engine that is known to be gone. It never
+   * authorizes a release on its own: reconciliation still re-reads the
+   * lifecycle record and decides from that fresh status.
+   */
+  predecessorReleaseProven?: boolean;
 };
 
 export type ConversationRunLifecycleSubmitQueuePolicy = "normal" | "send-now" | "server-queue-only";
@@ -333,6 +346,7 @@ const PROVIDER_START_ABORT_RETRY_DELAYS_MS = [5_000, 10_000, 20_000] as const;
 const PROVIDER_START_ABORT_MAX_ATTEMPTS = PROVIDER_START_ABORT_RETRY_DELAYS_MS.length;
 const PROVIDER_START_ABORT_RECOVERY_WINDOW_MS = 120_000;
 const PROVIDER_START_ABORT_RETRY_REASON = "ai-gateway-provider-start-timeout-abort-retry";
+const PROVIDER_START_ABORT_RECOVERY_EXHAUSTED_REASON = "ai-gateway-provider-start-timeout-abort-recovery-exhausted";
 const PROVIDER_START_ABORT_RECOVERY_TIMEOUT_MS = 30_000;
 // A provider-start timeout has already proved that no managed-AI request was
 // dispatched, and the exact OpenCode abort plus terminal lifecycle write have
@@ -344,6 +358,11 @@ const PROVIDER_START_TERMINAL_HANDOFF_RECOVERY_ATTEMPT = 1;
 // times; the normal terminal handoff poll remains the durable fallback.
 const PROVIDER_START_TERMINAL_HANDOFF_RECOVERY_MAX_ATTEMPTS = 3;
 const ENGINE_OWNER_ATTACH_GRACE_DEFAULT_MS = 80_000;
+// A conflicting predecessor is often still draining its provider-start abort
+// budget (5s + 10s + 20s), which at the queue-drain cadence is roughly 24
+// conflicts. Stay clearly above that so this cap only ever catches a runtime
+// record that no existing recovery is still working on.
+const QUEUE_DRAIN_RESERVATION_CONFLICT_MAX_ATTEMPTS = 40;
 
 function withOpenCodeAdmissionMessageId(
   input: ConversationRunLifecycleSubmitInput,
@@ -486,6 +505,16 @@ function lifecycleErrorReason(error: unknown): string {
   return lifecycleErrorKind(error);
 }
 
+function lifecycleErrorEvidenceKind(error: unknown): string | null {
+  if (!(error instanceof OrchestratorLifecycleRequestError)) return null;
+  const body = error.body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const evidenceKind = (body as { evidenceKind?: unknown }).evidenceKind;
+  return typeof evidenceKind === "string" && /^[a-z_]{1,64}$/.test(evidenceKind)
+    ? evidenceKind
+    : null;
+}
+
 function lifecycleErrorHttpStatus(error: unknown): number | null {
   return error instanceof OrchestratorLifecycleRequestError ? error.status : null;
 }
@@ -523,6 +552,7 @@ export function createConversationRunLifecycleController(
   // its current blocking decision so trace files show why it waits without
   // repeating the identical decision on every poll.
   const queueDrainBlockingDecisions = new Map<string, string>();
+  const queueDrainReservationConflicts = new Map<string, number>();
   const lifecycleReconcileTimers = new Map<string, unknown>();
   const lifecycleReconcileInFlight = new Set<string>();
   const terminalizationTimers = new Map<string, unknown>();
@@ -1012,6 +1042,15 @@ export function createConversationRunLifecycleController(
         phase: "queued",
       }),
     });
+    input.runTrace.record("server:conversation-run:admission-decision", {
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      runId: queued.item.reservedRunId,
+      queueItemId: queued.item.queueItemId,
+      clientMessageId: input.clientMessageId,
+      decision: "queued",
+      activeRunId: queued.item.activeRunId,
+    });
     scheduleQueueDrain(input.workspace.id, input.target.conversationId, queueDrainPollMs);
     return {
       httpStatus: queued.inserted ? 202 : 200,
@@ -1065,6 +1104,171 @@ export function createConversationRunLifecycleController(
       debugTrace: input.runTrace.entries,
     },
   });
+
+  type PredecessorDecision =
+    | { kind: "ready"; status: LifecycleRunStatusResult | null; recoveredTerminalHandoff: boolean }
+    | { kind: "active_exact_owner"; status: LifecycleRunStatusResult }
+    | { kind: "terminal_handoff_pending"; status: LifecycleRunStatusResult }
+    | { kind: "terminal_handoff_unresolved"; status: LifecycleRunStatusResult; reason: string };
+
+  /**
+   * `active` deliberately hides terminal runs, while orchestrator register
+   * correctly fences a terminal transcript until its exact OpenCode session is
+   * idle. Keep that distinction here, before a direct submit can turn a
+   * recoverable historical handoff into an ordinary queue row.
+   */
+  const classifyPredecessor = async (input: {
+    workspace: WorkspaceInfo;
+    conversationId: string;
+    lifecycleOwner: OrchestratorLifecycleClient;
+    runTrace: ConversationRunLifecycleTracer;
+    source: "direct-admission" | "register-conflict" | "queue-drain";
+  }): Promise<PredecessorDecision> => {
+    let status = await input.runTrace.step(
+      input.source === "queue-drain"
+        ? "server:conversation-run:lifecycle-latest-for-queue-drain"
+        : "server:conversation-run:lifecycle-active-peek",
+      () => input.source === "queue-drain"
+        ? input.lifecycleOwner.status(input.workspace.id, input.conversationId, "latest")
+        : input.lifecycleOwner.active(input.workspace.id, input.conversationId),
+      {
+        workspaceId: input.workspace.id,
+        conversationId: input.conversationId,
+        source: input.source,
+      },
+    );
+
+    // The active fast path is sufficient for a current run. Only its absence
+    // requires the broader latest read, where a terminal handoff can be seen.
+    if (!status && input.source !== "queue-drain") {
+      status = await input.runTrace.step(
+        "server:conversation-run:lifecycle-latest-predecessor",
+        () => input.lifecycleOwner.status(input.workspace.id, input.conversationId, "latest"),
+        {
+          workspaceId: input.workspace.id,
+          conversationId: input.conversationId,
+          source: input.source,
+        },
+      );
+    }
+
+    const record = (decision: PredecessorDecision) => {
+      input.runTrace.record("server:conversation-run:predecessor-classified", {
+        workspaceId: input.workspace.id,
+        conversationId: input.conversationId,
+        source: input.source,
+        classification: decision.kind,
+        reason: decision.kind === "terminal_handoff_unresolved" ? decision.reason : null,
+        blockingRunId: decision.status?.runId ?? null,
+        ...lifecycleStatusTraceFields(decision.status),
+      });
+      return decision;
+    };
+
+    // A current run is never bypassed by a stale or inconsistent readiness
+    // projection. `active` is the stronger ownership fact; readiness only
+    // governs terminal predecessors.
+    if (status && isActiveLifecycleStatus(status.status)) {
+      return record({ kind: "active_exact_owner", status });
+    }
+    if (!status || status.runtimeReadyForSuccessor === true) {
+      return record({ kind: "ready", status, recoveredTerminalHandoff: false });
+    }
+
+    // A terminal, non-stale session can still be completing its normal
+    // OpenCode handoff. It is safe to retain one FIFO queue item behind it.
+    if (status.runtimeReadyForSuccessor === false && status.stale !== true) {
+      return record({ kind: "terminal_handoff_pending", status });
+    }
+    const initialTerminalStatus = status;
+
+    // Only the existing generation authority may prove a stale terminal owner
+    // lost. Always read the lifecycle record again after that guarded call;
+    // the response alone is not permission to admit a successor.
+    if (status.stale === true && status.unavailableReason === "no_current_engine") {
+      try {
+        input.runTrace.record("server:conversation-run:terminal-handoff-recovery:start", {
+          workspaceId: input.workspace.id,
+          conversationId: input.conversationId,
+          runId: status.runId,
+          source: input.source,
+          ...lifecycleStatusTraceFields(status),
+        });
+        await input.lifecycleOwner.recoverTerminalRuntimeHandoff(input.workspace.id, status.runId);
+      } catch (error) {
+        input.runTrace.record("server:conversation-run:terminal-handoff-recovery:result", {
+          workspaceId: input.workspace.id,
+          conversationId: input.conversationId,
+          runId: initialTerminalStatus.runId,
+          source: input.source,
+          outcome: "unresolved",
+          reason: lifecycleErrorReason(error),
+          generationEvidenceKind: lifecycleErrorEvidenceKind(error),
+        });
+        return record({
+          kind: "terminal_handoff_unresolved",
+          status: status ?? initialTerminalStatus,
+          reason: lifecycleErrorReason(error),
+        });
+      }
+
+      // A recovery result is evidence only. This read is intentionally outside
+      // the recovery catch: a transport failure must use the ordinary
+      // lifecycle retry path, never become a durable unresolved handoff.
+      status = await input.runTrace.step(
+        "server:conversation-run:lifecycle-latest-after-terminal-handoff-recovery",
+        () => input.lifecycleOwner.status(input.workspace.id, input.conversationId, "latest"),
+        {
+          workspaceId: input.workspace.id,
+          conversationId: input.conversationId,
+          source: input.source,
+          blockingRunId: initialTerminalStatus.runId,
+        },
+      );
+      // An absent predecessor unblocks admission but proves nothing about the
+      // old process, so it must not be reported as a generation loss proof.
+      const recoveryOutcome = !status
+        ? "predecessor_absent"
+        : isActiveLifecycleStatus(status.status) || status.runtimeReadyForSuccessor === true
+        ? "lost_proven"
+        : "unresolved";
+      input.runTrace.record("server:conversation-run:terminal-handoff-recovery:result", {
+        workspaceId: input.workspace.id,
+        conversationId: input.conversationId,
+        runId: initialTerminalStatus.runId,
+        source: input.source,
+        outcome: recoveryOutcome,
+        generationEvidenceKind: recoveryOutcome,
+      });
+      if (status && isActiveLifecycleStatus(status.status)) {
+        return record({ kind: "active_exact_owner", status });
+      }
+      if (!status || status.runtimeReadyForSuccessor === true) {
+        return record({ kind: "ready", status, recoveredTerminalHandoff: true });
+      }
+    }
+
+    return record({
+      kind: "terminal_handoff_unresolved",
+      status: status ?? initialTerminalStatus,
+      reason: (status ?? initialTerminalStatus).unavailableReason ?? "runtime_not_ready",
+    });
+  };
+
+  const terminalHandoffRecoveryRequired = (
+    input: ConversationRunLifecycleSubmitInput,
+    decision: Extract<PredecessorDecision, { kind: "terminal_handoff_unresolved" }>,
+  ): ApiError => new ApiError(
+    409,
+    "terminal_handoff_recovery_required",
+    "The previous conversation runtime could not be safely verified. Keep the draft and retry verification once the runtime is available.",
+    {
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      blockingRunId: decision.status.runId,
+      reason: decision.reason,
+    },
+  );
 
   const registerActiveAiGatewayRun = (input: ConversationRunLifecycleSubmitInput) => {
     if (input.expectAiGatewayStart !== true || !options.aiGatewayActiveRun) {
@@ -1252,6 +1456,20 @@ export function createConversationRunLifecycleController(
         attempts,
         deadlineAt,
         lastError: previous?.lastError ?? null,
+      });
+      // Exhausting the abort retry budget is not evidence that this run can be
+      // released. It does, however, require one normal exact-run status read:
+      // a prior process may already have persisted terminality and runtime
+      // readiness. Without that read a durable reservation can block its own
+      // ready successor forever after restart.
+      scheduleLifecycleReconcile({
+        workspace: input.workspace,
+        conversationId: input.target.conversationId,
+        runId: input.runId,
+        directory: input.target.directory,
+        opencodeSessionId: input.target.opencodeSessionId,
+        reason: PROVIDER_START_ABORT_RECOVERY_EXHAUSTED_REASON,
+        delayMs: 0,
       });
       return;
     }
@@ -1460,6 +1678,10 @@ export function createConversationRunLifecycleController(
           input.runTrace.record("server:conversation-run:ai-gateway-provider-start-watch:timeout", {
             ...tracePayload,
             timeoutMs: providerStart.timeoutMs,
+            providerHitScope: providerStart.providerHitScope ?? "none",
+            providerHitCount: providerStart.providerHitCount ?? 0,
+            firstProviderHitAt: providerStart.firstProviderHitAt ?? null,
+            lastProviderHitAt: providerStart.lastProviderHitAt ?? null,
             message: `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`,
           });
           await recoverProviderStartTimeout(input, lifecycleOwner, providerStart.timeoutMs);
@@ -1619,6 +1841,7 @@ export function createConversationRunLifecycleController(
     terminalizationTimers.clear();
     startingRecoveryTimers.clear();
     queueDrainBlockingDecisions.clear();
+    queueDrainReservationConflicts.clear();
   };
 
   const clearPendingEngineLoss = (key: string) => {
@@ -1695,6 +1918,13 @@ export function createConversationRunLifecycleController(
 
   const clearQueueDrainBlockingDecision = (workspaceId: string, conversationId: string) => {
     queueDrainBlockingDecisions.delete(queueKey(workspaceId, conversationId));
+  };
+
+  const clearQueueDrainReservationConflicts = (workspaceId: string, conversationId: string) => {
+    const prefix = `${queueKey(workspaceId, conversationId)}\0`;
+    for (const key of queueDrainReservationConflicts.keys()) {
+      if (key.startsWith(prefix)) queueDrainReservationConflicts.delete(key);
+    }
   };
 
   const terminalizationDelayMs = (attempt: number) =>
@@ -1881,6 +2111,7 @@ export function createConversationRunLifecycleController(
       abortRequested: input.abortRequested === true,
       attempt: input.attempt ?? 0,
       delayMs,
+      predecessorReleaseProven: input.predecessorReleaseProven === true,
     });
   }
 
@@ -1924,13 +2155,37 @@ export function createConversationRunLifecycleController(
     const providerStartAbortRecovery = providerStartAbortRecoveries.get(
       providerStartAbortRecoveryKey(input.workspace.id, conversationId, runId),
     );
-    if (providerStartAbortRecovery && input.reason !== PROVIDER_START_ABORT_RETRY_REASON) {
-      scheduleProviderStartTimeoutAbortRetry(
-        providerStartAbortRecovery.input,
-        providerStartAbortRecovery.lifecycleOwner,
-        providerStartAbortRecovery.timeoutMs,
-      );
-      return;
+    const providerStartAbortRecoveryExhausted = Boolean(
+      providerStartAbortRecovery &&
+      (
+        providerStartAbortRecovery.attempts >= PROVIDER_START_ABORT_MAX_ATTEMPTS ||
+        Date.now() >= providerStartAbortRecovery.deadlineAt
+      ),
+    );
+    if (
+      providerStartAbortRecovery &&
+      !providerStartAbortRecoveryExhausted &&
+      input.reason !== PROVIDER_START_ABORT_RETRY_REASON
+    ) {
+      // Retrying a provider start only makes sense while its engine might still
+      // answer. Once the caller proved that exact owner lost, this deferral
+      // would hold a successor behind an unrelated retry budget, so the
+      // reconciliation below owns the decision instead.
+      if (input.predecessorReleaseProven !== true) {
+        scheduleProviderStartTimeoutAbortRetry(
+          providerStartAbortRecovery.input,
+          providerStartAbortRecovery.lifecycleOwner,
+          providerStartAbortRecovery.timeoutMs,
+        );
+        return;
+      }
+      recordTrace("server:conversation-run:provider-start-abort-recovery-superseded", {
+        workspaceId: input.workspace.id,
+        conversationId,
+        runId,
+        reason: input.reason,
+        attempts: providerStartAbortRecovery.attempts,
+      });
     }
     if (
       pendingTerminalization?.state === "terminal_handoff_unresolved" ||
@@ -2540,6 +2795,7 @@ export function createConversationRunLifecycleController(
     queueDrainInFlight.add(key);
     let item = null as ReturnType<ConversationRunQueueStore["nextPending"]>;
     let runTrace: ConversationRunLifecycleTracer | null = null;
+    let predecessorStatus: LifecycleRunStatusResult | null = null;
     try {
       const workspace = options.resolveWorkspace?.(workspaceId) ?? null;
       if (!workspace) return;
@@ -2569,6 +2825,7 @@ export function createConversationRunLifecycleController(
       const waitingItem = options.queueStore.nextPending(workspaceId, normalizedConversationId);
       if (!waitingItem) {
         clearQueueDrainBlockingDecision(workspaceId, normalizedConversationId);
+        clearQueueDrainReservationConflicts(workspaceId, normalizedConversationId);
         return;
       }
       const waitingItemTraceFields = {
@@ -2580,16 +2837,65 @@ export function createConversationRunLifecycleController(
       };
       if (lifecycleOwner) {
         try {
-          const latest = await lifecycleOwner.status(workspace.id, normalizedConversationId, "latest");
-          const { clientMessageId: blockingClientMessageId, ...blockingLifecycleTraceFields } = lifecycleStatusTraceFields(latest);
-          if (latest && !isActiveLifecycleStatus(latest.status) && latest.runtimeReadyForSuccessor !== true) {
+          const predecessor = await classifyPredecessor({
+            workspace,
+            conversationId: normalizedConversationId,
+            lifecycleOwner,
+            runTrace,
+            source: "queue-drain",
+          });
+          predecessorStatus = predecessor.status;
+          if (predecessor.kind === "terminal_handoff_unresolved") {
+            const { clientMessageId: blockingClientMessageId, ...blockingLifecycleTraceFields } = lifecycleStatusTraceFields(predecessor.status);
+            const fingerprint = terminalHandoffFingerprint(workspaceId, predecessor.status.runId, predecessor.status);
+            const observedBarrier = terminalHandoffBarrier(workspaceId, normalizedConversationId, predecessor.status.runId) ??
+              options.queueStore?.observeTerminalHandoffBarrier({
+                workspaceId,
+                conversationId: normalizedConversationId,
+                runId: predecessor.status.runId,
+                fingerprint,
+                reason: predecessor.reason,
+              }) ?? null;
+            if (observedBarrier?.state === "observed") {
+              options.queueStore?.requestTerminalHandoffBarrierEvidence({
+                workspaceId,
+                conversationId: normalizedConversationId,
+                runId: predecessor.status.runId,
+                fingerprint,
+                reason: predecessor.reason,
+              });
+            }
+            markTerminalHandoffBarrierUnresolved({
+              workspaceId,
+              conversationId: normalizedConversationId,
+              runId: predecessor.status.runId,
+              reason: predecessor.reason,
+            });
+            recordQueueDrainBlockingDecision(runTrace, "server:conversation-run:queue-drain-terminal-handoff-unresolved", {
+              workspaceId,
+              conversationId: normalizedConversationId,
+              decisionKey: `${waitingItem.queueItemId}\0${predecessor.status.runId}\0${predecessor.reason}`,
+              payload: {
+                ...waitingItemTraceFields,
+                blockingRunId: predecessor.status.runId,
+                reason: predecessor.reason,
+                blockingClientMessageId,
+                ...blockingLifecycleTraceFields,
+              },
+            });
+            // An unresolved barrier has a server-owned explicit retry path.
+            // Do not keep the queued intent in a periodic drain loop.
+            return;
+          }
+          if (predecessor.kind === "terminal_handoff_pending") {
+            const { clientMessageId: blockingClientMessageId, ...blockingLifecycleTraceFields } = lifecycleStatusTraceFields(predecessor.status);
             recordQueueDrainBlockingDecision(runTrace, "server:conversation-run:queue-drain-terminal-handoff-deferred", {
               workspaceId,
               conversationId: normalizedConversationId,
-              decisionKey: `${waitingItem.queueItemId}\0${latest.runId}\0${latest.status}\0${latest.waitReason ?? ""}`,
+              decisionKey: `${waitingItem.queueItemId}\0${predecessor.status.runId}\0${predecessor.status.status}\0${predecessor.status.waitReason ?? ""}`,
               payload: {
-                status: latest.status,
-                blockingRunId: latest.runId,
+                status: predecessor.status.status,
+                blockingRunId: predecessor.status.runId,
                 ...waitingItemTraceFields,
                 queuedClientMessageId: waitingItem.clientMessageId,
                 blockingClientMessageId,
@@ -2599,25 +2905,27 @@ export function createConversationRunLifecycleController(
             scheduleLifecycleReconcile({
               workspace,
               conversationId: normalizedConversationId,
-              runId: latest.runId,
+              runId: predecessor.status.runId,
               reason: "queue-drain-terminal-handoff-pending",
               delayMs: queueDrainPollMs,
             });
             return;
           }
-          if (latest && isActiveLifecycleStatus(latest.status)) {
-            if (latest.stale === true) {
-              const activeRunId = latest.runId?.trim() || "latest";
+          if (predecessor.kind === "active_exact_owner") {
+            const { clientMessageId: blockingClientMessageId, ...blockingLifecycleTraceFields } = lifecycleStatusTraceFields(predecessor.status);
+            if (predecessor.status.stale === true) {
+              const activeRunId = predecessor.status.runId?.trim() || "latest";
               recordQueueDrainBlockingDecision(runTrace, "server:conversation-run:queue-drain-stale-active-deferred", {
                 workspaceId,
                 conversationId: normalizedConversationId,
-                decisionKey: `${waitingItem.queueItemId}\0${activeRunId}\0${latest.status}\0${latest.waitReason ?? ""}`,
+                decisionKey: `${waitingItem.queueItemId}\0${activeRunId}\0${predecessor.status.status}\0${predecessor.status.waitReason ?? ""}`,
                 payload: {
-                  status: latest.status,
-                  stale: latest.stale,
+                  status: predecessor.status.status,
+                  stale: predecessor.status.stale,
                   blockingRunId: activeRunId,
                   ...waitingItemTraceFields,
-                  ...lifecycleStatusTraceFields(latest),
+                  blockingClientMessageId,
+                  ...blockingLifecycleTraceFields,
                 },
               });
               scheduleLifecycleReconcile({
@@ -2632,11 +2940,11 @@ export function createConversationRunLifecycleController(
             recordQueueDrainBlockingDecision(runTrace, "server:conversation-run:queue-drain-active-deferred", {
               workspaceId,
               conversationId: normalizedConversationId,
-              decisionKey: `${waitingItem.queueItemId}\0${latest.runId ?? "latest"}\0${latest.status}\0${latest.waitReason ?? ""}`,
+              decisionKey: `${waitingItem.queueItemId}\0${predecessor.status.runId ?? "latest"}\0${predecessor.status.status}\0${predecessor.status.waitReason ?? ""}`,
               payload: {
-                status: latest.status,
+                status: predecessor.status.status,
                 stale: false,
-                blockingRunId: latest.runId ?? null,
+                blockingRunId: predecessor.status.runId ?? null,
                 ...waitingItemTraceFields,
                 queuedClientMessageId: waitingItem.clientMessageId,
                 blockingClientMessageId,
@@ -2668,6 +2976,7 @@ export function createConversationRunLifecycleController(
       item = options.queueStore.nextPending(workspaceId, normalizedConversationId);
       if (!item) {
         clearQueueDrainBlockingDecision(workspaceId, normalizedConversationId);
+        clearQueueDrainReservationConflicts(workspaceId, normalizedConversationId);
         return;
       }
       let claim: ReturnType<ConversationRunQueueStore["claimStartingWithReservation"]>;
@@ -2678,12 +2987,86 @@ export function createConversationRunLifecycleController(
         });
       } catch (error) {
         if (error instanceof ConversationRunReservationConflictError) {
+          const activeRunId = error.activeRunId.trim();
+          const conflictKey = `${workspaceId}\0${normalizedConversationId}\0${item.queueItemId}\0${activeRunId}`;
+          const conflictAttempts = (queueDrainReservationConflicts.get(conflictKey) ?? 0) + 1;
+          queueDrainReservationConflicts.set(conflictKey, conflictAttempts);
+          if (conflictAttempts >= QUEUE_DRAIN_RESERVATION_CONFLICT_MAX_ATTEMPTS) {
+            if (activeRunId) {
+              const conflictStatus = predecessorStatus?.runId.trim() === activeRunId
+                ? predecessorStatus
+                : null;
+              const fingerprint = conflictStatus
+                ? terminalHandoffFingerprint(workspaceId, activeRunId, conflictStatus)
+                : `${normalizeWorkspaceExecutionKey(workspaceId)}\0${activeRunId}\0reservation_conflict_unresolved`;
+              const observedBarrier = terminalHandoffBarrier(workspaceId, normalizedConversationId, activeRunId) ??
+                options.queueStore.observeTerminalHandoffBarrier({
+                  workspaceId,
+                  conversationId: normalizedConversationId,
+                  runId: activeRunId,
+                  fingerprint,
+                  reason: "reservation_conflict_unresolved",
+                });
+              if (observedBarrier.state === "observed") {
+                options.queueStore.requestTerminalHandoffBarrierEvidence({
+                  workspaceId,
+                  conversationId: normalizedConversationId,
+                  runId: activeRunId,
+                  fingerprint,
+                  reason: "reservation_conflict_unresolved",
+                });
+              }
+              markTerminalHandoffBarrierUnresolved({
+                workspaceId,
+                conversationId: normalizedConversationId,
+                runId: activeRunId,
+                reason: "reservation_conflict_unresolved",
+              });
+            }
+            recordQueueDrainBlockingDecision(
+              runTrace,
+              "server:conversation-run:queue-drain-reservation-conflict-unresolved",
+              {
+                workspaceId,
+                conversationId: normalizedConversationId,
+                decisionKey: `${item.queueItemId}\0${activeRunId}`,
+                payload: {
+                  ...waitingItemTraceFields,
+                  blockingRunId: activeRunId || null,
+                  reason: "reservation_conflict_unresolved",
+                  reservationConflictAttempts: conflictAttempts,
+                },
+              },
+            );
+            return;
+          }
           recordTrace("server:conversation-run:queue-drain-reservation-conflict", {
             workspaceId,
             conversationId: normalizedConversationId,
             queueItemId: item.queueItemId,
-            activeRunId: error.activeRunId,
+            activeRunId,
+            reservationConflictAttempts: conflictAttempts,
           });
+          if (activeRunId) {
+            // A terminal predecessor can retain its durable reservation after
+            // an unclean restart even though lifecycle admission is ready.
+            // Only this exact run, proven terminal with a lost engine owner,
+            // may skip the provider-start abort deferral during that release.
+            const conflictStatus = predecessorStatus?.runId.trim() === activeRunId ? predecessorStatus : null;
+            scheduleLifecycleReconcile({
+              workspace,
+              conversationId: normalizedConversationId,
+              runId: activeRunId,
+              reason: "queue-drain-reservation-conflict",
+              delayMs: 0,
+              predecessorReleaseProven: Boolean(
+                conflictStatus &&
+                !isActiveLifecycleStatus(conflictStatus.status) &&
+                conflictStatus.engineOwnerState === "lost" &&
+                conflictStatus.runtimeReadyForSuccessor === true,
+              ),
+            });
+          }
           scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
           return;
         }
@@ -2720,6 +3103,7 @@ export function createConversationRunLifecycleController(
         return;
       }
       item = claim.item;
+      clearQueueDrainReservationConflicts(workspaceId, normalizedConversationId);
       reservationsForWorkspace(workspaceId).set(claim.reservation.runId, claim.reservation);
       clearQueueDrainBlockingDecision(workspaceId, normalizedConversationId);
       runTrace.record("server:conversation-run:queue-drain-claimed", {
@@ -3202,58 +3586,78 @@ export function createConversationRunLifecycleController(
       }
       if (lifecycleOwner) {
         try {
-          const active = await input.runTrace.step(
-            "server:conversation-run:lifecycle-active-peek",
-            () => lifecycleOwner.active(input.workspace.id, input.target.conversationId),
-            {
-              workspaceId: input.workspace.id,
-              conversationId: input.target.conversationId,
-            },
-          );
-          if (active && isActiveLifecycleStatus(active.status)) {
-            if (activeRunMatchesClientMessage(active, input)) {
+          const predecessor = await classifyPredecessor({
+            workspace: input.workspace,
+            conversationId: input.target.conversationId,
+            lifecycleOwner,
+            runTrace: input.runTrace,
+            source: "direct-admission",
+          });
+          if (predecessor.kind === "active_exact_owner") {
+            if (activeRunMatchesClientMessage(predecessor.status, input)) {
               input.runTrace.record("server:conversation-run:lifecycle-active-reused", {
                 workspaceId: input.workspace.id,
                 conversationId: input.target.conversationId,
-                runId: active.runId,
+                runId: predecessor.status.runId,
                 clientMessageId: input.clientMessageId,
                 origin: input.origin,
               });
-              return existingActiveRunPayload(input, active);
+              return existingActiveRunPayload(input, predecessor.status);
             }
-            return queueRun(input, active.runId);
+            return queueRun(input, predecessor.status.runId);
+          }
+          if (predecessor.kind === "terminal_handoff_pending") {
+            return queueRun(input, predecessor.status.runId);
+          }
+          if (predecessor.kind === "terminal_handoff_unresolved") {
+            input.runTrace.record("server:conversation-run:admission-decision", {
+              workspaceId: input.workspace.id,
+              conversationId: input.target.conversationId,
+              runId: input.runId,
+              clientMessageId: input.clientMessageId,
+              blockingRunId: predecessor.status.runId,
+              decision: "blocked_terminal_handoff_unresolved",
+              reason: predecessor.reason,
+            });
+            throw terminalHandoffRecoveryRequired(input, predecessor);
           }
         } catch (error) {
+          if (error instanceof ApiError) throw error;
           input.runTrace.record("server:conversation-run:lifecycle-active-peek-skipped", {
             workspaceId: input.workspace.id,
             conversationId: input.target.conversationId,
             message: error instanceof Error ? error.message : String(error),
           });
+          if (error instanceof OrchestratorLifecycleRequestError) {
+            throw lifecycleRequestApiError(error);
+          }
+          throw error;
         }
+        const registerLifecycle = (event: string) => input.runTrace.step(
+          event,
+          () => lifecycleOwner.register({
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            opencodeSessionId: input.target.opencodeSessionId,
+            clientMessageId: input.clientMessageId,
+            opencodeMessageId: admittedInput.opencodeMessageId ?? null,
+            origin: input.origin,
+            directory: input.target.directory,
+            kind: lifecycleRunKind(input.kind),
+          }),
+          {
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            opencodeSessionId: input.target.opencodeSessionId,
+            kind: lifecycleRunKind(input.kind),
+          },
+        );
         try {
           admittedInput = withOpenCodeAdmissionMessageId(input);
           reserveStarting(admittedInput);
-          const registered = await input.runTrace.step(
-            "server:conversation-run:lifecycle-register",
-            () => lifecycleOwner.register({
-              workspaceId: input.workspace.id,
-              conversationId: input.target.conversationId,
-              runId: input.runId,
-              opencodeSessionId: input.target.opencodeSessionId,
-              clientMessageId: input.clientMessageId,
-              opencodeMessageId: admittedInput.opencodeMessageId ?? null,
-              origin: input.origin,
-              directory: input.target.directory,
-              kind: lifecycleRunKind(input.kind),
-            }),
-            {
-              workspaceId: input.workspace.id,
-              conversationId: input.target.conversationId,
-              runId: input.runId,
-              opencodeSessionId: input.target.opencodeSessionId,
-              kind: lifecycleRunKind(input.kind),
-            },
-          );
+          const registered = await registerLifecycle("server:conversation-run:lifecycle-register");
           if (registered && registered.runId !== input.runId && activeRunMatchesClientMessage(registered, input)) {
             releaseRun(input.workspace.id, input.runId, "lifecycle-register-reused");
             input.runTrace.record("server:conversation-run:lifecycle-register-reused", {
@@ -3265,30 +3669,98 @@ export function createConversationRunLifecycleController(
             });
             return existingActiveRunPayload(input, registered);
           }
+          input.runTrace.record("server:conversation-run:admission-decision", {
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            clientMessageId: input.clientMessageId,
+            decision: "registered",
+          });
         } catch (error) {
           if (error instanceof RunAlreadyActiveError || error instanceof ConversationRunReservationConflictError) {
             releaseRun(input.workspace.id, input.runId, "lifecycle-register-conflict");
+            let retriedAfterProvenHandoffRecovery = false;
+            let retryRegistrationUnconfirmed = false;
             try {
-              const active = await input.runTrace.step(
-                "server:conversation-run:lifecycle-active-after-register-conflict",
-                () => lifecycleOwner.active(input.workspace.id, input.target.conversationId),
-                {
-                  workspaceId: input.workspace.id,
-                  conversationId: input.target.conversationId,
-                  activeRunId: error.activeRunId || null,
-                },
-              );
-              if (active && isActiveLifecycleStatus(active.status) && activeRunMatchesClientMessage(active, input)) {
+              const predecessor = await classifyPredecessor({
+                workspace: input.workspace,
+                conversationId: input.target.conversationId,
+                lifecycleOwner,
+                runTrace: input.runTrace,
+                source: "register-conflict",
+              });
+              if (predecessor.kind === "active_exact_owner" && activeRunMatchesClientMessage(predecessor.status, input)) {
                 input.runTrace.record("server:conversation-run:lifecycle-register-conflict-reused", {
                   workspaceId: input.workspace.id,
                   conversationId: input.target.conversationId,
-                  runId: active.runId,
+                  runId: predecessor.status.runId,
                   clientMessageId: input.clientMessageId,
                   origin: input.origin,
                 });
-                return existingActiveRunPayload(input, active);
+                return existingActiveRunPayload(input, predecessor.status);
+              }
+              if (predecessor.kind === "active_exact_owner" || predecessor.kind === "terminal_handoff_pending") {
+                return queueRun(input, predecessor.status.runId);
+              }
+              if (predecessor.kind === "terminal_handoff_unresolved") {
+                input.runTrace.record("server:conversation-run:admission-decision", {
+                  workspaceId: input.workspace.id,
+                  conversationId: input.target.conversationId,
+                  runId: input.runId,
+                  clientMessageId: input.clientMessageId,
+                  blockingRunId: predecessor.status.runId,
+                  decision: "blocked_terminal_handoff_unresolved",
+                  reason: predecessor.reason,
+                });
+                throw terminalHandoffRecoveryRequired(input, predecessor);
+              }
+              if (!predecessor.recoveredTerminalHandoff) {
+                return queueRun(input, error.activeRunId || null);
+              }
+
+              // The first register raced a terminal owner whose guarded
+              // generation recovery has now proven it lost. One fresh read
+              // made the lifecycle idle, so retry exactly once under the same
+              // workspace gate and the same OpenCode idempotency key.
+              reserveStarting(admittedInput);
+              try {
+                const retried = await registerLifecycle("server:conversation-run:lifecycle-register-after-proven-handoff-recovery");
+                if (retried && retried.runId !== input.runId && activeRunMatchesClientMessage(retried, input)) {
+                  releaseRun(input.workspace.id, input.runId, "lifecycle-register-retry-reused");
+                  return existingActiveRunPayload(input, retried);
+                }
+                input.runTrace.record("server:conversation-run:admission-decision", {
+                  workspaceId: input.workspace.id,
+                  conversationId: input.target.conversationId,
+                  runId: input.runId,
+                  decision: "registered-after-proven-handoff-recovery",
+                });
+                // Registration succeeded; fall through to the one upstream
+                // dispatch below. A second conflict is never retried.
+                retriedAfterProvenHandoffRecovery = true;
+              } catch (retryError) {
+                if (retryError instanceof RunAlreadyActiveError || retryError instanceof ConversationRunReservationConflictError) {
+                  releaseRun(input.workspace.id, input.runId, "lifecycle-register-retry-conflict");
+                  return queueRun(input, retryError.activeRunId || null);
+                }
+                // A transport failure after the guarded retry is outcome-
+                // unknown: the orchestrator may have persisted the run while
+                // its response was lost. Preserve its reservation and use the
+                // same reconciler as the initial registration path instead of
+                // queueing a successor behind this very run.
+                retryRegistrationUnconfirmed = true;
+                scheduleUnconfirmedRegistrationRecovery(
+                  admittedInput,
+                  "lifecycle-register-after-proven-handoff-recovery-unconfirmed",
+                );
+                if (retryError instanceof OrchestratorLifecycleRequestError) {
+                  throw lifecycleRequestApiError(retryError);
+                }
+                throw retryError;
               }
             } catch (activeError) {
+              if (activeError instanceof ApiError) throw activeError;
+              if (retryRegistrationUnconfirmed) throw activeError;
               input.runTrace.record("server:conversation-run:lifecycle-register-conflict-active-skipped", {
                 workspaceId: input.workspace.id,
                 conversationId: input.target.conversationId,
@@ -3296,13 +3768,16 @@ export function createConversationRunLifecycleController(
                 message: activeError instanceof Error ? activeError.message : String(activeError),
               });
             }
-            return queueRun(input, error.activeRunId || null);
+            if (!retriedAfterProvenHandoffRecovery) {
+              return queueRun(input, error.activeRunId || null);
+            }
+          } else {
+            scheduleUnconfirmedRegistrationRecovery(admittedInput, "lifecycle-register-unconfirmed");
+            if (error instanceof OrchestratorLifecycleRequestError) {
+              throw lifecycleRequestApiError(error);
+            }
+            throw error;
           }
-          scheduleUnconfirmedRegistrationRecovery(admittedInput, "lifecycle-register-unconfirmed");
-          if (error instanceof OrchestratorLifecycleRequestError) {
-            throw lifecycleRequestApiError(error);
-          }
-          throw error;
         }
       }
       if (!options.submitOpenCode) {
