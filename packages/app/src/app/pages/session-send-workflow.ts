@@ -1,3 +1,4 @@
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import { GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID } from "../lib/pending-session-drafts";
 import {
   normalizeSessionSendCorrelation,
@@ -1965,7 +1966,11 @@ export function createSessionSendWorkflow(
             disposeProvisional();
             if (commandMessageIDToClear)
               deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
-            const message = deps.messageFromUnknownError(error);
+            // A blocked historical predecessor is an expected, recoverable
+            // state with its own retry affordance, not an opaque server fault.
+            const message = error.code === "terminal_handoff_recovery_required"
+              ? __vesloT("session.run_terminal_handoff_unresolved", __vesloCurrentLocale())
+              : deps.messageFromUnknownError(error);
             deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
               sessionID: existingSessionId,
               mode: resolvedDraft.mode,

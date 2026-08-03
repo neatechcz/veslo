@@ -411,6 +411,66 @@ describe("run activity probe HTTP behavior", () => {
     });
   });
 
+  test("a replacement engine generation may not answer for a previous owner", async () => {
+    // A new engine reads the same on-disk session and would report it idle
+    // even though it never ran it. That must never retire the old owner.
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine-b", engineOwnerId: "owner-b" }),
+      getEngineOwnerId: (engine) => engine.engineOwnerId,
+      buildEngineRequest: () => {
+        throw new Error("must not query a foreign engine generation");
+      },
+    });
+
+    await expect(probe({ ...record, engineOwnerId: "owner-a" })).resolves.toEqual({
+      unreachable: true,
+      unavailableReason: "owner_generation_mismatch",
+    });
+  });
+
+  test("the owning engine generation still answers normally", async () => {
+    const urls: string[] = [];
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine-a", engineOwnerId: "owner-a" }),
+      getEngineOwnerId: (engine) => engine.engineOwnerId,
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine-a${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: mockFetch(async (input) => {
+        urls.push(String(input));
+        return new Response(JSON.stringify({}), { status: 200 });
+      }),
+    });
+
+    const result = await probe({ ...record, engineOwnerId: "owner-a" });
+
+    expect(urls.length).toBeGreaterThan(0);
+    expect(result).not.toEqual({
+      unreachable: true,
+      unavailableReason: "owner_generation_mismatch",
+    });
+  });
+
+  test("an unknown owner on either side keeps the previous behavior", async () => {
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine", engineOwnerId: undefined }),
+      getEngineOwnerId: (engine) => engine.engineOwnerId,
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: mockFetch(async () => new Response(JSON.stringify({}), { status: 200 })),
+    });
+
+    const result = await probe({ ...record, engineOwnerId: "owner-a" });
+
+    expect(result).not.toEqual({
+      unreachable: true,
+      unavailableReason: "owner_generation_mismatch",
+    });
+  });
+
   test("idle session status requires a terminal transcript candidate", async () => {
     const urls: string[] = [];
     const probe = createRunActivityProbe({

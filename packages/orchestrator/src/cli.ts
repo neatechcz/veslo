@@ -5527,6 +5527,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           usesSharedOpenCodeEngine(engineTopology.mode)
             ? sharedOpenCodeEngine?.getRunning()
             : pool.get(workspaceId),
+        getEngineOwnerId: (engine) => engine.engineOwnerId,
         buildEngineRequest,
       });
   const modelRetryNoProgressHardMs = readNumber(

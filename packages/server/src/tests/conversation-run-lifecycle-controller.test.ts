@@ -1589,6 +1589,12 @@ test("submitRun preserves the draft instead of queueing behind an unresolved his
   ]);
   expect(queue.items).toEqual([]);
   expect(submitCalls).toEqual([]);
+  // The rejected submit must leave the same durable fence the queue drain
+  // leaves, so the run status can project it and the app can offer its
+  // existing retry-verification action instead of a bare error.
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-historical-terminal")).toEqual(
+    expect.objectContaining({ state: "unresolved", reason: "process_identity_unavailable" }),
+  );
 });
 
 test("submitRun returns a post-recovery lifecycle read failure without creating a handoff barrier", async () => {

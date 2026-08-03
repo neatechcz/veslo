@@ -1255,6 +1255,46 @@ export function createConversationRunLifecycleController(
     });
   };
 
+  /**
+   * A blocked predecessor must leave the same durable barrier whether it was
+   * found by the queue drain or by a direct submit. Without it a rejected
+   * submit reports a bare error: the run status has nothing to project, so the
+   * app cannot offer its existing retry-verification affordance.
+   */
+  const persistBlockedTerminalHandoffBarrier = (
+    workspaceIdRaw: string,
+    conversationId: string,
+    decision: Extract<PredecessorDecision, { kind: "terminal_handoff_unresolved" }>,
+  ) => {
+    const workspaceId = normalizeWorkspaceExecutionKey(workspaceIdRaw);
+    const runId = decision.status.runId.trim();
+    if (!workspaceId || !runId) return;
+    const fingerprint = terminalHandoffFingerprint(workspaceId, runId, decision.status);
+    const observedBarrier = terminalHandoffBarrier(workspaceId, conversationId, runId) ??
+      options.queueStore?.observeTerminalHandoffBarrier({
+        workspaceId,
+        conversationId,
+        runId,
+        fingerprint,
+        reason: decision.reason,
+      }) ?? null;
+    if (observedBarrier?.state === "observed") {
+      options.queueStore?.requestTerminalHandoffBarrierEvidence({
+        workspaceId,
+        conversationId,
+        runId,
+        fingerprint,
+        reason: decision.reason,
+      });
+    }
+    markTerminalHandoffBarrierUnresolved({
+      workspaceId,
+      conversationId,
+      runId,
+      reason: decision.reason,
+    });
+  };
+
   const terminalHandoffRecoveryRequired = (
     input: ConversationRunLifecycleSubmitInput,
     decision: Extract<PredecessorDecision, { kind: "terminal_handoff_unresolved" }>,
@@ -3619,6 +3659,11 @@ export function createConversationRunLifecycleController(
               decision: "blocked_terminal_handoff_unresolved",
               reason: predecessor.reason,
             });
+            persistBlockedTerminalHandoffBarrier(
+              input.workspace.id,
+              input.target.conversationId,
+              predecessor,
+            );
             throw terminalHandoffRecoveryRequired(input, predecessor);
           }
         } catch (error) {
@@ -3712,6 +3757,11 @@ export function createConversationRunLifecycleController(
                   decision: "blocked_terminal_handoff_unresolved",
                   reason: predecessor.reason,
                 });
+                persistBlockedTerminalHandoffBarrier(
+                  input.workspace.id,
+                  input.target.conversationId,
+                  predecessor,
+                );
                 throw terminalHandoffRecoveryRequired(input, predecessor);
               }
               if (!predecessor.recoveredTerminalHandoff) {

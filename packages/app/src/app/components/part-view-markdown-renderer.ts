@@ -5,6 +5,31 @@ import { renderCodeSpanWithLink } from "./part-view-link-utils";
 const escapeHtml = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
+
+/**
+ * A collapsed preview cuts its source at a fixed offset, which can land inside
+ * a fenced block. Without a closing fence the remaining preview would render as
+ * one code block, so the cut is balanced before it is parsed. Only an
+ * unterminated fence is repaired; balanced input is returned untouched.
+ */
+export function closeUnterminatedCodeFence(markdown: string): string {
+  let openFence: string | null = null;
+  for (const line of markdown.split("\n")) {
+    const marker = FENCE_LINE.exec(line)?.[1];
+    if (!marker) continue;
+    if (openFence === null) {
+      openFence = marker;
+      continue;
+    }
+    // A closing fence uses the same character and is at least as long.
+    if (marker[0] === openFence[0] && marker.length >= openFence.length) {
+      openFence = null;
+    }
+  }
+  return openFence === null ? markdown : `${markdown}\n${openFence}`;
+}
+
 const copyIconHtml = `
   <svg
     xmlns="http://www.w3.org/2000/svg"

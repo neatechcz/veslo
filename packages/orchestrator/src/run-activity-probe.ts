@@ -7,6 +7,11 @@ export type RunActivityProbeRecord = {
   workspaceId: string;
   engineSessionId: string;
   directory: string;
+  /**
+   * The engine generation that owned this run. When it is known, the probe
+   * only trusts an answer from that exact generation.
+   */
+  engineOwnerId?: string | null;
   createdAt?: number | null;
   clientMessageId?: string | null;
   opencodeMessageId?: string | null;
@@ -483,6 +488,11 @@ function expectedUserMessageIdForRecord(record: RunActivityProbeRecord): string 
 
 export function createRunActivityProbe<Engine>(deps: {
   getEngine: (workspaceId: string) => Engine | null | undefined;
+  /**
+   * Identifies the generation currently serving a workspace. Supplying it lets
+   * the probe refuse to answer for a run owned by a superseded engine.
+   */
+  getEngineOwnerId?: (engine: Engine) => string | null | undefined;
   buildEngineRequest: (
     engine: Engine,
     input: RunActivityEngineRequestInput,
@@ -520,6 +530,18 @@ export function createRunActivityProbe<Engine>(deps: {
   return async (record) => {
     const engine = deps.getEngine(record.workspaceId);
     if (!engine) return { unreachable: true, unavailableReason: "no_current_engine" };
+
+    // A replacement engine reads the same on-disk sessions as its predecessor,
+    // so it will happily report an old session as idle even though it never
+    // ran it. Treating that as proof would retire a possibly-live owner, so a
+    // generation mismatch is reported as unreachable and stays fail-closed.
+    const recordOwnerId = record.engineOwnerId?.trim();
+    if (recordOwnerId) {
+      const currentOwnerId = deps.getEngineOwnerId?.(engine)?.trim();
+      if (currentOwnerId && currentOwnerId !== recordOwnerId) {
+        return { unreachable: true, unavailableReason: "owner_generation_mismatch" };
+      }
+    }
 
     try {
       const status = await fetchJson(engine, record, "/session/status");

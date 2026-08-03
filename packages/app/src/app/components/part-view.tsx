@@ -16,7 +16,7 @@ import {
   splitTextWithStandalonePathLinks,
   type LinkType,
 } from "./part-view-link-utils";
-import { createCustomRenderer } from "./part-view-markdown-renderer";
+import { closeUnterminatedCodeFence, createCustomRenderer } from "./part-view-markdown-renderer";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 type Props = {
@@ -242,7 +242,7 @@ export default function PartView(props: Props) {
     const text = rawText();
     if (!collapsedLongText()) return text;
     if (text.length <= LARGE_TEXT_PREVIEW_CHARS) return text;
-    return `${text.slice(0, LARGE_TEXT_PREVIEW_CHARS)}\n\n...`;
+    return `${closeUnterminatedCodeFence(text.slice(0, LARGE_TEXT_PREVIEW_CHARS))}\n\n...`;
   });
   let textContainerEl: HTMLDivElement | undefined;
   let codeCopyResetTimer: number | undefined;
@@ -294,6 +294,23 @@ export default function PartView(props: Props) {
   const textClass = () => (tone() === "dark" ? "text-gray-12" : "text-gray-12");
   const subtleTextClass = () => (tone() === "dark" ? "text-gray-12/70" : "text-gray-11");
   const readingTextClass = () => `font-reading type-reading-md ${textClass()}`.trim();
+  // Shared by the expanded view and the collapsed preview so a long message
+  // reads the same before and after it is opened.
+  const markdownContentClass = () => `markdown-content font-reading type-reading-md max-w-none ${textClass()}
+    [&_strong]:font-semibold
+    [&_em]:italic
+    [&_h1]:font-product [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
+    [&_h2]:font-product [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
+    [&_h3]:font-product [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
+    [&_p]:my-2 [&_p]:leading-[1.45]
+    [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2
+    [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2
+    [&_li]:my-1
+    [&_blockquote]:border-l-4 [&_blockquote]:border-dls-border [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
+    [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_table]:text-[13px] [&_table]:leading-[1.35]
+    [&_th]:border [&_th]:border-dls-border [&_th]:px-2 [&_th]:py-1 [&_th]:bg-dls-hover [&_th]:text-[12px] [&_th]:leading-4
+    [&_td]:border [&_td]:border-dls-border [&_td]:px-2 [&_td]:py-1 [&_td]:text-[12px] [&_td]:leading-4
+  `.trim();
   const productTextClass = () => `font-product type-ui-sm ${textClass()}`.trim();
   const subtleProductTextClass = () => `font-product type-ui-xs ${subtleTextClass()}`.trim();
   const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
@@ -303,13 +320,14 @@ export default function PartView(props: Props) {
   const copiedCodeLabel = () => __vesloT("common.copied", __vesloCurrentLocale());
   const markdownSource = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return "";
-    if (collapsedLongText()) return "";
-    return rawText();
+    // A collapsed part still renders markdown, but only over its bounded
+    // preview slice. That keeps the large-text guard (the full source is never
+    // parsed while collapsed) without showing raw markup to the reader.
+    return collapsedLongText() ? collapsedPreviewText() : rawText();
   });
   const throttledMarkdownSource = useThrottledValue(() => markdownSource(), markdownThrottleMs);
   const renderedMarkdown = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return null;
-    if (collapsedLongText()) return null;
     const text = throttledMarkdownSource();
     if (!text.trim()) return "";
 
@@ -673,14 +691,28 @@ export default function PartView(props: Props) {
       <Match when={p().type === "text"}>
         <Show when={collapsedLongText()}>
           <div class="rounded-xl border border-gray-6/70 bg-gray-2/30 p-4 space-y-3">
-            <div
-              ref={(el) => {
-                textContainerEl = el;
-              }}
-              class={`font-reading type-reading-md whitespace-pre-wrap break-words max-h-[22rem] overflow-hidden ${textClass()}`.trim()}
+            <Show
+              when={typeof renderedMarkdown() === "string" && renderedMarkdown()}
+              fallback={
+                <div
+                  ref={(el) => {
+                    textContainerEl = el;
+                  }}
+                  class={`font-reading type-reading-md whitespace-pre-wrap break-words max-h-[22rem] overflow-hidden ${textClass()}`.trim()}
+                >
+                  {collapsedPreviewText()}
+                </div>
+              }
             >
-              {collapsedPreviewText()}
-            </div>
+              <div
+                ref={(el) => {
+                  textContainerEl = el;
+                }}
+                class={`${markdownContentClass()} max-h-[22rem] overflow-hidden`}
+                innerHTML={renderedMarkdown()!}
+                onClick={(event) => void handleMarkdownClick(event)}
+              />
+            </Show>
               <button
                 type="button"
                 class="rounded-md border border-gray-6/80 bg-gray-1 px-3 py-1.5 text-xs font-medium text-gray-11 hover:bg-gray-2 hover:text-gray-12"
@@ -720,21 +752,7 @@ export default function PartView(props: Props) {
           <Show when={typeof renderedMarkdown() === "string" && renderedMarkdown()}>
             <div
               ref={(el) => { textContainerEl = el; }}
-              class={`markdown-content font-reading type-reading-md max-w-none ${textClass()}
-                [&_strong]:font-semibold
-                [&_em]:italic
-                [&_h1]:font-product [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
-                [&_h2]:font-product [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
-                [&_h3]:font-product [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
-                [&_p]:my-2 [&_p]:leading-[1.45]
-                [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2
-                [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2
-                [&_li]:my-1
-                [&_blockquote]:border-l-4 [&_blockquote]:border-dls-border [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
-                [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_table]:text-[13px] [&_table]:leading-[1.35]
-                [&_th]:border [&_th]:border-dls-border [&_th]:px-2 [&_th]:py-1 [&_th]:bg-dls-hover [&_th]:text-[12px] [&_th]:leading-4
-                [&_td]:border [&_td]:border-dls-border [&_td]:px-2 [&_td]:py-1 [&_td]:text-[12px] [&_td]:leading-4
-              `.trim()}
+              class={markdownContentClass()}
               innerHTML={renderedMarkdown()!}
               onClick={(event) => void handleMarkdownClick(event)}
             />

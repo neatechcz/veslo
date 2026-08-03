@@ -28,6 +28,11 @@ export type RunProbeActivityResult = {
 
 export type RunProbeUnavailableReason =
   | "no_current_engine"
+  // The workspace is serving a different engine generation than the one that
+  // owned this run. A replacement engine can still read the same on-disk
+  // session, so its "not running" answer describes itself, never the original
+  // owner. Only the generation authority may retire that owner.
+  | "owner_generation_mismatch"
   | "session_status_http"
   | "session_messages_missing"
   | "session_messages_http"
