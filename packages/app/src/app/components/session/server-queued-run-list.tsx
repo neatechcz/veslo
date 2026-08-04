@@ -32,6 +32,12 @@ export default function ServerQueuedRunList(props: ServerQueuedRunListProps) {
           {(item) => (
             <div
               role="listitem"
+              data-testid="session-server-queue-row"
+              data-queue-owner="server"
+              data-queue-item-id={item.queueItemId}
+              data-client-message-id={item.clientMessageId ?? ""}
+              data-reserved-run-id={item.reservedRunId}
+              data-queue-state={item.status}
               class={`flex items-start gap-3 rounded-xl border bg-gray-1 px-3 py-2.5 text-gray-12 shadow-[0_1px_2px_rgba(17,24,39,0.08)] ${
                 item.status === "failed"
                   ? "border-red-7/35 bg-red-2/20"

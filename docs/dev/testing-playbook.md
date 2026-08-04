@@ -209,8 +209,25 @@ $env:WEBDRIVER_ALLOW_MUTATION = "1"
 pnpm test:webdriver:same-conversation-queue-roundtrip -- <runtime-info.json> `
   --workspace "Disposable workspace" `
   --first-message "Reply with exactly: first" `
-  --second-message "Reply with exactly: second"
+  --second-message "Reply with exactly: second" `
+  --event-stream-gate true
 ```
+
+The optional event-stream gate is available only when the desktop runtime has
+E2E fault injection enabled and the workspace uses pooled-per-workspace engine
+topology. It disconnects and holds only the app-facing workspace event stream;
+the pooled engine, queue drain, admitted run, and submit path remain live. The
+scenario releases the gate only after the exact queued item is claimed and its
+client message is admitted, then verifies that the same engine owner and
+generation reconnect. Its MutationObserver artifact contains row roles,
+identities, parents, placeholder kinds, and queue ownership, but no prompt or
+answer content.
+
+A deliberate gate disconnect is test-fault evidence only. It must not be used
+to infer that a production admission intentionally replaces its event stream.
+Run ordering diagnostics after the workspace skill view has stabilized; a
+fresh runtime can legitimately replace an initial empty-view engine during
+skill discovery, and the scenario rejects that unrelated generation change.
 
 For historical-conversation projection and continuation, create a seed chat,
 an intervening chat, then reopen the seed through the visible sidebar:

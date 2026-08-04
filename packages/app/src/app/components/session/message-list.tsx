@@ -1873,6 +1873,7 @@ export default function MessageList(props: MessageListProps) {
           class="flex group justify-start"
           data-message-role="assistant"
           data-message-id={progressBlock().messageIds[0] ?? ""}
+          data-message-ids={progressBlock().messageIds.join(",")}
           style={blockPerfStyle(blockIndex())}
         >
           <div
@@ -1940,6 +1941,22 @@ export default function MessageList(props: MessageListProps) {
       const state = pendingMessageState();
       return state?.state === "sync-warning" ? state : null;
     };
+    const messageParentId = () => {
+      const parentID = (messageBlock().message.info as { parentID?: unknown }).parentID;
+      return typeof parentID === "string" ? parentID : "";
+    };
+    const messagePlaceholderKind = () =>
+      (messageBlock().message.info as { vesloPlaceholderKind?: unknown }).vesloPlaceholderKind === "part-first"
+        ? "part-first"
+        : "none";
+    const messageClientMessageId = () => {
+      const clientMessageId = (messageBlock().message.info as { clientMessageId?: unknown }).clientMessageId;
+      return typeof clientMessageId === "string" ? clientMessageId : "";
+    };
+    const messagePresentationOwner = () =>
+      (messageBlock().message.info as { vesloPresentationOwner?: unknown }).vesloPresentationOwner === "pending-submit"
+        ? "pending-submit"
+        : "canonical";
 
     if (isSyntheticSessionError) {
       const messageText = () =>
@@ -1976,6 +1993,10 @@ export default function MessageList(props: MessageListProps) {
         data-testid="session-message-row"
         data-message-role={messageBlock().isUser ? "user" : "assistant"}
         data-message-id={messageBlock().messageId}
+        data-message-parent-id={messageParentId()}
+        data-message-placeholder-kind={messagePlaceholderKind()}
+        data-client-message-id={messageClientMessageId()}
+        data-message-owner={messagePresentationOwner()}
         style={blockPerfStyle(blockIndex())}
       >
         <div

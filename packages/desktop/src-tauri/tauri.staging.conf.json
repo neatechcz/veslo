@@ -3,6 +3,17 @@
   "productName": "Veslo Staging",
   "identifier": "com.neatech.veslo.staging",
   "bundle": {
-    "createUpdaterArtifacts": false
+    "createUpdaterArtifacts": false,
+    "externalBin": [
+      "sidecars/veslo-code",
+      "sidecars/opencode",
+      "sidecars/veslo-server",
+      "sidecars/veslo-code-router",
+      "sidecars/veslo-orchestrator",
+      "sidecars/chrome-devtools-mcp",
+      "sidecars/veslo-node",
+      "sidecars/versions.json",
+      "sidecars/opencode-managed-deps.json"
+    ]
   }
 }

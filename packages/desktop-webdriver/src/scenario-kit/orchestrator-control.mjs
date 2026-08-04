@@ -48,7 +48,7 @@ function processIsAlive(pid) {
   }
 }
 
-async function readOrchestratorBaseUrl(dataDir) {
+export async function readOrchestratorBaseUrl(dataDir) {
   const statePath = resolve(dataDir, "veslo-orchestrator-state.json");
   const state = JSON.parse(await readFile(statePath, "utf8"));
   return assertLoopbackOrchestratorUrl(state?.daemon?.baseUrl);

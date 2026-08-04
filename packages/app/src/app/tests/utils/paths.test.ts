@@ -8,7 +8,8 @@ import {
   normalizeDirectoryPath,
   normalizeDirectoryQueryPath,
   sessionDirectoryMatchesRoot,
-} from "../../utils/index.js";
+} from "../../utils/paths.js";
+import { toWorkspaceRelative } from "../../utils/workspace-path.js";
 
 const WINDOWS_WORKSPACE_PATH = "C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2";
 const WINDOWS_WORKSPACE_PATH_NORMALIZED = "C:/Users/alice/AppData/Local/Veslo/test-repo/test-repo2";
@@ -88,6 +89,20 @@ test("normalizeDirectoryPath reads userAgentData once for the current navigator"
       delete (globalThis as { navigator?: Navigator }).navigator;
     }
   }
+});
+
+test("toWorkspaceRelative keeps POSIX path comparisons case-sensitive", () => {
+  assert.equal(
+    toWorkspaceRelative("/Users/alice/project/Report.md", "/Users/alice/Project"),
+    "/Users/alice/project/Report.md",
+  );
+});
+
+test("toWorkspaceRelative keeps Windows path comparisons case-insensitive", () => {
+  assert.equal(
+    toWorkspaceRelative("c:/Users/alice/project/Report.md", "C:/Users/alice/Project"),
+    "Report.md",
+  );
 });
 
 test("normalizeDirectoryPath canonicalizes WSL mount paths on Windows", async () => {

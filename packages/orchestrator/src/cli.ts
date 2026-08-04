@@ -72,6 +72,11 @@ import { createEngineLossNotifier } from "./engine-loss-notifier.js";
 import { createRunDeliverySnapshotNotifier } from "./run-delivery-snapshot-notifier.js";
 import { routerRequestObservation } from "./router-request-observability.js";
 import {
+  E2eEventStreamGate,
+  E2eEventStreamGateError,
+  type E2eEventStreamOwner,
+} from "./e2e-event-stream-gate.js";
+import {
   hostDirectoryToEngineDirectory,
   resolveEnginePathMappingBackend,
   rewriteDirectoryFieldsForEngine,
@@ -5642,6 +5647,19 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   let e2eFailNextSharedProxyCount = 0;
   const e2eFaultInjectionEnabled = process.env.VESLO_E2E_FAULT_INJECTION === "1";
+  const e2eEventStreamGate = new E2eEventStreamGate({
+    trace: (event, payload) => writeSendWorkflowTrace(event, payload),
+  });
+  const e2eEventStreamOwner = (
+    workspaceId: string,
+    engine: EngineProcess | null | undefined,
+  ): E2eEventStreamOwner => ({
+    workspaceId,
+    engineOwnerId: engine?.engineOwnerId ?? "",
+    directoryInstanceEpoch: engine?.directoryInstanceEpoch ?? null,
+    enginePid: engine?.pid ?? null,
+    engineStartedAt: engine?.spawnedAt ?? null,
+  });
 
   const normalizeShutdownAttribution = (
     body: Record<string, unknown>,
@@ -5790,6 +5808,50 @@ async function runRouterDaemon(args: ParsedArgs) {
       if (url.pathname.startsWith("/e2e/")) {
         if (!e2eFaultInjectionEnabled) {
           send(404, { error: "not found" });
+          return;
+        }
+        const eventStreamGateMatch = url.pathname.match(
+          /^\/e2e\/workspace\/([^/]+)\/event-stream-gate(?:\/(arm|release))?$/,
+        );
+        if (eventStreamGateMatch) {
+          const workspaceId = decodeURIComponent(eventStreamGateMatch[1] ?? "");
+          const action = eventStreamGateMatch[2] ?? "status";
+          const workspace = findWorkspace(state, workspaceId);
+          if (!workspace) {
+            send(404, { error: "workspace not found", workspaceId });
+            return;
+          }
+          if (engineTopology.mode !== "pooled-per-workspace") {
+            send(409, {
+              error: "event_stream_gate_requires_pooled_topology",
+              workspaceId,
+              engineTopology: engineTopology.mode,
+            });
+            return;
+          }
+          try {
+            if (req.method === "GET" && action === "status") {
+              send(200, { ok: true, ...e2eEventStreamGate.status(workspaceId) });
+              return;
+            }
+            if (req.method === "POST" && action === "arm") {
+              send(200, { ok: true, gate: e2eEventStreamGate.arm(workspaceId) });
+              return;
+            }
+            if (req.method === "POST" && action === "release") {
+              const body = await readObjectBody();
+              const gateId = bodyString(body, "gateId");
+              send(200, { ok: true, gate: e2eEventStreamGate.release(workspaceId, gateId) });
+              return;
+            }
+          } catch (error) {
+            if (error instanceof E2eEventStreamGateError) {
+              send(409, { error: error.code, message: error.message, workspaceId });
+              return;
+            }
+            throw error;
+          }
+          send(405, { error: "method not allowed", workspaceId, action });
           return;
         }
         if (req.method === "POST" && url.pathname === "/e2e/shared-engine/kill-child") {
@@ -6639,8 +6701,23 @@ async function runRouterDaemon(args: ParsedArgs) {
         // whole lifetime. Do not attach workspace B's /event stream to an
         // engine still staged for A and then restart it on B's first prompt.
         // Other GET/HEAD requests retain their fail-fast, no-spawn behavior.
-        const sharedEventStream = proxyMethod === "GET" && /^\/event\/?$/.test(restPath);
+        const appEventStream = proxyMethod === "GET" && /^\/event\/?$/.test(restPath);
+        const sharedEventStream = appEventStream;
         const sharedViewRequired = requiresSharedSkillViewForProxy(proxyMethod, restPath);
+        let releasedE2eEventStreamGateId: string | null = null;
+        if (
+          e2eFaultInjectionEnabled &&
+          workspaceTopology === "pooled-per-workspace" &&
+          appEventStream
+        ) {
+          const gateWait = await e2eEventStreamGate.waitIfArmed(
+            e2eEventStreamOwner(ws.id, pool.get(ws.id)),
+          );
+          if (gateWait.kind === "released") {
+            releasedE2eEventStreamGateId = gateWait.gate.gateId;
+          }
+          if (req.destroyed || res.destroyed) return;
+        }
         // A refresh closes *new* admission for its directory, but the abort
         // that drains the already admitted run must still reach that cached
         // instance. Blocking it would turn a safe deferred update into a
@@ -7375,6 +7452,22 @@ async function runRouterDaemon(args: ParsedArgs) {
           };
         };
 
+        let closeE2eEventStreamConnection = () => {};
+        if (
+          e2eFaultInjectionEnabled &&
+          workspaceTopology === "pooled-per-workspace" &&
+          appEventStream
+        ) {
+          const registration = e2eEventStreamGate.registerActiveConnection({
+            ...e2eEventStreamOwner(ws.id, engine),
+            releasedGateId: releasedE2eEventStreamGateId,
+            disconnect: () => {
+              if (!res.destroyed && !res.writableEnded) res.destroy();
+            },
+          });
+          closeE2eEventStreamConnection = registration.close;
+        }
+
         proxyToEngine({
           clientReq: req,
           clientRes: res,
@@ -7402,6 +7495,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             ? rewriteJsonResponse
             : undefined,
           onSuccess: () => {
+            closeE2eEventStreamConnection();
             flushRouterObservations();
             if (bootstrapPromptReservation) {
               // `onSuccess` means the upstream response completed, not that
@@ -7429,6 +7523,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             persistEnginesSnapshot();
           },
           onError: (err) => {
+            closeE2eEventStreamConnection();
             releaseBootstrapPromptReservation();
             flushRouterObservations();
             const healthPolicy = classifySharedProxyUpstreamError({
@@ -7479,6 +7574,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           // shared engine unhealthy here would cold-restart it on every
           // stream teardown.
           onClientAbort: () => {
+            closeE2eEventStreamConnection();
             releaseBootstrapPromptReservation();
             flushRouterObservations();
             finishUpstreamTrace("orchestrator:proxy-upstream:done", {

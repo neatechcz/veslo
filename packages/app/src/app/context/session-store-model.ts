@@ -127,6 +127,7 @@ export const formatSlashCommandDisplay = (name: string, args: string) => {
 };
 
 export const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
+  vesloPlaceholderKind: "part-first",
   id: part.messageID,
   sessionID: part.sessionID,
   role: "assistant",

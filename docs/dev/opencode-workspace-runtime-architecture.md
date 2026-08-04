@@ -182,6 +182,17 @@ it is not a `proxy-upstream:error` and does not make the engine unhealthy.
 Successful send-result rows do not serialize global runtime error text. Rejected
 rows retain only the safe `runtimeErrorPresent` boolean.
 
+Dedicated E2E runtimes also expose a workspace-scoped pooled event-stream gate.
+It is unavailable unless fault injection is enabled. Arming the gate disconnects
+the one active app-facing `/event` response and holds subsequent app reconnects
+until the exact gate id is released. It does not stop the pooled child, change
+engine ownership or generation, pause server queue drain, or intercept admitted
+submit traffic. Content-free trace rows correlate arm, disconnect, blocked
+reconnect, release, and resumed connection with workspace, connection, owner,
+and generation identities. The same-conversation WebDriverIO diagnostic uses
+server queue/run evidence as the barrier and rejects any engine-generation
+change rather than confusing runtime replacement with an observation gap.
+
 Useful validation failure events include:
 
 - `sendPrompt:runtime-preflight:validation-failed`

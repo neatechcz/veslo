@@ -85,12 +85,13 @@ The desktop plugin is pinned to the upstream `tauri-pilot` 0.7.2 revision that r
 Release bundle verification must check more than `versions.json` presence. The
 macOS extracted-app verifier also requires the bundled `veslo-server`,
 `veslo-code-router`, `veslo-orchestrator`, `veslo-code`, `opencode`,
-`chrome-devtools-mcp`, and `opencode-managed-deps.json` sidecars to exist, and
+`chrome-devtools-mcp`, `veslo-node`, and `opencode-managed-deps.json` sidecars to exist, and
 executable sidecars must have executable permissions on POSIX platforms.
-The bundled `veslo-node` runtime is Windows-only: it is added by
-`tauri.windows.conf.json`, provisioned by `prepare-sidecar.mjs`, and required by
-Windows bundle verification. The shared Tauri config must not list it, because
-that would make macOS builds require nonexistent Apple target binaries.
+The bundled `veslo-node` runtime accompanies Chrome DevTools MCP in every
+Windows and macOS distributable bundle. `prepare-sidecar.mjs` provisions the
+matching target binary, while the target-specific Tauri configs declare it.
+The shared Tauri config does not list it, so Linux-only configurations do not
+require a Node sidecar they do not provision.
 Generated CI config extensions must stay minimal and override only the intended
 setting; copying the base config into a later `--config` layer would replace the
 Windows-specific `externalBin` array.

@@ -217,6 +217,7 @@ test("placeholder messages and session error turns are modeled without store sid
   assert.equal(placeholder.id, "msg-a");
   assert.equal(placeholder.sessionID, "sess-a");
   assert.equal(placeholder.role, "assistant");
+  assert.equal(placeholder.vesloPlaceholderKind, "part-first");
 
   const withoutMessages = appendSessionErrorTurnModel({
     current: [],

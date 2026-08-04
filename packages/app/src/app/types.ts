@@ -229,6 +229,7 @@ export type SessionArchiveItem = {
 };
 
 export type PlaceholderAssistantMessage = {
+  vesloPlaceholderKind?: "part-first";
   id: string;
   sessionID: string;
   role: "assistant";

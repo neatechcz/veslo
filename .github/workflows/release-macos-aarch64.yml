@@ -687,6 +687,7 @@ jobs:
             "veslo-code-router",
             "veslo-orchestrator",
             "chrome-devtools-mcp",
+            "veslo-node",
           ];
           const dataSidecars = ["opencode-managed-deps.json"];
           const manifestKeys = [

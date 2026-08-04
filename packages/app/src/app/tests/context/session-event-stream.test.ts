@@ -812,7 +812,9 @@ test(
         await controller.applyEvent(
           {
             type: "message.updated",
-            properties: { info: makeMessage("sess-a", "msg-assistant", "assistant") },
+            properties: {
+              info: { ...makeMessage("sess-a", "msg-assistant", "assistant"), parentID: "msg-user" },
+            },
           } as OpencodeEvent,
           "ws-a",
         );
@@ -838,6 +840,21 @@ test(
         assert.deepEqual(
           assistantPartTrace.map((entry) => entry.messageID),
           ["msg-assistant"],
+        );
+        const messageTrace = (traceWindow.__vesloSendWorkflowTrace ?? []).filter(
+          (entry) => entry.event === "session-sse:message-updated",
+        );
+        assert.deepEqual(
+          messageTrace.map((entry) => ({
+            messageID: entry.messageID,
+            role: entry.role,
+            parentMessageID: entry.parentMessageID,
+            parentPresent: entry.parentPresent,
+          })),
+          [
+            { messageID: "msg-user", role: "user", parentMessageID: null, parentPresent: null },
+            { messageID: "msg-assistant", role: "assistant", parentMessageID: "msg-user", parentPresent: true },
+          ],
         );
       } finally {
         dispose();

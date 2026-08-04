@@ -1006,6 +1006,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             return;
           }
           const current = deps.store.messages[info.sessionID] ?? [];
+          const currentMessage = current.find((message) => message.id === info.id);
+          const replacedPlaceholder =
+            (currentMessage as { vesloPlaceholderKind?: unknown } | undefined)?.vesloPlaceholderKind === "part-first";
           const next = upsertMessageInfo(current, info as MessageInfo);
           if (next !== current) {
             recordTranscriptStoreWrite("sse.message.updated", "message-info", info.sessionID, info.id);
@@ -1016,6 +1019,18 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             role: (info as { role?: string | null }).role,
           });
           deps.onTranscriptObserved?.(info.sessionID);
+          const role = (info as { role?: string | null }).role ?? null;
+          const parentID = (info as { parentID?: string | null }).parentID?.trim() ?? "";
+          recordSendWorkflowTrace("session-sse", "session-sse:message-updated", {
+            workspaceId: sourceWsId || null,
+            sessionID: info.sessionID,
+            messageID: info.id,
+            role,
+            parentMessageID: parentID || null,
+            parentPresent: parentID ? next.some((message) => message.id === parentID) : null,
+            replacedPlaceholder,
+            storeChanged: next !== current,
+          });
           if ((info as { role?: string }).role === "assistant") {
             deps.onAssistantResponseObserved?.(info.sessionID);
             recordSendWorkflowTrace("session-sse", "session-sse:assistant-message-updated", {

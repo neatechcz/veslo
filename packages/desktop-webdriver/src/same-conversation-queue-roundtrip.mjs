@@ -26,10 +26,17 @@ function optionalDelayMs(options, name) {
   return delayMs;
 }
 
+function optionalBoolean(options, name) {
+  const value = normalize(options[name]).toLowerCase();
+  if (!value) return false;
+  if (value !== "true" && value !== "false") fail(`${name} must be true or false.`);
+  return value === "true";
+}
+
 export function parseSameConversationQueueRoundtripArguments(argv) {
   const [runtimeInfoPath, ...tokens] = argv;
   if (!normalize(runtimeInfoPath)) {
-    fail("Usage: pnpm test:webdriver:same-conversation-queue-roundtrip -- <runtime-info.json> --workspace <exact label> --first-message <text> --second-message <text> [--third-message <text> --third-after-settle-ms <0..10000>]");
+    fail("Usage: pnpm test:webdriver:same-conversation-queue-roundtrip -- <runtime-info.json> --workspace <exact label> --first-message <text> --second-message <text> [--event-stream-gate true|false] [--third-message <text> --third-after-settle-ms <0..10000>]");
   }
   const options = {};
   for (let index = 0; index < tokens.length; index += 2) {
@@ -41,6 +48,7 @@ export function parseSameConversationQueueRoundtripArguments(argv) {
       "--second-message": true,
       "--third-message": true,
       "--third-after-settle-ms": true,
+      "--event-stream-gate": true,
     })) {
       fail("Use only the documented same-conversation queue options.");
     }
@@ -65,6 +73,7 @@ export function parseSameConversationQueueRoundtripArguments(argv) {
     secondMessage,
     thirdMessage: thirdMessage || null,
     thirdAfterSettleMs,
+    eventStreamGate: optionalBoolean(options, "--event-stream-gate"),
   };
 }
 

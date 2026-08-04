@@ -12,34 +12,47 @@ const tauriWindowsConfigPath = resolve(
   __dirname,
   "../src-tauri/tauri.windows.conf.json",
 );
+const tauriMacosArmConfigPath = resolve(
+  __dirname,
+  "../src-tauri/tauri.macos.aarch64.release.conf.json",
+);
+const tauriMacosX64ConfigPath = resolve(
+  __dirname,
+  "../src-tauri/tauri.macos.x64.release.conf.json",
+);
+const tauriStagingConfigPath = resolve(__dirname, "../src-tauri/tauri.staging.conf.json");
 const srcTauriDir = resolve(__dirname, "../src-tauri");
 const runtimePreferencesPath = resolve(
   srcTauriDir,
   "src/runtime_preferences.rs",
 );
 
-test("desktop bundle ships the Node runtime beside Chrome DevTools MCP on Windows only", () => {
+test("desktop bundles ship the Node runtime beside Chrome DevTools MCP", () => {
   const baseConfig = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
   const windowsConfig = JSON.parse(
     readFileSync(tauriWindowsConfigPath, "utf8"),
   );
+  const macosArmConfig = JSON.parse(readFileSync(tauriMacosArmConfigPath, "utf8"));
+  const macosX64Config = JSON.parse(readFileSync(tauriMacosX64ConfigPath, "utf8"));
+  const stagingConfig = JSON.parse(readFileSync(tauriStagingConfigPath, "utf8"));
   const baseExternalBin = baseConfig?.bundle?.externalBin;
-  const windowsExternalBin = windowsConfig?.bundle?.externalBin;
+  const bundledExternalBins = [
+    windowsConfig?.bundle?.externalBin,
+    macosArmConfig?.bundle?.externalBin,
+    macosX64Config?.bundle?.externalBin,
+    stagingConfig?.bundle?.externalBin,
+  ];
   assert.ok(
     Array.isArray(baseExternalBin),
     "Expected base Tauri externalBin configuration",
   );
-  assert.ok(
-    Array.isArray(windowsExternalBin),
-    "Expected Windows Tauri externalBin configuration",
-  );
   assert.ok(baseExternalBin.includes("sidecars/chrome-devtools-mcp"));
   assert.equal(baseExternalBin.includes("sidecars/veslo-node"), false);
-  assert.deepEqual(
-    windowsExternalBin.filter((entry) => entry !== "sidecars/veslo-node"),
-    baseExternalBin,
-  );
-  assert.ok(windowsExternalBin.includes("sidecars/veslo-node"));
+  for (const externalBin of bundledExternalBins) {
+    assert.ok(Array.isArray(externalBin), "Expected platform bundle externalBin configuration");
+    assert.deepEqual(externalBin.filter((entry) => entry !== "sidecars/veslo-node"), baseExternalBin);
+    assert.ok(externalBin.includes("sidecars/veslo-node"));
+  }
 });
 
 test("desktop window keeps Tauri native drag-drop disabled for HTML5 file drop", () => {
@@ -70,18 +83,18 @@ test("desktop window keeps a 390px minimum width for phone-standard layouts", ()
   }
 });
 
-test("desktop runtime preferences default to shared non-sandbox engine on supported desktop platforms", () => {
+test("desktop runtime preferences keep shared engines opt-in", () => {
   const source = readFileSync(runtimePreferencesPath, "utf8");
 
   assert.match(
     source,
-    /fn default_shared_unsandboxed_engine_enabled\(\) -> bool \{\s*cfg!\(any\(windows,\s*target_os = "macos"\)\)\s*\}/,
-    "Missing desktop runtime preferences should enable the shared non-sandbox engine on supported desktop platforms",
+    /shared_unsandboxed_engine:\s*false,/,
+    "Missing desktop runtime preferences should not implicitly enable shared engines",
   );
-  assert.doesNotMatch(
+  assert.match(
     source,
-    /fn default_shared_unsandboxed_engine_enabled\(\) -> bool \{\s*false\s*\}/,
-    "Desktop runtime preferences must not silently fall back to sandbox-on defaults after the shared engine migration",
+    /fn default_shared_unsandboxed_engine_override\(\) -> Option<bool> \{\s*Some\(false\)\s*\}/,
+    "The persisted preference fallback should remain explicit and safe",
   );
 });
 
@@ -191,12 +204,12 @@ test("Tauri shutdown records the exit reason around managed service cleanup", ()
   assert.match(lib, /managed_pids=\{pids:\?\}/);
   assert.match(
     lib,
-    /stop_managed_services_for_exit\(&app_handle, "exit_requested"\)/,
+    /stop_managed_services_for_exit\(app_handle, "exit_requested"\)/,
   );
-  assert.match(lib, /stop_managed_services_for_exit\(&app_handle, "exit"\)/);
+  assert.match(lib, /stop_managed_services_for_exit\(app_handle, "exit"\)/);
   assert.match(
     lib,
-    /stop_managed_services_for_exit\(&app_handle, "window_close_requested"\)/,
+    /stop_managed_services_for_exit\(app_handle, "window_close_requested"\)/,
   );
 });
 

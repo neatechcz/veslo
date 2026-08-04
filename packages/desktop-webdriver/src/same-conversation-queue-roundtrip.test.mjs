@@ -19,6 +19,17 @@ test("same-conversation queue roundtrip requires explicit one-line inputs", () =
   ]);
   assert.equal(parsed.workspace, "Workspace A");
   assert.equal(parsed.thirdMessage, null);
+  assert.equal(parsed.eventStreamGate, false);
+  assert.equal(
+    parseSameConversationQueueRoundtripArguments([
+      "runtime-info.json",
+      "--workspace", "Workspace A",
+      "--first-message", "first",
+      "--second-message", "second",
+      "--event-stream-gate", "true",
+    ]).eventStreamGate,
+    true,
+  );
   assert.equal(
     parseSameConversationQueueRoundtripArguments([
       "runtime-info.json",
@@ -59,6 +70,10 @@ test("same-conversation queue roundtrip submits later messages while the first r
   assert.match(scenarioSource, /queue\.no-terminal-assistant-error/);
   assert.match(scenarioSource, /waitForNoVisibleAssistantError/);
   assert.match(scenarioSource, /queueComposerMessageWithEnter/);
+  assert.match(scenarioSource, /queue\.event-stream-gate\.arm/);
+  assert.match(scenarioSource, /beginTurnContinuityCapture/);
+  assert.match(scenarioSource, /waitForWorkflowTraceEvent/);
+  assert.match(scenarioSource, /analyzeCausalGapFrames/);
   assert.match(waitsSource, /Expected \$\{expectedAdditionalCount\} new visible assistant outputs/);
   assert.match(waitsSource, /Visible assistant error/);
 });

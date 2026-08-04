@@ -176,6 +176,7 @@ export function pendingSubmittedDraftToMessage(
     info: {
       id: pending.id,
       clientMessageId: pending.clientMessageId,
+      vesloPresentationOwner: "pending-submit",
       sessionID,
       role: "user",
       time: { created: pending.createdAt },

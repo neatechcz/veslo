@@ -91,6 +91,11 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
           {(item, index) => (
             <div
               role="listitem"
+              data-testid="session-local-queue-row"
+              data-queue-owner="local"
+              data-queue-item-id={item.id}
+              data-client-message-id={item.clientMessageId}
+              data-queue-state={item.state}
               class={`group flex items-start gap-3 rounded-xl border border-gray-6/80 bg-gray-1 px-3 py-2.5 text-gray-12 shadow-[0_1px_2px_rgba(17,24,39,0.08)] transition-colors ${
                 isSending(item)
                   ? "border-blue-7/40 bg-blue-2/20"

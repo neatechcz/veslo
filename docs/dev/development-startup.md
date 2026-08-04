@@ -135,12 +135,24 @@ pnpm test:webdriver:same-conversation-queue-roundtrip -- <runtime-info.json> `
   --workspace "Disposable workspace" `
   --first-message "Reply with exactly: first" `
   --second-message "Reply with exactly: second" `
-  --third-message "Reply with exactly: third"
+  --third-message "Reply with exactly: third" `
+  --event-stream-gate true
 ```
 
 All messages are explicit, single-line inputs. Omit `--third-message` for the
 two-message version; the command never chooses a workspace or prompt by
-itself.
+itself. Omit `--event-stream-gate` for the ordinary queue roundtrip. With the
+gate enabled, the scenario requires an E2E-fault-enabled pooled runtime,
+disconnects only the app-facing workspace event stream, waits for the exact
+queued turn to be claimed and admitted, and releases the reconnect barrier. It
+fails if the pooled engine owner or generation changes. The resulting artifact
+records content-free transcript and queue row transitions so a transient
+orphan or duplicate assistant turn cannot be hidden by the final DOM.
+
+For a freshly started runtime, first allow workspace skill discovery to settle.
+An initial empty skill view may be replaced by the resolved view; that is a real
+engine generation change and is intentionally outside this reconnect-ordering
+diagnostic.
 
 ### Controlled live workspace-skill sidebar diagnostic
 

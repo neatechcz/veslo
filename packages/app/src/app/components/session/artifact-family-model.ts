@@ -5,6 +5,7 @@ import {
   normalizePath,
   normalizeForComparison as normalizeComparablePath,
   normalizeWorkspaceArtifactPath,
+  pathComparisonKey,
 } from "../../utils/workspace-path";
 
 export type ArtifactFamilyId = "files" | "skills" | "mcp" | "soul";
@@ -92,8 +93,8 @@ function isAbsolutePath(path: string): boolean {
 }
 
 function isPathWithinWorkspace(path: string, workspaceRoot: string): boolean {
-  const candidate = normalizeComparablePath(path).toLowerCase();
-  const root = normalizeComparablePath(workspaceRoot).toLowerCase();
+  const candidate = pathComparisonKey(path);
+  const root = pathComparisonKey(workspaceRoot);
   if (!candidate || !root) return false;
   if (candidate === root) return true;
   return candidate.startsWith(`${root}/`);
@@ -216,7 +217,7 @@ function fileInteractionRank(item: ArtifactFamilyItem): number {
 }
 
 function fileFamilyDedupeKey(item: ArtifactFamilyItem): string {
-  const path = normalizeComparablePath(item.path ?? "").toLowerCase();
+  const path = pathComparisonKey(item.path ?? "");
   if (path) return path;
   return normalizeComparablePath(item.title).toLowerCase();
 }
@@ -298,7 +299,7 @@ function buildLegacyFallbackArtifacts(input: ResolveArtifactFamiliesInput): Vesl
   const pushPath = (rawPath: string, timestamp: number, fileInteraction: ArtifactItem["fileInteraction"] = "opened") => {
     const path = normalizeWorkspaceArtifactPath(rawPath, input.workspaceRoot);
     if (!path || isTechnicalArtifactPath(path, input.workspaceRoot)) return;
-    const key = path.toLowerCase();
+    const key = pathComparisonKey(path);
     const kind = fileInteraction === "modified" ? "file_output" : "file_discovered";
     const status = fileInteraction === "modified" ? "updated" : "scanned";
     const current = results.get(key);

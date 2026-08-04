@@ -21,6 +21,11 @@ const normalizeComparablePath = (value: string) => {
 
 const isWindowsLikePath = (value: string) => /^[A-Za-z]:\//.test(value) || value.startsWith("//");
 
+export const pathComparisonKey = (value: string) => {
+  const normalized = normalizeComparablePath(value);
+  return isWindowsLikePath(normalized) ? normalized.toLowerCase() : normalized;
+};
+
 const sanitizeRelativeArtifactPath = (value: string): string | null => {
   const normalized = normalizePath(value).replace(/^\.\/+/, "").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);
@@ -96,8 +101,9 @@ export const toWorkspaceRelative = (file: string, root?: string) => {
   if (!normalizedRoot) return file;
 
   const normalizedFile = file.replace(/[\\/]+/g, "/");
-  const rootKey = normalizedRoot.toLowerCase();
-  const fileKey = normalizedFile.toLowerCase();
+  const caseInsensitive = isWindowsLikePath(normalizedRoot) || isWindowsLikePath(normalizedFile);
+  const rootKey = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
+  const fileKey = caseInsensitive ? normalizedFile.toLowerCase() : normalizedFile;
 
   if (fileKey === rootKey) return normalizedFile.split("/").pop() ?? normalizedFile;
   if (fileKey.startsWith(`${rootKey}/`)) return normalizedFile.slice(normalizedRoot.length + 1);

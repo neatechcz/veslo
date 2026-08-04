@@ -374,6 +374,39 @@ test("absolute system paths outside workspace root are filtered from file artifa
   assert.deepEqual(paths, ["packages/app/src/app/pages/session.tsx"]);
 });
 
+test("case-sensitive POSIX paths outside the workspace are filtered from file artifacts", () => {
+  const workspaceRoot = "/Volumes/Work/Project";
+  const families = resolveArtifactFamilies({
+    serverArtifacts: [
+      artifact({
+        id: "workspace-file",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "inside.md",
+        path: `${workspaceRoot}/inside.md`,
+        timestamp: 20,
+      }),
+      artifact({
+        id: "case-distinct-external-file",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "outside.md",
+        path: "/Volumes/Work/project/outside.md",
+        timestamp: 10,
+      }),
+    ],
+    preferServerArtifacts: true,
+    workspaceRoot,
+  });
+
+  assert.deepEqual(families.map(familyLabel), ["Files"]);
+  const filesFamily = families[0] as Record<string, unknown>;
+  const paths = familyItems(filesFamily).map((item) => String((item as Record<string, unknown>).path ?? ""));
+  assert.deepEqual(paths, ["inside.md"]);
+});
+
 test("maps WSL and host absolute server artifact paths to workspace-relative file rows", () => {
   const families = resolveArtifactFamilies({
     serverArtifacts: [
