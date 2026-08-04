@@ -266,12 +266,20 @@ export async function setWorkspaceConversationListExpanded(browser, workspaceLab
   const project = await browser.$(projectSelector);
   const toggle = await project.$('button[data-project-collapse-toggle]');
   await toggle.waitForDisplayed({ timeout: 10_000 });
-  const isExpanded = () => toggle.getAttribute("aria-expanded").then((value) => value === "true");
+  // Re-read the toggle on every poll instead of reusing the handle: toggling
+  // re-renders the project row, so a handle captured before the click can keep
+  // reporting the detached node's state and never observe the new one.
+  const isExpanded = () => browser.execute((selector) => {
+    const element = document.querySelector(`${selector} button[data-project-collapse-toggle]`);
+    return element?.getAttribute("aria-expanded") === "true";
+  }, projectSelector);
   if (await isExpanded() === expanded) return;
   if (!await clickVisibleProjectCollapseToggle(browser, projectSelector, projectKey)) {
     fail(`Workspace conversation toggle became unavailable: ${workspaceLabel}.`);
   }
-  await browser.waitUntil(isExpanded, {
+  // Wait for the requested state, not merely for "expanded"; collapsing needs
+  // the opposite outcome.
+  await browser.waitUntil(async () => await isExpanded() === expanded, {
     timeout: 10_000,
     timeoutMsg: `Workspace conversation list did not become ${expanded ? "expanded" : "collapsed"}: ${workspaceLabel}.`,
   });
