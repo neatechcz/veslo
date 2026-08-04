@@ -1,9 +1,12 @@
 export const selectors = {
   appRoot: "#root",
+  composer: '[data-testid="session-composer"]',
   composerInput: '[data-testid="session-composer-input"]',
+  composerFileInput: '[data-testid="session-composer"] input[type="file"]',
   composerStorageKey: "data-composer-storage-key",
   composerSessionQueueKey: "data-composer-session-queue-key",
   composerSend: '[data-testid="session-composer-send-button"]',
+  composerToast: '[data-testid="session-composer-toast"]',
   composerTargetHeading: '[data-testid="composer-entry-target-heading"]',
   leftSidebar: '[data-testid="session-left-sidebar"]',
   operationalError: '[data-testid="session-operational-error"]',

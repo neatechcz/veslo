@@ -1,3 +1,6 @@
+import { access } from "node:fs/promises";
+import { basename, resolve } from "node:path";
+
 import { fail } from "../attach-smoke.mjs";
 import { selectors } from "./selectors.mjs";
 import { waitForComposerReady } from "./waits.mjs";
@@ -121,6 +124,27 @@ export async function submitComposer(browser, message, workspaceLabel) {
 export async function sendComposerMessage(browser, message, workspaceLabel) {
   await writeComposer(browser, message, workspaceLabel);
   await submitComposer(browser, message, workspaceLabel);
+}
+
+export async function attachComposerFile(browser, filePath, workspaceLabel) {
+  const absolutePath = resolve(filePath);
+  await access(absolutePath);
+  await waitForComposerReady(browser);
+  const input = await browser.$(selectors.composerFileInput);
+  await input.waitForExist({ timeout: 10_000 });
+  if (!await input.isEnabled()) {
+    fail(`Attachments are unavailable for ${workspaceLabel}.`);
+  }
+  await input.setValue(absolutePath);
+  const filename = basename(absolutePath);
+  await browser.waitUntil(
+    () => browser.execute((selector, expected) => {
+      const composer = document.querySelector(selector);
+      return composer?.textContent?.includes(expected) === true;
+    }, selectors.composer, filename),
+    { timeout: 10_000, interval: 100, timeoutMsg: `The composer did not attach ${filename}.` },
+  );
+  return { absolutePath, filename };
 }
 
 export async function queueComposerMessageWithEnter(browser, message, workspaceLabel) {

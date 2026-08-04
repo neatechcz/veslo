@@ -93,10 +93,21 @@ async function visibleComposerTargetHeading(browser) {
   }, selectors.composerTargetHeading);
 }
 
+async function visibleTranscriptIsEmpty(browser) {
+  return browser.execute((selector) => {
+    return !Array.from(document.querySelectorAll(selector)).some((element) => {
+      const style = window.getComputedStyle(element);
+      return element.getClientRects().length > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden";
+    });
+  }, selectors.assistantMessage);
+}
+
 export async function selectWorkspaceForNewConversation(
   browser,
   workspaceLabel,
-  { requireDistinctConversation = false } = {},
+  { requireDistinctConversation = false, acceptEmptyExistingDraft = false } = {},
 ) {
   const { projectKey, projectSelector } = await projectTargetForWorkspace(browser, workspaceLabel);
   const project = await browser.$(projectSelector);
@@ -109,7 +120,14 @@ export async function selectWorkspaceForNewConversation(
   await browser.waitUntil(async () => {
     const nextSessionQueueKey = await visibleComposerSessionQueueKey(browser);
     if (!nextSessionQueueKey) return false;
-    if (requireDistinctConversation && nextSessionQueueKey === previousSessionQueueKey) return false;
+    if (requireDistinctConversation && nextSessionQueueKey === previousSessionQueueKey) {
+      // Restarting into an untouched pending draft leaves the New conversation
+      // control with nothing to create, so the queue key legitimately does not
+      // change. An empty transcript proves this is still a fresh conversation
+      // rather than a reused one; a conversation with output never qualifies.
+      if (!acceptEmptyExistingDraft) return false;
+      if (!await visibleTranscriptIsEmpty(browser)) return false;
+    }
     return (await visibleComposerTargetHeading(browser))?.includes(workspaceLabel) === true;
   }, {
     timeout: 15_000,
@@ -119,15 +137,59 @@ export async function selectWorkspaceForNewConversation(
 
 export async function selectedSidebarSessionId(browser) {
   return browser.execute((selector) => {
+    // A freshly created conversation can still be rendered as its pending row,
+    // which carries no durable session id. Only a row that already exposes one
+    // is a usable identity.
     const selected = Array.from(document.querySelectorAll(selector)).find((row) => {
       const style = window.getComputedStyle(row);
       return row.getAttribute("aria-current") === "page" &&
+        (row.getAttribute("data-session-id")?.trim() ?? "") !== "" &&
         row.getClientRects().length > 0 &&
         style.display !== "none" &&
         style.visibility !== "hidden";
     });
     return selected?.getAttribute("data-session-id")?.trim() ?? null;
   }, selectors.sessionSidebarRow);
+}
+
+/**
+ * Resolves the conversation identity the scenario just materialized. The
+ * selected-row reading is preferred, but the sidebar does not always mark a
+ * newly created conversation as the current page, so scenarios pass the text
+ * that titles their conversation and fall back to the proven text lookup.
+ */
+export async function waitForSelectedSidebarSessionId(browser, options = {}) {
+  const { expectedText = "", timeout = 30_000 } = typeof options === "number"
+    ? { timeout: options }
+    : options;
+  const text = normalize(expectedText);
+  let sessionId = null;
+  await browser.waitUntil(async () => {
+    sessionId = await selectedSidebarSessionId(browser);
+    if (normalize(sessionId)) return true;
+    if (!text) return false;
+    sessionId = await sidebarSessionIdForVisibleTextOrNull(browser, text);
+    return Boolean(normalize(sessionId));
+  }, {
+    timeout,
+    interval: 150,
+    timeoutMsg: "The materialized conversation did not expose one selected sidebar identity.",
+  });
+  return normalize(sessionId);
+}
+
+async function sidebarSessionIdForVisibleTextOrNull(browser, expectedText) {
+  const result = await browser.execute((selector, expected) => {
+    const matches = Array.from(document.querySelectorAll(selector)).filter((row) => {
+      const style = window.getComputedStyle(row);
+      return row.getClientRects().length > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        (row.textContent?.includes(expected) ?? false);
+    });
+    return { count: matches.length, sessionId: matches[0]?.getAttribute("data-session-id")?.trim() ?? null };
+  }, selectors.sessionSidebarRow, expectedText);
+  return result?.count === 1 ? normalize(result.sessionId) : null;
 }
 
 export async function sidebarSessionIdForVisibleText(browser, expectedText) {

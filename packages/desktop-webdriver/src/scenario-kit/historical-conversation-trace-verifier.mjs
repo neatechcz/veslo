@@ -6,6 +6,7 @@ const SERVER_TRACE_FILE = "send-workflow-trace.server.ndjson";
 const HISTORICAL_SCENARIOS = new Set([
   "historical-conversation-roundtrip",
   "historical-existing-conversation-continuation",
+  "historical-idle-suspend-continuation",
 ]);
 // The visible assistant turn can settle shortly before the server's next
 // lifecycle reconcile records runtimeReadyForSuccessor. Keep that durable
@@ -102,6 +103,23 @@ export function verifyHistoricalConversationTrace({ artifact, traceEntries, trac
     (!interludeSessionId || seedSessionId === interludeSessionId))) {
     failures.push(failureRecord("invalid_scenario_session_identity"));
   }
+  const idleSuspendScenario = artifact?.scenario === "historical-idle-suspend-continuation";
+  if (idleSuspendScenario && artifact?.result?.suspendedChildKind !== "direct") {
+    failures.push(failureRecord("idle_suspend_child_was_not_direct"));
+  }
+  if (idleSuspendScenario && artifact?.result?.suspendedChildExitObserved !== true) {
+    failures.push(failureRecord("idle_suspend_child_exit_not_observed"));
+  }
+  if (idleSuspendScenario && artifact?.result?.continuationSubmitCount !== 1) {
+    failures.push(failureRecord("idle_suspend_ui_submit_not_unique", {
+      count: artifact?.result?.continuationSubmitCount ?? null,
+    }));
+  }
+  if (idleSuspendScenario && artifact?.result?.continuationOutputCount !== 1) {
+    failures.push(failureRecord("idle_suspend_ui_turn_not_unique", {
+      count: artifact?.result?.continuationOutputCount ?? null,
+    }));
+  }
   if (!Array.isArray(traceEntries)) {
     failures.push(failureRecord("invalid_server_trace"));
   }
@@ -191,6 +209,67 @@ export function verifyHistoricalConversationTrace({ artifact, traceEntries, trac
     failures.push(failureRecord("continuation_was_queued", { count: queueRecords.length }));
   }
 
+  const terminalHandoffRecoveryStarts = idleSuspendScenario && scope
+    ? boundedEntries.filter((entry) =>
+      entry?.event === "server:conversation-run:terminal-handoff-recovery:start" &&
+      asText(entry?.workspaceId) === scope.workspaceId &&
+      asText(entry?.conversationId) === scope.conversationId &&
+      asText(entry?.unavailableReason) === "no_current_engine")
+    : [];
+  const terminalHandoffRecoveryProofs = idleSuspendScenario && scope
+    ? boundedEntries.filter((entry) =>
+      entry?.event === "server:conversation-run:terminal-handoff-recovery:result" &&
+      asText(entry?.workspaceId) === scope.workspaceId &&
+      asText(entry?.conversationId) === scope.conversationId &&
+      asText(entry?.outcome) === "lost_proven")
+    : [];
+  // The successor may be admitted through either shape. A plain `registered`
+  // decision is the clean path, where predecessor classification already
+  // resolved the lost owner; `registered-after-proven-handoff-recovery` is the
+  // conflict path, where registration first collided with the stale owner.
+  // Both are valid proof as long as the admission follows the proven recovery,
+  // which the ordering check below still enforces.
+  const recoveredAdmissionDecisions = new Set([
+    "registered",
+    "registered-after-proven-handoff-recovery",
+  ]);
+  const recoveredAdmissions = idleSuspendScenario && scope
+    ? boundedEntries.filter((entry) =>
+      entry?.event === "server:conversation-run:admission-decision" &&
+      asText(entry?.workspaceId) === scope.workspaceId &&
+      asText(entry?.conversationId) === scope.conversationId &&
+      asText(entry?.runId) === scope.runId &&
+      recoveredAdmissionDecisions.has(asText(entry?.decision)))
+    : [];
+  const recoveryStartAt = asTimestamp(terminalHandoffRecoveryStarts[0]?.at);
+  const recoveryProofAt = asTimestamp(terminalHandoffRecoveryProofs[0]?.at);
+  const recoveredAdmissionAt = asTimestamp(recoveredAdmissions[0]?.at);
+  // Recovery only engages when the suspended generation still owned a stale
+  // terminal run. A completed seed run can release its owner before the
+  // follow-up, and then the successor is admitted without any recovery at all.
+  // That is a healthier outcome, not a regression, so recovery evidence is
+  // asserted strictly but only once recovery actually started. The scenario
+  // separately proves the engine really was stopped with an observed direct
+  // child exit, so this cannot silently degrade into "nothing was suspended".
+  const recoveryAttempted = terminalHandoffRecoveryStarts.length > 0;
+  const recoverySequenceProven = recoveryStartAt !== null &&
+    recoveryProofAt !== null &&
+    recoveredAdmissionAt !== null &&
+    recoveryStartAt < recoveryProofAt &&
+    recoveryProofAt < recoveredAdmissionAt;
+  if (idleSuspendScenario && terminalHandoffRecoveryStarts.length > 1) {
+    failures.push(failureRecord("no_current_engine_recovery_not_unique", { count: terminalHandoffRecoveryStarts.length }));
+  }
+  if (idleSuspendScenario && recoveryAttempted && terminalHandoffRecoveryProofs.length !== 1) {
+    failures.push(failureRecord("terminal_handoff_recovery_not_proven", { count: terminalHandoffRecoveryProofs.length }));
+  }
+  if (idleSuspendScenario && recoveredAdmissions.length !== 1) {
+    failures.push(failureRecord("recovered_admission_not_unique", { count: recoveredAdmissions.length }));
+  }
+  if (idleSuspendScenario && recoveryAttempted && !recoverySequenceProven) {
+    failures.push(failureRecord("no_current_engine_recovery_sequence_not_proven"));
+  }
+
   const inScopeFailures = scope
     ? boundedEntries.filter((entry) => isServerFailure(entry) && eventForRun(entry, scope))
     : [];
@@ -222,6 +301,11 @@ export function verifyHistoricalConversationTrace({ artifact, traceEntries, trac
       successfulOpenCodeSubmits: successfulSubmits.length,
       completedReadyReconciles: completedReconciles.length,
       queuedRecords: queueRecords.length,
+      noCurrentEngineRecoveryStarts: terminalHandoffRecoveryStarts.length,
+      lostProvenRecoveryResults: terminalHandoffRecoveryProofs.length,
+      recoveredAdmissions: recoveredAdmissions.length,
+      recoveryAttempted: idleSuspendScenario ? recoveryAttempted : null,
+      recoverySequenceProven: idleSuspendScenario ? recoverySequenceProven : null,
       inScopeFailures: inScopeFailures.map(summarizeFailure),
       outOfScopeFailureCounts,
     },

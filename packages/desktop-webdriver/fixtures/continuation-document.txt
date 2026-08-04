@@ -1,0 +1,3 @@
+Veslo real-desktop continuation fixture
+Fixture id: VSLO-DOCUMENT-CONTINUATION-2026-08-04
+Deterministic fact: the verification color is cedar green.

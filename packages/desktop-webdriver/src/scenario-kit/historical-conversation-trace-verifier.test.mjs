@@ -45,6 +45,121 @@ test("historical trace verifier accepts one direct continuation of an already pe
   assert.equal(summary.scenario, "historical-existing-conversation-continuation");
 });
 
+test("historical trace verifier proves direct idle-suspend generation recovery before one successor", () => {
+  const idleArtifact = {
+    ...artifact,
+    scenario: "historical-idle-suspend-continuation",
+    result: {
+      seedSessionId: "seed",
+      continuationSubmitCount: 1,
+      continuationOutputCount: 1,
+      suspendedChildKind: "direct",
+      suspendedChildExitObserved: true,
+    },
+  };
+  const recovery = [
+    { at: "2026-08-03T10:00:04.012Z", event: "server:conversation-run:terminal-handoff-recovery:start", workspaceId: "ws-a", conversationId: "conv-a", unavailableReason: "no_current_engine" },
+    { at: "2026-08-03T10:00:04.014Z", event: "server:conversation-run:terminal-handoff-recovery:result", workspaceId: "ws-a", conversationId: "conv-a", outcome: "lost_proven" },
+    { at: "2026-08-03T10:00:04.018Z", event: "server:conversation-run:admission-decision", workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a", decision: "registered-after-proven-handoff-recovery" },
+  ];
+  const summary = verifyHistoricalConversationTrace({
+    artifact: idleArtifact,
+    traceEntries: [...continuationTrace, ...recovery],
+  });
+  assert.equal(summary.outcome, "passed");
+  assert.equal(summary.evidence.noCurrentEngineRecoveryStarts, 1);
+  assert.equal(summary.evidence.lostProvenRecoveryResults, 1);
+  assert.equal(summary.evidence.recoveredAdmissions, 1);
+  assert.equal(summary.evidence.recoverySequenceProven, true);
+});
+
+test("idle-suspend trace verifier rejects recovery evidence in the wrong order", () => {
+  const idleArtifact = {
+    ...artifact,
+    scenario: "historical-idle-suspend-continuation",
+    result: {
+      seedSessionId: "seed",
+      continuationSubmitCount: 1,
+      continuationOutputCount: 1,
+      suspendedChildKind: "direct",
+      suspendedChildExitObserved: true,
+    },
+  };
+  const reversedRecovery = [
+    { at: "2026-08-03T10:00:04.018Z", event: "server:conversation-run:terminal-handoff-recovery:start", workspaceId: "ws-a", conversationId: "conv-a", unavailableReason: "no_current_engine" },
+    { at: "2026-08-03T10:00:04.014Z", event: "server:conversation-run:terminal-handoff-recovery:result", workspaceId: "ws-a", conversationId: "conv-a", outcome: "lost_proven" },
+    { at: "2026-08-03T10:00:04.012Z", event: "server:conversation-run:admission-decision", workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a", decision: "registered-after-proven-handoff-recovery" },
+  ];
+  const summary = verifyHistoricalConversationTrace({
+    artifact: idleArtifact,
+    traceEntries: [...continuationTrace, ...reversedRecovery],
+  });
+  assert.equal(summary.outcome, "failed");
+  assert.equal(summary.failures.some((failure) =>
+    failure.code === "no_current_engine_recovery_sequence_not_proven"), true);
+});
+
+test("idle-suspend trace verifier rejects missing direct exit and recovery proof", () => {
+  const idleArtifact = {
+    ...artifact,
+    scenario: "historical-idle-suspend-continuation",
+    result: { seedSessionId: "seed", suspendedChildKind: "wsl", suspendedChildExitObserved: false },
+  };
+  const summary = verifyHistoricalConversationTrace({ artifact: idleArtifact, traceEntries: continuationTrace });
+  assert.equal(summary.outcome, "failed");
+  assert.equal(summary.failures.some((failure) => failure.code === "idle_suspend_child_was_not_direct"), true);
+});
+
+const provenIdleArtifact = {
+  ...artifact,
+  scenario: "historical-idle-suspend-continuation",
+  result: {
+    seedSessionId: "seed",
+    continuationSubmitCount: 1,
+    continuationOutputCount: 1,
+    suspendedChildKind: "direct",
+    suspendedChildExitObserved: true,
+  },
+};
+
+const recoveryStartEntry = {
+  at: "2026-08-03T10:00:04.012Z",
+  event: "server:conversation-run:terminal-handoff-recovery:start",
+  workspaceId: "ws-a",
+  conversationId: "conv-a",
+  unavailableReason: "no_current_engine",
+};
+
+test("idle-suspend trace verifier accepts a successor admitted without any recovery", () => {
+  // A completed seed run can release its owner before the follow-up, so no
+  // recovery is required. The stopped-engine precondition is proven separately
+  // by the scenario, and the single-submit contract still applies.
+  const summary = verifyHistoricalConversationTrace({
+    artifact: provenIdleArtifact,
+    traceEntries: [
+      ...continuationTrace,
+      { at: "2026-08-03T10:00:04.025Z", event: "server:conversation-run:admission-decision", workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a", decision: "registered" },
+    ],
+  });
+  assert.equal(summary.outcome, "passed");
+  assert.equal(summary.evidence.recoveryAttempted, false);
+});
+
+test("idle-suspend trace verifier rejects a recovery that started but was never proven", () => {
+  const summary = verifyHistoricalConversationTrace({
+    artifact: provenIdleArtifact,
+    traceEntries: [
+      ...continuationTrace,
+      recoveryStartEntry,
+      { at: "2026-08-03T10:00:04.025Z", event: "server:conversation-run:admission-decision", workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a", decision: "registered" },
+    ],
+  });
+  assert.equal(summary.outcome, "failed");
+  assert.equal(summary.evidence.recoveryAttempted, true);
+  assert.equal(summary.failures.some((failure) => failure.code === "terminal_handoff_recovery_not_proven"), true);
+  assert.equal(summary.failures.some((failure) => failure.code === "no_current_engine_recovery_sequence_not_proven"), true);
+});
+
 test("historical trace verifier fails closed for a queued or ambiguous continuation", () => {
   const summary = verifyHistoricalConversationTrace({
     artifact,

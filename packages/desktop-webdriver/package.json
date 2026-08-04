@@ -11,7 +11,10 @@
     "test:historical-conversation-roundtrip": "node ./src/historical-conversation-roundtrip.mjs",
     "test:historical-existing-continuation": "node ./src/historical-existing-continuation.mjs",
     "test:historical-conversation-restart-owned": "node ./src/historical-conversation-restart-owned.mjs",
+    "test:historical-idle-suspend-owned": "node ./src/historical-idle-suspend-owned.mjs",
     "test:historical-conversation-trace-verify": "node ./src/historical-conversation-trace-verify.mjs",
+    "test:first-session-document-follow-up": "node ./src/first-session-document-follow-up.mjs",
+    "test:existing-session-document-follow-up": "node ./src/existing-session-document-follow-up.mjs",
     "test:sidebar-flicker": "node ./src/sidebar-workspace-accordion-flicker.mjs",
     "test:skill-sidebar-refresh": "node ./src/skill-sidebar-refresh.mjs",
     "test:skill-sidebar-refresh:owned": "node ./src/skill-sidebar-refresh-owned.mjs"

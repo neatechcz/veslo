@@ -3,7 +3,17 @@ import {
   openSidebarSession,
   sidebarSessionIdForVisibleText,
   selectWorkspaceForNewConversation,
+  waitForSelectedSidebarSessionId,
 } from "../scenario-kit/workspace.mjs";
+import { disposeDirectWorkspaceEngine } from "../scenario-kit/orchestrator-control.mjs";
+import {
+  requireSingleSubmitContract,
+  traceCursor,
+} from "../scenario-kit/submit-contract.mjs";
+import {
+  beginUiWarningCapture,
+  finishUiWarningCapture,
+} from "../scenario-kit/ui-warning-capture.mjs";
 import {
   visibleAssistantErrors,
   visibleAssistantMessages,
@@ -31,7 +41,7 @@ async function waitForHistoricalTranscript(browser, seedMessage, interludeMessag
   await browser.waitUntil(async () => {
     const messages = await visibleUserTranscriptText(browser);
     return messages.some((text) => text.includes(seedMessage)) &&
-      !messages.some((text) => text.includes(interludeMessage));
+      (!interludeMessage || !messages.some((text) => text.includes(interludeMessage)));
   }, {
     timeout: 30_000,
     interval: 150,
@@ -155,4 +165,79 @@ export async function executeExistingHistoricalContinuationScenario(context, inp
 export async function executeHistoricalConversationRoundtripScenario(context, input) {
   const sessions = await seedHistoricalConversationScenario(context, input);
   return continueHistoricalConversationScenario(context, input, sessions);
+}
+
+export async function executeIdleSuspendHistoricalContinuationScenario(context, input) {
+  const {
+    browser,
+    runtimeInfo,
+    step,
+    snapshot,
+    expectNoVisibleRuntimeError,
+    sendWorkflowTrace,
+  } = context;
+
+  await step("historical.seed.open-new", () =>
+    selectWorkspaceForNewConversation(browser, input.workspace, {
+      requireDistinctConversation: true,
+      acceptEmptyExistingDraft: true,
+    }));
+  await submitAndProveSingleAssistantTurn(context, input.seedMessage, input.workspace, "historical.seed");
+  const seedSessionId = await step("historical.seed.capture-selected-session", () =>
+    waitForSelectedSidebarSessionId(browser, { expectedText: input.seedMessage }));
+
+  const suspension = await step("historical.idle-suspend.dispose-direct-engine", () =>
+    disposeDirectWorkspaceEngine({
+      dataDir: runtimeInfo.dataDir,
+      workspaceIdentity: input.workspace,
+    }));
+  if (suspension.childKind !== "direct" || suspension.childExitObserved !== true) {
+    throw new Error("Idle-suspend continuation did not prove an observed direct child exit.");
+  }
+
+  await step("historical.seed.reopen", () => openSidebarSession(browser, seedSessionId, input.workspace));
+  await step("historical.seed.projection-retained", () =>
+    waitForHistoricalTranscript(browser, input.seedMessage, ""));
+  await snapshot("historical-idle-suspend-reopened");
+
+  const assistantBaseline = await visibleAssistantMessages(browser);
+  const assistantErrorBaseline = await visibleAssistantErrors(browser);
+  const submitTraceBaseline = traceCursor(await sendWorkflowTrace());
+  await beginUiWarningCapture(browser, {
+    captureKey: "__vesloIdleSuspendRecoveryUi",
+    pattern: "terminal[_ -]handoff|recovery(?: is)? required|terminal_handoff_recovery_required",
+  });
+  await step("historical.continuation.submit", () =>
+    sendComposerMessage(browser, input.continuationMessage, input.workspace));
+  await step("historical.continuation.started", () => waitForRunToStart(browser));
+  await step("historical.continuation.settle", () =>
+    waitForSubmittedRunToSettle(browser, input.workspace));
+  const outputs = await step("historical.continuation.output", () =>
+    waitForVisibleAssistantOutputCount(browser, assistantBaseline, 1));
+  if (outputs.length !== 1) {
+    throw new Error(`Idle-suspend continuation produced ${outputs.length} new visible assistant turns instead of exactly one.`);
+  }
+  const submitContract = requireSingleSubmitContract(
+    await sendWorkflowTrace(),
+    submitTraceBaseline,
+    "existing",
+  );
+  await finishUiWarningCapture(browser, {
+    captureKey: "__vesloIdleSuspendRecoveryUi",
+    label: "recovery-required UI",
+  });
+  await expectNoVisibleRuntimeError();
+  await step("historical.continuation.no-terminal-error", () =>
+    waitForNoVisibleAssistantError(browser, assistantErrorBaseline));
+
+  return {
+    workspace: input.workspace,
+    seedSessionId,
+    continuationOutputCount: outputs.length,
+    continuationSubmitCount: submitContract.submitStartCount,
+    suspendedChildKind: suspension.childKind,
+    suspendedChildExitObserved: suspension.childExitObserved,
+    suspendedEngineOwnerId: suspension.engineOwnerId,
+    suspendedEnginePid: suspension.pid,
+  };
 }
