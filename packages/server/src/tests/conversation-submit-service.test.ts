@@ -1343,6 +1343,55 @@ describe("conversation submit service", () => {
     expect(createConversationCalls).toBe(1);
   });
 
+  test("returns a typed recoverable failure when pre-dispatch prompt identity persistence fails", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-identity-failed-"));
+    tempDirs.push(workspaceRoot);
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-identity-failed-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {}),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-identity-failed",
+        origin: "session:normal",
+        target: {
+          directory: workspaceRoot,
+          conversationId: "conv-existing",
+          opencodeSessionId: "sess-existing",
+        },
+        draft: {
+          mode: "prompt",
+          text: "Keep this draft",
+          parts: [{ type: "text", text: "Keep this draft" }],
+        },
+      },
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async () => {
+        throw new ApiError(
+          503,
+          "prompt_identity_persistence_failed",
+          "Prompt identity could not be persisted before dispatch.",
+          { recoverable: true },
+        );
+      },
+    });
+
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({
+      status: "failed",
+      code: "prompt_identity_persistence_failed",
+      draftDisposition: "restore",
+      recoverable: true,
+      conversationId: "conv-existing",
+      opencodeSessionId: "sess-existing",
+      clientMessageId: "msg-identity-failed",
+    });
+  });
+
   test("retries a first-session failed submit using the already materialized conversation", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-materialized-failed-retry-"));
     tempDirs.push(workspaceRoot);

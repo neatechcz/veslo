@@ -865,8 +865,8 @@ function controllerHarness(options?: {
         canonicalRecovery: input.canonicalRecovery,
       });
     },
-    onRunAdmitted: (input) => {
-      admissionOrder.push("admitted");
+    persistPromptIdentity: (input) => {
+      admissionOrder.push("identity");
       admittedRunIds.push(input.runId);
     },
     trace: {
@@ -1419,13 +1419,13 @@ test("submitRun emits an authoritative correlation record only after durable adm
   }));
 });
 
-test("submitRun announces the exact prompt run before upstream dispatch", async () => {
+test("submitRun persists the exact prompt identity before upstream dispatch", async () => {
   const { controller, admissionOrder, admittedRunIds } = controllerHarness();
 
   await controller.submitRun(submitInput({ runId: "run-admission-order" }));
 
   expect(admittedRunIds).toEqual(["run-admission-order"]);
-  expect(admissionOrder).toEqual(["admitted", "upstream"]);
+  expect(admissionOrder).toEqual(["identity", "upstream"]);
 });
 
 test("submitRun queues immediately for server-queue-only policy", async () => {

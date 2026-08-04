@@ -306,8 +306,10 @@ import {
 } from "./conversation-run-queue-store.js";
 import {
   createConversationRunDeliverySnapshotStore,
+  RunDeliverySnapshotIdentityConflictError,
   type RunDeliverySnapshotStore,
 } from "./conversation-run-delivery-snapshot-store.js";
+import { projectConversationPromptIdentities } from "./conversation-prompt-identity-projection.js";
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
 import { createConversationSubmitService } from "./conversation-submit-service.js";
 import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
@@ -5955,6 +5957,22 @@ function createRoutes(
           limit: input.limit,
           directory: input.directory,
         });
+    let messages = snapshot.messages;
+    try {
+      messages = projectConversationPromptIdentities(
+        snapshot.messages,
+        conversationRunDeliverySnapshotStore.listPromptIdentities({
+          workspaceId: input.workspace.id,
+          conversationId: binding.conversationId,
+        }),
+      );
+    } catch (error) {
+      recordSendWorkflowTrace("server", "server:conversation-transcript:identity-projection-error", {
+        workspaceId: input.workspace.id,
+        conversationId: binding.conversationId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
     return {
       workspaceId: input.workspace.id,
       sessionId: opencodeSessionId,
@@ -5962,7 +5980,7 @@ function createRoutes(
       conversationId: binding.conversationId,
       opencodeSessionId,
       limit: snapshot.limit,
-      messages: snapshot.messages,
+      messages,
       partsByMessageId: snapshot.partsByMessageId,
       fetchedAt: snapshot.fetchedAt,
       staleAt: snapshot.staleAt,
@@ -6294,7 +6312,7 @@ function createRoutes(
           });
         }
       },
-      onRunAdmitted: (input) => {
+      persistPromptIdentity: (input) => {
         if (input.kind !== "prompt_async") return;
         try {
           conversationRunDeliverySnapshotStore.create({
@@ -6302,16 +6320,26 @@ function createRoutes(
             conversationId: input.target.conversationId,
             runId: input.runId,
             clientMessageId: input.clientMessageId,
+            opencodeMessageId: input.opencodeMessageId,
             traceId: input.runTrace.traceId,
             opencodeSessionId: input.target.opencodeSessionId,
           });
         } catch (error) {
-          recordSendWorkflowTrace("server", "server:run-delivery-snapshot:admission-error", {
+          recordSendWorkflowTrace("server", "server:run-delivery-snapshot:identity-error", {
             workspaceId: input.workspace.id,
             conversationId: input.target.conversationId,
             runId: input.runId,
-            message: error instanceof Error ? error.message : String(error),
+            errorType: error instanceof Error ? error.name : "unknown",
           });
+          if (error instanceof RunDeliverySnapshotIdentityConflictError) {
+            throw new ApiError(
+              409,
+              "prompt_identity_conflict",
+              "The run key already owns a different prompt identity.",
+              { recoverable: false },
+            );
+          }
+          throw error;
         }
       },
       trace: {

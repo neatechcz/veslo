@@ -253,7 +253,7 @@ export type ConversationRunLifecycleControllerOptions = {
     lifecycle: LifecycleRunStatus;
     canonicalRecovery: "recovered" | "unavailable" | "failed";
   }) => void;
-  onRunAdmitted?: (input: ConversationRunLifecycleSubmitInput) => void;
+  persistPromptIdentity?: (input: ConversationRunLifecycleSubmitInput) => void;
   timers?: Partial<ConversationRunLifecycleTimerPort>;
   trace?: ConversationRunLifecycleTracePort | null;
   diagnostics?: {
@@ -363,6 +363,21 @@ const ENGINE_OWNER_ATTACH_GRACE_DEFAULT_MS = 80_000;
 // conflicts. Stay clearly above that so this cap only ever catches a runtime
 // record that no existing recovery is still working on.
 const QUEUE_DRAIN_RESERVATION_CONFLICT_MAX_ATTEMPTS = 40;
+
+class ConversationRunPromptIdentityPersistenceError extends ApiError {
+  constructor(error: unknown) {
+    if (error instanceof ApiError) {
+      super(error.status, error.code, error.message, error.details);
+      return;
+    }
+    super(
+      503,
+      "prompt_identity_persistence_failed",
+      "Prompt identity could not be persisted before dispatch.",
+      { recoverable: true },
+    );
+  }
+}
 
 function withOpenCodeAdmissionMessageId(
   input: ConversationRunLifecycleSubmitInput,
@@ -564,6 +579,17 @@ export function createConversationRunLifecycleController(
   const engineLossEvents = new Map<string, ConversationRunEngineLossResult>();
   const pendingEngineLosses = new Map<string, ConversationRunEngineLossNotification>();
   const pendingEngineLossTimers = new Map<string, unknown>();
+  const persistPromptIdentity = (input: ConversationRunLifecycleSubmitInput) => {
+    if (input.kind !== "prompt_async") return;
+    try {
+      if (!options.persistPromptIdentity) {
+        throw new Error("Prompt identity persistence is required for admitted prompt runs");
+      }
+      options.persistPromptIdentity(input);
+    } catch (error) {
+      throw new ConversationRunPromptIdentityPersistenceError(error);
+    }
+  };
   const providerStartAbortRecoveries = new Map<string, {
     input: ConversationRunLifecycleSubmitInput;
     lifecycleOwner: OrchestratorLifecycleClient;
@@ -3226,6 +3252,13 @@ export function createConversationRunLifecycleController(
         runtimeAuthorizationOrgId,
       }, queuedItem.startedAt ?? Date.now());
 
+      try {
+        persistPromptIdentity(queuedSubmitInput);
+      } catch (error) {
+        releaseRun(workspaceId, queuedItem.reservedRunId, "prompt-identity-persistence-failed");
+        throw error;
+      }
+
       if (lifecycleOwner) {
         let lifecycleRegistered = false;
         try {
@@ -3252,7 +3285,6 @@ export function createConversationRunLifecycleController(
               },
             );
             lifecycleRegistered = true;
-            options.onRunAdmitted?.(queuedSubmitInput);
             await submitAcceptedRun(queuedSubmitInput, lifecycleOwner);
           });
         } catch (error) {
@@ -3285,7 +3317,6 @@ export function createConversationRunLifecycleController(
         }
       } else {
         await withWorkspaceExecutionGate(workspace.id, async () => {
-          options.onRunAdmitted?.(queuedSubmitInput);
           await submitAcceptedRun(queuedSubmitInput, lifecycleOwner);
         });
       }
@@ -3702,6 +3733,7 @@ export function createConversationRunLifecycleController(
         try {
           admittedInput = withOpenCodeAdmissionMessageId(input);
           reserveStarting(admittedInput);
+          persistPromptIdentity(admittedInput);
           const registered = await registerLifecycle("server:conversation-run:lifecycle-register");
           if (registered && registered.runId !== input.runId && activeRunMatchesClientMessage(registered, input)) {
             releaseRun(input.workspace.id, input.runId, "lifecycle-register-reused");
@@ -3722,6 +3754,10 @@ export function createConversationRunLifecycleController(
             decision: "registered",
           });
         } catch (error) {
+          if (error instanceof ConversationRunPromptIdentityPersistenceError) {
+            releaseRun(input.workspace.id, input.runId, "prompt-identity-persistence-failed");
+            throw error;
+          }
           if (error instanceof RunAlreadyActiveError || error instanceof ConversationRunReservationConflictError) {
             releaseRun(input.workspace.id, input.runId, "lifecycle-register-conflict");
             let retriedAfterProvenHandoffRecovery = false;
@@ -3834,7 +3870,7 @@ export function createConversationRunLifecycleController(
         throw new Error("OpenCode submit port is required for admitted conversation runs");
       }
       admittedInput = withOpenCodeAdmissionMessageId(admittedInput);
-      options.onRunAdmitted?.(admittedInput);
+      if (!lifecycleOwner) persistPromptIdentity(admittedInput);
       const upstream = await submitAcceptedRun(admittedInput, lifecycleOwner);
       input.runTrace.record("server:conversation-run:submitted", {
         workspaceId: input.workspace.id,

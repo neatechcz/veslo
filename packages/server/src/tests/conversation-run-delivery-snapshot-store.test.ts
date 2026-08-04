@@ -5,10 +5,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   createConversationRunDeliverySnapshotStore,
+  RunDeliverySnapshotIdentityConflictError,
   RUN_DELIVERY_SNAPSHOT_MAX_TERMINAL_PER_WORKSPACE,
   RUN_DELIVERY_SNAPSHOT_MAX_ACTIVE_PER_WORKSPACE,
   RUN_DELIVERY_SNAPSHOT_TTL_MS,
 } from "../conversation-run-delivery-snapshot-store.js";
+import { projectConversationPromptIdentities } from "../conversation-prompt-identity-projection.js";
 
 const tempDirs: string[] = [];
 
@@ -45,25 +47,39 @@ const engineGeneration = (overrides: Partial<{
 });
 
 describe("conversation run delivery snapshot store", () => {
-  test("creates one bounded snapshot per exact accepted prompt run", async () => {
+  test("replays an exact prompt identity idempotently and rejects conflicting reuse", async () => {
     let now = 1_000;
     const store = createConversationRunDeliverySnapshotStore({ dataDir: await tempDataDir(), now: () => now });
 
     const first = store.create({
       ...identity(),
       clientMessageId: "msg_1",
+      opencodeMessageId: "opencode_msg_1",
       traceId: "trace_12345678",
       opencodeSessionId: "ses_1",
     });
     now += 1_000;
     const second = store.create({
       ...identity(),
-      clientMessageId: "different-message-must-not-replace",
+      clientMessageId: "msg_1",
+      opencodeMessageId: "opencode_msg_1",
+      traceId: "different-diagnostics-must-not-replace",
     });
 
     expect(first.clientMessageId).toBe("msg_1");
+    expect(first.opencodeMessageId).toBe("opencode_msg_1");
     expect(second).toEqual(first);
     expect(store.get(identity())?.router.sessionBoundEventCount).toBe(0);
+    expect(() => store.create({
+      ...identity(),
+      clientMessageId: "different-client",
+      opencodeMessageId: "opencode_msg_1",
+    })).toThrow(RunDeliverySnapshotIdentityConflictError);
+    expect(() => store.create({
+      ...identity(),
+      clientMessageId: "msg_1",
+      opencodeMessageId: "different-opencode-message",
+    })).toThrow(RunDeliverySnapshotIdentityConflictError);
   });
 
   test("joins only the exact session-bearing router observation and preserves its local observation time", async () => {
@@ -95,6 +111,43 @@ describe("conversation run delivery snapshot store", () => {
     expect(JSON.stringify(observed)).not.toContain("http://127.0.0.1:50101");
     expect(mismatched?.recording).toBe("incomplete");
     expect(mismatched?.router.sessionBoundEventCount).toBe(1);
+  });
+
+  test("lists only complete unexpired prompt identity pairs in the exact scope", async () => {
+    let now = 5_000;
+    const store = createConversationRunDeliverySnapshotStore({ dataDir: await tempDataDir(), now: () => now });
+    store.create({
+      ...identity("complete"),
+      clientMessageId: "client-complete",
+      opencodeMessageId: "opencode-complete",
+    });
+    store.markIncomplete(identity("complete"));
+    store.create({
+      ...identity("missing-opencode"),
+      clientMessageId: "client-missing",
+    });
+    store.create({
+      workspaceId: "ws_1",
+      conversationId: "conv_other",
+      runId: "cross-conversation",
+      clientMessageId: "client-cross",
+      opencodeMessageId: "opencode-cross",
+    });
+
+    const identities = store.listPromptIdentities({ workspaceId: "ws_1", conversationId: "conv_1" });
+    expect(identities).toEqual([{
+      opencodeMessageId: "opencode-complete",
+      clientMessageId: "client-complete",
+    }]);
+    const projected = projectConversationPromptIdentities([
+      { info: { id: "opencode-complete", role: "user" } },
+      { info: { id: "opencode-cross", role: "user" } },
+    ], identities) as Array<{ info: Record<string, unknown> }>;
+    expect(projected[0]?.info.clientMessageId).toBe("client-complete");
+    expect(projected[1]?.info).not.toHaveProperty("clientMessageId");
+
+    now += RUN_DELIVERY_SNAPSHOT_TTL_MS + 1;
+    expect(store.listPromptIdentities({ workspaceId: "ws_1", conversationId: "conv_1" })).toEqual([]);
   });
 
   test("marks an old run incomplete without accepting a replacement engine generation", async () => {

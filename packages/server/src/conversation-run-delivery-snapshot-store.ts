@@ -35,6 +35,7 @@ export type RunDeliverySnapshot = {
   conversationId: string;
   runId: string;
   clientMessageId: string | null;
+  opencodeMessageId?: string | null;
   traceId: string | null;
   opencodeSessionId: string | null;
   engineOwnerId: string | null;
@@ -67,17 +68,33 @@ export type RunDeliverySnapshot = {
   recordedAt: string;
 };
 
+export type RecordedPromptIdentityPair = {
+  opencodeMessageId: string;
+  clientMessageId: string;
+};
+
+export class RunDeliverySnapshotIdentityConflictError extends Error {
+  constructor() {
+    super("run delivery snapshot identity conflicts with the recorded prompt identity");
+  }
+}
+
 export type RunDeliverySnapshotStore = {
   create(input: {
     workspaceId: string;
     conversationId: string;
     runId: string;
     clientMessageId?: string | null;
+    opencodeMessageId?: string | null;
     traceId?: string | null;
     opencodeSessionId?: string | null;
     acceptedAt?: string;
   }): RunDeliverySnapshot;
   get(input: { workspaceId: string; conversationId: string; runId: string }): RunDeliverySnapshot | null;
+  listPromptIdentities(input: {
+    workspaceId: string;
+    conversationId: string;
+  }): RecordedPromptIdentityPair[];
   observeRouter(input: {
     workspaceId: string;
     conversationId: string;
@@ -304,6 +321,12 @@ export function createConversationRunDeliverySnapshotStore(options?: {
           if (existing) {
             const snapshot = parseSnapshot(existing);
             if (!snapshot) throw new Error("stored run delivery snapshot is invalid");
+            if (
+              nullableText(snapshot.clientMessageId) !== nullableText(input.clientMessageId) ||
+              nullableText(snapshot.opencodeMessageId) !== nullableText(input.opencodeMessageId)
+            ) {
+              throw new RunDeliverySnapshotIdentityConflictError();
+            }
             result = snapshot;
             return;
           }
@@ -312,6 +335,7 @@ export function createConversationRunDeliverySnapshotStore(options?: {
             schemaVersion: 1,
             ...identity,
             clientMessageId: nullableText(input.clientMessageId),
+            opencodeMessageId: nullableText(input.opencodeMessageId),
             traceId: nullableText(input.traceId),
             opencodeSessionId: nullableText(input.opencodeSessionId),
             engineOwnerId: null,
@@ -343,6 +367,28 @@ export function createConversationRunDeliverySnapshotStore(options?: {
         if (!row || row.updated_at < now() - RUN_DELIVERY_SNAPSHOT_TTL_MS) return null;
         return parseSnapshot(row);
       });
+    },
+
+    listPromptIdentities(input) {
+      const workspaceId = normalizeText(input.workspaceId);
+      const conversationId = normalizeText(input.conversationId);
+      if (!workspaceId || !conversationId) {
+        throw new Error("workspaceId and conversationId are required");
+      }
+      return withDb((db) => db.query<SnapshotRow, [string, string, number]>(`
+        SELECT workspace_id, conversation_id, run_id, snapshot_json, terminal_at, updated_at
+        FROM conversation_run_delivery_snapshot
+        WHERE workspace_id = ?1 AND conversation_id = ?2 AND updated_at >= ?3
+        ORDER BY updated_at ASC, rowid ASC
+      `).all(workspaceId, conversationId, now() - RUN_DELIVERY_SNAPSHOT_TTL_MS)
+        .map(parseSnapshot)
+        .flatMap((snapshot) => {
+          const opencodeMessageId = nullableText(snapshot?.opencodeMessageId);
+          const clientMessageId = nullableText(snapshot?.clientMessageId);
+          return opencodeMessageId && clientMessageId
+            ? [{ opencodeMessageId, clientMessageId }]
+            : [];
+        }));
     },
 
     observeRouter(input) {

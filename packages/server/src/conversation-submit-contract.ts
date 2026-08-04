@@ -159,6 +159,7 @@ export type ConversationSubmitFailedResult = {
   pendingClientSessionId?: string | null;
   materializedSession?: unknown | null;
   draftDisposition: "restore" | "mark-failed";
+  recoverable?: boolean;
   debugTrace?: ConversationSubmitDebugTraceEntry[];
   details?: ConversationSubmitErrorDetails;
 };

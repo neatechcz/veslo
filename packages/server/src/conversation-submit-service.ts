@@ -341,6 +341,7 @@ export function createConversationSubmitService(input: {
               code: error instanceof ApiError ? error.code : "run_submit_failed",
               message: error instanceof Error ? error.message : "Run submit failed",
               draftDisposition: "restore",
+              ...submitFailureRecoverability(error),
               debugTrace: [{
                 source: "server",
                 event: "run_submit_failed",
@@ -350,7 +351,7 @@ export function createConversationSubmitService(input: {
             }), debugTrace);
             return {
               payload: completeAttempt(payload, "failed"),
-              httpStatus: 200,
+              httpStatus: submitFailureHttpStatus(error),
             };
           }
         }
@@ -436,6 +437,7 @@ export function createConversationSubmitService(input: {
               code: error instanceof ApiError ? error.code : "run_submit_failed",
               message: error instanceof Error ? error.message : "Run submit failed",
               draftDisposition: "restore",
+              ...submitFailureRecoverability(error),
               debugTrace: [{
                 source: "server",
                 event: "run_submit_failed_after_materialization",
@@ -445,7 +447,7 @@ export function createConversationSubmitService(input: {
             }, materializedSession), debugTrace);
             return {
               payload: completeAttempt(payload, "failed"),
-              httpStatus: 200,
+              httpStatus: submitFailureHttpStatus(error),
             };
           }
         }
@@ -496,6 +498,18 @@ export function createConversationSubmitService(input: {
 
 function conversationSubmitInFlightKey(workspaceId: string, clientMessageId: string, requestHash: string): string {
   return JSON.stringify([workspaceId, clientMessageId, requestHash]);
+}
+
+function submitFailureRecoverability(error: unknown): { recoverable?: boolean } {
+  if (!(error instanceof ApiError) || !error.details || typeof error.details !== "object") return {};
+  const recoverable = (error.details as { recoverable?: unknown }).recoverable;
+  return typeof recoverable === "boolean" ? { recoverable } : {};
+}
+
+function submitFailureHttpStatus(error: unknown): number {
+  return error instanceof ApiError && error.code === "prompt_identity_conflict"
+    ? error.status
+    : 200;
 }
 
 function conversationSubmitResultIsReplayable(payload: ConversationSubmitResult): boolean {
