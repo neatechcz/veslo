@@ -65,7 +65,10 @@ import {
 import { createSessionSidebarDecorations } from "./context/session-sidebar-decorations";
 import { createSendRuntimeReadiness, type SendRuntimePreflightContext, type SendRuntimePreflightTargetWorkspace } from "./context/send-runtime-readiness";
 import { createAppRouteSync } from "./context/app-route-sync";
-import { createSessionRouteSync, sessionIdFromRoutePath } from "./context/session-route-sync";
+import {
+  createSessionRouteSync,
+  sessionIdFromRoutePath,
+} from "./context/session-route-sync";
 import { createAppSendTrace } from "./context/app-send-trace";
 import { createAppDeepLinkWorkflow } from "./context/app-deep-link-workflow";
 import { createAppStartupHydration } from "./context/app-startup-hydration";
@@ -88,7 +91,11 @@ import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
 import { createAppViewProps, shouldShowSessionReloadBanner } from "./app-view-props";
 import { createScheduledAutomationStore } from "./pages/scheduled-automation-store";
-import { createSessionCreationWorkflow, type SessionCreationResult, type SessionCreationWorkflowCreateOptions } from "./pages/session-creation-workflow";
+import {
+  createSessionCreationWorkflow,
+  type SessionCreationResult,
+  type SessionCreationWorkflowCreateOptions,
+} from "./pages/session-creation-workflow";
 import { createSessionSendWorkflow } from "./pages/session-send-workflow";
 import { ensureServerOwnedSubmitTransport, type ControlPlaneBindingStatus } from "./context/server-owned-submit-transport";
 import { hasConversationLiveEventRoute } from "./context/conversation-live-event-readiness";
@@ -1435,7 +1442,10 @@ export default function App() {
       visibleRuntimeActivityHoldTimer = null;
     }
   });
-  const holdVisibleRuntimeActivity = (sessionId: string | null | undefined, reason: string) => {
+  const holdVisibleRuntimeActivity = (
+    sessionId: string | null | undefined,
+    reason: string,
+  ) => {
     const id = sessionId?.trim();
     if (!id || isPendingSessionInstanceKey(id)) return;
     const token = `run-handoff:${id}`;
@@ -2222,7 +2232,11 @@ export default function App() {
         next.delete(requestId);
         return next;
       });
-      setPendingPermissions(pendingPermissions().filter((permission) => permission.id !== requestId));
+      setPendingPermissions(
+        pendingPermissions().filter(
+          (permission) => permission.id !== requestId,
+        ),
+      );
       return;
     }
 
@@ -2692,13 +2706,21 @@ export default function App() {
         available: result.source !== "unavailable",
       });
     },
-    hydrateLatestSessionFromDb: async (workspaceId: string, directory: string) => {
+    hydrateLatestSessionFromDb: async (
+      workspaceId: string,
+      directory: string,
+    ) => {
       const result = await listConversationsFromVesloReadApi(workspaceId, directory);
       if (result.items.length === 0) return;
       const { visible } = partitionVesloUtilitySessions(result.items);
       const rememberedSessionId = activeWorkspaceLastSessionId()?.trim() ?? "";
       const latest = (rememberedSessionId ? visible.find((item) => item.id === rememberedSessionId) : undefined) ?? visible[0] ?? result.items[0];
-      const snapshot = await getTranscriptFromVesloReadApi(workspaceId, latest.id, 50, directory);
+      const snapshot = await getTranscriptFromVesloReadApi(
+        workspaceId,
+        latest.id,
+        50,
+        directory,
+      );
       if (!snapshot) return;
       // Warm the cache before selecting so browse-mode selectSession can stay on
       // the passive DB path and avoid cold-starting the engine just to render.
@@ -3197,7 +3219,10 @@ export default function App() {
     prependSessionToWorkspaceSidebar(workspaceId, pendingItem);
   };
 
-  const shouldClearSessionRouteForProjectOpen = (workspaceId: string, origin?: string | null) => {
+  const shouldClearSessionRouteForProjectOpen = (
+    workspaceId: string,
+    origin?: string | null,
+  ) => {
     const nextWorkspaceId = workspaceId.trim();
     if (!nextWorkspaceId) return false;
     if (origin !== "workspace-session-list:project-open") return false;
@@ -3288,7 +3313,11 @@ export default function App() {
     sidebarActivityTokenModel.reconcileFinalRows(finalSidebarSessionActivityRows());
   });
 
-  const archivedSessionMatchesSidebarTarget = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget | null) => {
+  const archivedSessionMatchesSidebarTarget = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
     const key = buildArchivedSidebarSessionKey({
       workspaceId,
       sessionId,
@@ -3297,7 +3326,11 @@ export default function App() {
     return Boolean(key) && archivedSessionIds().includes(key);
   };
 
-  const activeSessionMatchesArchiveTarget = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget | null) => {
+  const activeSessionMatchesArchiveTarget = (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
     const normalizedWorkspaceId = workspaceId.trim();
     const normalizedSessionId = sessionId.trim();
     if (!normalizedWorkspaceId || !normalizedSessionId) return false;
@@ -3343,8 +3376,16 @@ export default function App() {
     }
   };
 
-  const archiveSidebarSessionAndClearActive = async (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget | null) => {
-    const shouldClearActiveSession = activeSessionMatchesArchiveTarget(workspaceId, sessionId, target);
+  const archiveSidebarSessionAndClearActive = async (
+    workspaceId: string,
+    sessionId: string,
+    target?: SidebarSessionOpenTarget | null,
+  ) => {
+    const shouldClearActiveSession = activeSessionMatchesArchiveTarget(
+      workspaceId,
+      sessionId,
+      target,
+    );
     await archiveSidebarSession(workspaceId, sessionId, target ?? undefined);
     if (!shouldClearActiveSession) return;
     if (!activeSessionMatchesArchiveTarget(workspaceId, sessionId, target)) return;

@@ -846,16 +846,23 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
   }
 
-  async function listCommands(scope: SessionMutationCommandListScope = {}): Promise<SessionMutationCommand[]> {
+  async function listCommands(
+    scope: SessionMutationCommandListScope = {},
+  ): Promise<SessionMutationCommand[]> {
     const scopedWorkspaceId = scope.workspaceId?.trim() ?? "";
-    const c = scopedWorkspaceId ? deps.routedClient(scopedWorkspaceId) : deps.routedClient();
+    const c = scopedWorkspaceId
+      ? deps.routedClient(scopedWorkspaceId)
+      : deps.routedClient();
     if (!c) return [];
     const scopedDirectory = scope.directory?.trim() ?? "";
     const directory =
       scopedDirectory ||
       (scopedWorkspaceId ? deps.workspaceRootForId(scopedWorkspaceId, null) : deps.activeWorkspaceRoot().trim()) ||
       undefined;
-    const list = (await listCommandsTyped(c, directory)) as SessionMutationCommand[];
+    const list = (await listCommandsTyped(
+      c,
+      directory,
+    )) as SessionMutationCommand[];
     if (list.some((entry) => entry.name === "compact")) {
       return list;
     }

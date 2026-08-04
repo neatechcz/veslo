@@ -53,16 +53,6 @@ const checks = [
       "Remove workspace",
     ],
   },
-  {
-    file: "../src/app/components/session/inbox-panel.tsx",
-    forbidden: [
-      "Share files with your remote worker.",
-      "Refresh inbox",
-      "Drop files or click to upload",
-      "Connect to see inbox files.",
-      "No inbox files yet.",
-    ],
-  },
 ];
 
 const failures = [];

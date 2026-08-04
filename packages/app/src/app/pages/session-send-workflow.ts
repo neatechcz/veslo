@@ -485,7 +485,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     }
   }
 
-  async function sendPrompt(draft: ComposerDraft, options: SessionSendWorkflowSendOptions): Promise<SessionSubmitResult> {
+  async function sendPrompt(
+    draft: ComposerDraft,
+    options: SessionSendWorkflowSendOptions,
+  ): Promise<SessionSubmitResult> {
     const sendCorrelation = normalizeSessionSendCorrelation(options);
     if (!sendCorrelation.clientMessageId) {
       deps.recordSendTrace("sendPrompt:blocked-missing-client-message-id", {
@@ -508,7 +511,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       !selectedSessionScopeWorkspaceId || !activeWorkspaceIdForSend || selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;
     const selectedRealSessionId =
       deps.isPendingSessionInstanceKey(selectedSessionCandidate) || !selectedSessionBelongsToActiveWorkspace ? null : selectedSessionCandidate;
-    const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId) ? "" : (options.targetSessionId?.trim() ?? "");
+    const explicitTargetSessionId = deps.isPendingSessionInstanceKey(
+      options.targetSessionId,
+    )
+      ? ""
+      : (options.targetSessionId?.trim() ?? "");
     let sessionID = explicitTargetSessionId || selectedRealSessionId;
     const pendingSidebarTargetWorkspace = pendingSidebarSession?.workspaceId?.trim()
       ? {
@@ -526,7 +533,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       selectedSessionId: selectedSessionCandidate,
       selectedSessionScopeWorkspaceId: selectedSessionScopeWorkspaceId || null,
       activeWorkspaceId: activeWorkspaceIdForSend || null,
-      selectedSessionIgnoredForForeignWorkspace: Boolean(selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId),
+      selectedSessionIgnoredForForeignWorkspace: Boolean(
+        selectedSessionCandidate &&
+          !selectedSessionBelongsToActiveWorkspace &&
+          !explicitTargetSessionId,
+      ),
       uiScopeKey: sendStartUiScopeToken.key,
       uiScopeWorkspaceId: sendStartUiScopeToken.workspaceId || null,
       uiScopeGeneration: sendStartUiScopeToken.generation,
@@ -579,7 +590,10 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       const cleanupPendingSidebarSession = () => {
         if (!pendingSidebarRowRegistered || !pendingSidebarSession) return;
         pendingSidebarRowRegistered = false;
-        deps.removeSessionFromWorkspaceSidebar(pendingSidebarSession.workspaceId, pendingSidebarSession.id);
+        deps.removeSessionFromWorkspaceSidebar(
+          pendingSidebarSession.workspaceId,
+          pendingSidebarSession.id,
+        );
         if (deps.selectedSessionId() === pendingSidebarSession.id) {
           deps.setSelectedSessionId(null);
         }
@@ -614,7 +628,12 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         scopedSessionID &&
         !(await deps.sendTraceStep(
           "sendPrompt:ensure-scoped-workspace-active",
-          () => deps.ensureSelectedSessionWorkspaceActiveForSend(scopedSessionID, sendTraceId, sendTargetWorkspace),
+          () =>
+            deps.ensureSelectedSessionWorkspaceActiveForSend(
+              scopedSessionID,
+              sendTraceId,
+              sendTargetWorkspace,
+            ),
           {
             traceId: sendTraceId,
             sessionID: scopedSessionID,
