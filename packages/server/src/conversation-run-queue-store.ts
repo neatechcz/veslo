@@ -162,7 +162,11 @@ export type ConversationRunQueueStore = {
     kind: string;
     bodyJson: string;
     activeRunId?: string | null;
-  }): { item: ConversationRunQueueItem; inserted: boolean; queuePosition: number };
+  }): {
+    item: ConversationRunQueueItem;
+    inserted: boolean;
+    queuePosition: number;
+  };
   nextPending(workspaceId: string, conversationId: string): ConversationRunQueueItem | null;
   listForConversation(input: {
     workspaceId: string;
@@ -171,16 +175,11 @@ export type ConversationRunQueueStore = {
     cursor?: ConversationRunQueueCursor | null;
     limit: number;
   }): ConversationRunQueuePage;
-  markStarting(queueItemId: string): ConversationRunQueueItem | null;
   claimStartingWithReservation(queueItemId: string): ConversationRunQueueAdmissionClaim | null;
   markPending(queueItemId: string, activeRunId?: string | null): ConversationRunQueueItem | null;
   markSubmitted(queueItemId: string): ConversationRunQueueItem | null;
   markFailed(queueItemId: string, error: string): ConversationRunQueueItem | null;
-  getForConversation(
-    workspaceId: string,
-    conversationId: string,
-    queueItemId: string,
-  ): ConversationRunQueueItem | null;
+  getForConversation(workspaceId: string, conversationId: string, queueItemId: string): ConversationRunQueueItem | null;
   getForReservedRun(
     workspaceId: string,
     conversationId: string,
@@ -192,7 +191,10 @@ export type ConversationRunQueueStore = {
     runId: string;
   }): ConversationRunStatusSnapshot;
   listStarting(): ConversationRunQueueItem[];
-  pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }>;
+  pendingConversationKeys(): Array<{
+    workspaceId: string;
+    conversationId: string;
+  }>;
   reserveWorkspaceRun(input: {
     workspaceId: string;
     conversationId: string;
@@ -233,10 +235,7 @@ export type ConversationRunQueueStore = {
     decidedAt?: number;
   }): ConversationWorkspaceRunReservation | null;
   /** Explicit user intent may reopen one durable degraded handoff for a fresh, fenced evidence read. */
-  reopenWorkspaceRunTerminalHandoff(
-    workspaceId: string,
-    runId: string,
-  ): ConversationWorkspaceRunReservation | null;
+  reopenWorkspaceRunTerminalHandoff(workspaceId: string, runId: string): ConversationWorkspaceRunReservation | null;
   getTerminalHandoffBarrier(
     workspaceId: string,
     conversationId: string,
@@ -299,7 +298,10 @@ export type ConversationRunQueueStore = {
     expiresAt: number;
   }): { operation: ConversationWorkspaceRuntimeOperation; acquired: boolean };
   getWorkspaceRuntimeOperation(workspaceId: string): ConversationWorkspaceRuntimeOperation | null;
-  beginWorkspaceRuntimeOperation(workspaceId: string, operationId: string): ConversationWorkspaceRuntimeOperation | null;
+  beginWorkspaceRuntimeOperation(
+    workspaceId: string,
+    operationId: string,
+  ): ConversationWorkspaceRuntimeOperation | null;
   completeWorkspaceRuntimeOperation(input: {
     workspaceId: string;
     operationId: string;
@@ -419,9 +421,7 @@ export class ConversationRunReservationConflictError extends Error {
 }
 
 const expandHome = (input: string): string =>
-  input === "~" || input.startsWith("~/") || input.startsWith("~\\")
-    ? join(homedir(), input.slice(2))
-    : input;
+  input === "~" || input.startsWith("~/") || input.startsWith("~\\") ? join(homedir(), input.slice(2)) : input;
 
 export function resolveConversationRunQueueDbPath(options?: { dbPath?: string; dataDir?: string }): string {
   const explicitDb = normalizeText(options?.dbPath) || normalizeText(process.env.VESLO_CONVERSATION_RUN_QUEUE_DB_PATH);
@@ -539,9 +539,9 @@ function ensureQueueSchema(db: Database): void {
   if (!columns.some((column) => column.name === "idempotency_conflict_client_message_id")) {
     db.exec("ALTER TABLE conversation_run_queue ADD COLUMN idempotency_conflict_client_message_id TEXT");
   }
-  const reservationColumns = db.query<{ name: string }, []>(
-    "PRAGMA table_info(conversation_workspace_run_reservation)",
-  ).all();
+  const reservationColumns = db
+    .query<{ name: string }, []>("PRAGMA table_info(conversation_workspace_run_reservation)")
+    .all();
   const addReservationColumn = (name: string, definition: string) => {
     if (!reservationColumns.some((column) => column.name === name)) {
       db.exec(`ALTER TABLE conversation_workspace_run_reservation ADD COLUMN ${name} ${definition}`);
@@ -573,33 +573,40 @@ function ensureQueueSchema(db: Database): void {
   addReservationColumn("provider_start_abort_last_error", "TEXT");
   addReservationColumn("provider_start_abort_next_attempt_at", "INTEGER");
   addReservationColumn("provider_start_abort_deadline_at", "INTEGER");
-  const legacyRows = db.query<QueueRow, []>(
-    `SELECT * FROM conversation_run_queue
+  const legacyRows = db
+    .query<QueueRow, []>(
+      `SELECT * FROM conversation_run_queue
      WHERE request_hash IS NULL OR request_hash = ''`,
-  ).all();
+    )
+    .all();
   const update = db.query(`UPDATE conversation_run_queue SET request_hash = ?1 WHERE queue_item_id = ?2`);
   if (legacyRows.length > 0) {
     db.transaction(() => {
       for (const row of legacyRows) {
-        update.run(queueRequestHash({
-          conversationId: row.conversation_id,
-          opencodeSessionId: row.opencode_session_id,
-          directory: row.directory,
-          kind: row.kind,
-          bodyJson: row.body_json,
-          origin: row.origin,
-        }), row.queue_item_id);
+        update.run(
+          queueRequestHash({
+            conversationId: row.conversation_id,
+            opencodeSessionId: row.opencode_session_id,
+            directory: row.directory,
+            kind: row.kind,
+            bodyJson: row.body_json,
+            origin: row.origin,
+          }),
+          row.queue_item_id,
+        );
       }
     })();
   }
 
-  const duplicateGroups = db.query<{ workspace_id: string; client_message_id: string }, []>(
-    `SELECT workspace_id, client_message_id
+  const duplicateGroups = db
+    .query<{ workspace_id: string; client_message_id: string }, []>(
+      `SELECT workspace_id, client_message_id
      FROM conversation_run_queue
      WHERE client_message_id IS NOT NULL AND client_message_id <> ''
      GROUP BY workspace_id, client_message_id
      HAVING COUNT(*) > 1`,
-  ).all();
+    )
+    .all();
   const duplicateRows = db.query<QueueRow, [string, string]>(
     `SELECT * FROM conversation_run_queue
      WHERE workspace_id = ?1 AND client_message_id = ?2
@@ -669,9 +676,9 @@ function rowToItem(row: QueueRow): ConversationRunQueueItem {
 }
 
 function getSync(db: Database, queueItemId: string): ConversationRunQueueItem | null {
-  const row = db.query<QueueRow, [string]>(
-    `SELECT * FROM conversation_run_queue WHERE queue_item_id = ?1 LIMIT 1`,
-  ).get(queueItemId);
+  const row = db
+    .query<QueueRow, [string]>(`SELECT * FROM conversation_run_queue WHERE queue_item_id = ?1 LIMIT 1`)
+    .get(queueItemId);
   return row ? rowToItem(row) : null;
 }
 
@@ -680,32 +687,32 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
     workspaceId: row.workspace_id,
     conversationId: row.conversation_id,
     runId: row.run_id,
-    state: row.state === "terminalization_pending" || row.state === "terminal_handoff_pending" ||
-        row.state === "terminal_handoff_unresolved"
-      ? row.state
-      : row.state === "active" ? "active" : "starting",
+    state:
+      row.state === "terminalization_pending" ||
+      row.state === "terminal_handoff_pending" ||
+      row.state === "terminal_handoff_unresolved"
+        ? row.state
+        : row.state === "active"
+          ? "active"
+          : "starting",
     terminalizationReason: row.terminalization_reason?.trim() || null,
     terminalizationAttempts: Number.isSafeInteger(row.terminalization_attempts)
       ? Math.max(0, Number(row.terminalization_attempts))
       : 0,
     terminalizationLastError: row.terminalization_last_error?.trim() || null,
-    terminalizationNextAttemptAt: typeof row.terminalization_next_attempt_at === "number"
-      ? row.terminalization_next_attempt_at
-      : null,
-    terminalizationDeadlineAt: typeof row.terminalization_deadline_at === "number"
-      ? row.terminalization_deadline_at
-      : null,
+    terminalizationNextAttemptAt:
+      typeof row.terminalization_next_attempt_at === "number" ? row.terminalization_next_attempt_at : null,
+    terminalizationDeadlineAt:
+      typeof row.terminalization_deadline_at === "number" ? row.terminalization_deadline_at : null,
     terminalHandoffReason: row.terminal_handoff_reason?.trim() || null,
     terminalHandoffFingerprint: row.terminal_handoff_fingerprint?.trim() || null,
     terminalHandoffAttempts: Number.isSafeInteger(row.terminal_handoff_attempts)
       ? Math.max(0, Number(row.terminal_handoff_attempts))
       : 0,
-    terminalHandoffRequestedAt: typeof row.terminal_handoff_requested_at === "number"
-      ? row.terminal_handoff_requested_at
-      : null,
-    terminalHandoffDecidedAt: typeof row.terminal_handoff_decided_at === "number"
-      ? row.terminal_handoff_decided_at
-      : null,
+    terminalHandoffRequestedAt:
+      typeof row.terminal_handoff_requested_at === "number" ? row.terminal_handoff_requested_at : null,
+    terminalHandoffDecidedAt:
+      typeof row.terminal_handoff_decided_at === "number" ? row.terminal_handoff_decided_at : null,
     providerStartAbortPending: row.provider_start_abort_pending === 1,
     providerStartAbortDirectory: row.provider_start_abort_directory?.trim() || null,
     providerStartAbortOpenCodeSessionId: row.provider_start_abort_opencode_session_id?.trim() || null,
@@ -713,12 +720,10 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
       ? Math.max(0, Number(row.provider_start_abort_attempts))
       : 0,
     providerStartAbortLastError: row.provider_start_abort_last_error?.trim() || null,
-    providerStartAbortNextAttemptAt: typeof row.provider_start_abort_next_attempt_at === "number"
-      ? row.provider_start_abort_next_attempt_at
-      : null,
-    providerStartAbortDeadlineAt: typeof row.provider_start_abort_deadline_at === "number"
-      ? row.provider_start_abort_deadline_at
-      : null,
+    providerStartAbortNextAttemptAt:
+      typeof row.provider_start_abort_next_attempt_at === "number" ? row.provider_start_abort_next_attempt_at : null,
+    providerStartAbortDeadlineAt:
+      typeof row.provider_start_abort_deadline_at === "number" ? row.provider_start_abort_deadline_at : null,
     engineSlotId: row.engine_slot_id?.trim() || null,
     engineOwnerId: row.engine_owner_id?.trim() || null,
     directoryInstanceEpoch:
@@ -726,9 +731,10 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
         ? row.directory_instance_epoch
         : null,
     enginePid: typeof row.engine_pid === "number" && Number.isFinite(row.engine_pid) ? row.engine_pid : null,
-    engineStartedAt: typeof row.engine_started_at === "number" && Number.isFinite(row.engine_started_at)
-      ? row.engine_started_at
-      : null,
+    engineStartedAt:
+      typeof row.engine_started_at === "number" && Number.isFinite(row.engine_started_at)
+        ? row.engine_started_at
+        : null,
     engineBaseUrl: row.engine_base_url?.trim() || null,
     skillViewRevision: row.skill_view_revision?.trim() || null,
     authorizationRevision: row.authorization_revision?.trim() || null,
@@ -738,12 +744,11 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
   };
 }
 
-function terminalHandoffBarrierRowToItem(
-  row: TerminalHandoffBarrierRow,
-): ConversationTerminalHandoffBarrier {
-  const state = row.state === "evidence_requested" || row.state === "resolved" || row.state === "unresolved"
-    ? row.state
-    : "observed";
+function terminalHandoffBarrierRowToItem(row: TerminalHandoffBarrierRow): ConversationTerminalHandoffBarrier {
+  const state =
+    row.state === "evidence_requested" || row.state === "resolved" || row.state === "unresolved"
+      ? row.state
+      : "observed";
   return {
     workspaceId: row.workspace_id,
     conversationId: row.conversation_id,
@@ -759,9 +764,7 @@ function terminalHandoffBarrierRowToItem(
   };
 }
 
-function runtimeOperationRowToItem(
-  row: WorkspaceRuntimeOperationRow,
-): ConversationWorkspaceRuntimeOperation {
+function runtimeOperationRowToItem(row: WorkspaceRuntimeOperationRow): ConversationWorkspaceRuntimeOperation {
   const kind = row.kind as ConversationWorkspaceRuntimeOperationKind;
   const state = row.state as ConversationWorkspaceRuntimeOperationState;
   const sourceClass = row.source_class === "user" ? "user" : "automatic";
@@ -787,36 +790,45 @@ function queueRequestHash(input: {
   bodyJson: string;
   origin?: string | null;
 }): string {
-  return createHash("sha256").update(JSON.stringify({
-    conversationId: normalizeText(input.conversationId),
-    opencodeSessionId: normalizeText(input.opencodeSessionId),
-    directory: normalizeText(input.directory),
-    kind: normalizeText(input.kind),
-    bodyJson: normalizeText(input.bodyJson),
-    origin: normalizeText(input.origin) || null,
-  })).digest("hex");
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        conversationId: normalizeText(input.conversationId),
+        opencodeSessionId: normalizeText(input.opencodeSessionId),
+        directory: normalizeText(input.directory),
+        kind: normalizeText(input.kind),
+        bodyJson: normalizeText(input.bodyJson),
+        origin: normalizeText(input.origin) || null,
+      }),
+    )
+    .digest("hex");
 }
 
 function rowRequestHash(row: QueueRow): string {
-  return row.request_hash || queueRequestHash({
-    conversationId: row.conversation_id,
-    opencodeSessionId: row.opencode_session_id,
-    directory: row.directory,
-    kind: row.kind,
-    bodyJson: row.body_json,
-    origin: row.origin,
-  });
+  return (
+    row.request_hash ||
+    queueRequestHash({
+      conversationId: row.conversation_id,
+      opencodeSessionId: row.opencode_session_id,
+      directory: row.directory,
+      kind: row.kind,
+      bodyJson: row.body_json,
+      origin: row.origin,
+    })
+  );
 }
 
 function queuePositionSync(db: Database, item: ConversationRunQueueItem): number {
   if (item.state !== "pending" && item.state !== "starting") return 0;
-  const row = db.query<{ count: number }, [string, string, number, string]>(
-    `SELECT COUNT(*) AS count FROM conversation_run_queue
+  const row = db
+    .query<{ count: number }, [string, string, number, string]>(
+      `SELECT COUNT(*) AS count FROM conversation_run_queue
      WHERE workspace_id = ?1
        AND conversation_id = ?2
        AND state IN ('pending', 'starting')
        AND (created_at < ?3 OR (created_at = ?3 AND queue_item_id <= ?4))`,
-  ).get(item.workspaceId, item.conversationId, item.createdAt, item.queueItemId);
+    )
+    .get(item.workspaceId, item.conversationId, item.createdAt, item.queueItemId);
   return Math.max(1, Number(row?.count ?? 1));
 }
 
@@ -846,8 +858,18 @@ export function createConversationRunQueueStore(options?: {
         const reservedRunId = normalizeText(input.reservedRunId);
         const kind = normalizeText(input.kind);
         const bodyJson = normalizeText(input.bodyJson);
-        if (!workspaceId || !conversationId || !opencodeSessionId || !directory || !reservedRunId || !kind || !bodyJson) {
-          throw new Error("workspaceId, conversationId, opencodeSessionId, directory, reservedRunId, kind, and bodyJson are required");
+        if (
+          !workspaceId ||
+          !conversationId ||
+          !opencodeSessionId ||
+          !directory ||
+          !reservedRunId ||
+          !kind ||
+          !bodyJson
+        ) {
+          throw new Error(
+            "workspaceId, conversationId, opencodeSessionId, directory, reservedRunId, kind, and bodyJson are required",
+          );
         }
         const requestHash = queueRequestHash({
           conversationId,
@@ -860,17 +882,23 @@ export function createConversationRunQueueStore(options?: {
 
         const clientMessageId = normalizeText(input.clientMessageId) || null;
         if (clientMessageId) {
-          const existing = db.query<QueueRow, [string, string]>(
-            `SELECT * FROM conversation_run_queue
+          const existing = db
+            .query<QueueRow, [string, string]>(
+              `SELECT * FROM conversation_run_queue
              WHERE workspace_id = ?1 AND client_message_id = ?2
              LIMIT 1`,
-          ).get(workspaceId, clientMessageId);
+            )
+            .get(workspaceId, clientMessageId);
           if (existing) {
             if (rowRequestHash(existing) !== requestHash) {
               throw new ConversationRunQueueConflictError();
             }
             const item = rowToItem(existing);
-            return { item, inserted: false, queuePosition: queuePositionSync(db, item) };
+            return {
+              item,
+              inserted: false,
+              queuePosition: queuePositionSync(db, item),
+            };
           }
         }
 
@@ -917,18 +945,24 @@ export function createConversationRunQueueStore(options?: {
         );
         const item = getSync(db, queueItemId);
         if (!item) throw new Error("failed to enqueue conversation run");
-        return { item, inserted: true, queuePosition: queuePositionSync(db, item) };
+        return {
+          item,
+          inserted: true,
+          queuePosition: queuePositionSync(db, item),
+        };
       });
     },
 
     nextPending(workspaceId, conversationId) {
       return withDb((db) => {
-        const row = db.query<QueueRow, [string, string]>(
-          `SELECT * FROM conversation_run_queue
+        const row = db
+          .query<QueueRow, [string, string]>(
+            `SELECT * FROM conversation_run_queue
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND state = 'pending'
            ORDER BY created_at ASC, queue_item_id ASC
            LIMIT 1`,
-        ).get(workspaceId, conversationId);
+          )
+          .get(workspaceId, conversationId);
         return row ? rowToItem(row) : null;
       });
     },
@@ -956,69 +990,50 @@ export function createConversationRunQueueStore(options?: {
         }
 
         const parameters: Array<string | number> = [workspaceId, conversationId, ...states];
-        const cursorClause = cursor
-          ? " AND (created_at > ? OR (created_at = ? AND queue_item_id > ?))"
-          : "";
+        const cursorClause = cursor ? " AND (created_at > ? OR (created_at = ? AND queue_item_id > ?))" : "";
         if (cursor) parameters.push(cursor.createdAt, cursor.createdAt, cursor.queueItemId);
         parameters.push(input.limit + 1);
         const statePlaceholders = states.map(() => "?").join(", ");
-        const rows = db.query<QueueRow, Array<string | number>>(
-          `SELECT * FROM conversation_run_queue
+        const rows = db
+          .query<QueueRow, Array<string | number>>(
+            `SELECT * FROM conversation_run_queue
            WHERE workspace_id = ?
              AND conversation_id = ?
              AND state IN (${statePlaceholders})${cursorClause}
            ORDER BY created_at ASC, queue_item_id ASC
            LIMIT ?`,
-        ).all(...parameters);
+          )
+          .all(...parameters);
         const hasMore = rows.length > input.limit;
         const pageRows = hasMore ? rows.slice(0, input.limit) : rows;
         const items = pageRows.map((row) => {
           const item = rowToItem(row);
           return {
             item,
-            queuePosition: item.state === "pending" || item.state === "starting"
-              ? queuePositionSync(db, item)
-              : null,
+            queuePosition: item.state === "pending" || item.state === "starting" ? queuePositionSync(db, item) : null,
           };
         });
         const last = items.at(-1)?.item;
         return {
           items,
-          nextCursor: hasMore && last
-            ? { createdAt: last.createdAt, queueItemId: last.queueItemId }
-            : null,
+          nextCursor: hasMore && last ? { createdAt: last.createdAt, queueItemId: last.queueItemId } : null,
         };
-      });
-    },
-
-    markStarting(queueItemId) {
-      return withDb((db) => {
-        const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_run_queue
-           SET state = 'starting',
-               attempts = attempts + 1,
-               started_at = ?2,
-               updated_at = ?2,
-               error = NULL
-           WHERE queue_item_id = ?1 AND state = 'pending'`,
-        ).run(queueItemId, timestamp);
-        if (result.changes !== 1) return null;
-        return getSync(db, queueItemId);
       });
     },
 
     markPending(queueItemId, activeRunId) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_run_queue
+        const result = db
+          .query(
+            `UPDATE conversation_run_queue
            SET state = 'pending',
                active_run_id = ?2,
                started_at = NULL,
                updated_at = ?3
            WHERE queue_item_id = ?1 AND state = 'starting'`,
-        ).run(queueItemId, normalizeText(activeRunId) || null, timestamp);
+          )
+          .run(queueItemId, normalizeText(activeRunId) || null, timestamp);
         if (result.changes !== 1) return null;
         return getSync(db, queueItemId);
       });
@@ -1027,14 +1042,16 @@ export function createConversationRunQueueStore(options?: {
     markSubmitted(queueItemId) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_run_queue
+        const result = db
+          .query(
+            `UPDATE conversation_run_queue
            SET state = 'submitted',
                submitted_at = ?2,
                completed_at = ?2,
                updated_at = ?2
            WHERE queue_item_id = ?1 AND state = 'starting'`,
-        ).run(queueItemId, timestamp);
+          )
+          .run(queueItemId, timestamp);
         if (result.changes !== 1) return null;
         return getSync(db, queueItemId);
       });
@@ -1043,14 +1060,16 @@ export function createConversationRunQueueStore(options?: {
     markFailed(queueItemId, error) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_run_queue
+        const result = db
+          .query(
+            `UPDATE conversation_run_queue
            SET state = 'failed',
                error = ?2,
                completed_at = ?3,
                updated_at = ?3
            WHERE queue_item_id = ?1 AND state = 'starting'`,
-        ).run(queueItemId, normalizeText(error) || "queued run failed", timestamp);
+          )
+          .run(queueItemId, normalizeText(error) || "queued run failed", timestamp);
         if (result.changes !== 1) return null;
         return getSync(db, queueItemId);
       });
@@ -1058,54 +1077,53 @@ export function createConversationRunQueueStore(options?: {
 
     getForConversation(workspaceId, conversationId, queueItemId) {
       return withDb((db) => {
-        const row = db.query<QueueRow, [string, string, string]>(
-          `SELECT * FROM conversation_run_queue
+        const row = db
+          .query<QueueRow, [string, string, string]>(
+            `SELECT * FROM conversation_run_queue
            WHERE workspace_id = ?1
              AND conversation_id = ?2
              AND queue_item_id = ?3
            LIMIT 1`,
-        ).get(
-          normalizeText(workspaceId),
-          normalizeText(conversationId),
-          normalizeText(queueItemId),
-        );
+          )
+          .get(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(queueItemId));
         return row ? rowToItem(row) : null;
       });
     },
 
     getForReservedRun(workspaceId, conversationId, reservedRunId) {
       return withDb((db) => {
-        const row = db.query<QueueRow, [string, string, string]>(
-          `SELECT * FROM conversation_run_queue
+        const row = db
+          .query<QueueRow, [string, string, string]>(
+            `SELECT * FROM conversation_run_queue
            WHERE workspace_id = ?1
              AND conversation_id = ?2
              AND reserved_run_id = ?3
            LIMIT 1`,
-        ).get(
-          normalizeText(workspaceId),
-          normalizeText(conversationId),
-          normalizeText(reservedRunId),
-        );
+          )
+          .get(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(reservedRunId));
         return row ? rowToItem(row) : null;
       });
     },
 
     readConversationRunStatusSnapshot(input) {
-      return withDb((db) => db.transaction(() => {
-        const workspaceId = normalizeText(input.workspaceId);
-        const conversationId = normalizeText(input.conversationId);
-        const runId = normalizeText(input.runId);
-        if (!workspaceId || !conversationId || !runId) {
-          throw new Error("workspaceId, conversationId, and runId are required");
-        }
+      return withDb((db) =>
+        db.transaction(() => {
+          const workspaceId = normalizeText(input.workspaceId);
+          const conversationId = normalizeText(input.conversationId);
+          const runId = normalizeText(input.runId);
+          if (!workspaceId || !conversationId || !runId) {
+            throw new Error("workspaceId, conversationId, and runId are required");
+          }
 
-        // A status response must not splice a queue row from before a claim
-        // together with a reservation or handoff barrier from after it. Keep
-        // this read-only selection in one SQLite transaction so the route has
-        // one durable observation to serialize.
-        const itemRow = runId === "latest"
-          ? db.query<QueueRow, [string, string]>(
-            `SELECT queue.*
+          // A status response must not splice a queue row from before a claim
+          // together with a reservation or handoff barrier from after it. Keep
+          // this read-only selection in one SQLite transaction so the route has
+          // one durable observation to serialize.
+          const itemRow =
+            runId === "latest"
+              ? (db
+                  .query<QueueRow, [string, string]>(
+                    `SELECT queue.*
              FROM conversation_run_queue AS queue
              INNER JOIN conversation_workspace_run_reservation AS reservation
                ON reservation.workspace_id = queue.workspace_id
@@ -1120,97 +1138,121 @@ export function createConversationRunQueueStore(options?: {
                )
              ORDER BY reservation.created_at ASC, queue.created_at ASC, queue.queue_item_id ASC
              LIMIT 1`,
-          ).get(workspaceId, conversationId) ?? db.query<QueueRow, [string, string]>(
-            `SELECT * FROM conversation_run_queue
+                  )
+                  .get(workspaceId, conversationId) ??
+                db
+                  .query<QueueRow, [string, string]>(
+                    `SELECT * FROM conversation_run_queue
              WHERE workspace_id = ?1
                AND conversation_id = ?2
                AND state IN ('pending', 'starting')
              ORDER BY created_at ASC, queue_item_id ASC
              LIMIT 1`,
-          ).get(workspaceId, conversationId)
-          : db.query<QueueRow, [string, string, string]>(
-            `SELECT * FROM conversation_run_queue
+                  )
+                  .get(workspaceId, conversationId))
+              : db
+                  .query<QueueRow, [string, string, string]>(
+                    `SELECT * FROM conversation_run_queue
              WHERE workspace_id = ?1
                AND conversation_id = ?2
                AND reserved_run_id = ?3
              LIMIT 1`,
-          ).get(workspaceId, conversationId, runId);
-        const item = itemRow ? rowToItem(itemRow) : null;
-        const reservationRunId = item?.reservedRunId ?? (runId === "latest" ? null : runId);
-        const reservationRow = reservationRunId
-          ? db.query<WorkspaceRunReservationRow, [string, string, string]>(
-            `SELECT * FROM conversation_workspace_run_reservation
+                  )
+                  .get(workspaceId, conversationId, runId);
+          const item = itemRow ? rowToItem(itemRow) : null;
+          const reservationRunId = item?.reservedRunId ?? (runId === "latest" ? null : runId);
+          const reservationRow = reservationRunId
+            ? db
+                .query<WorkspaceRunReservationRow, [string, string, string]>(
+                  `SELECT * FROM conversation_workspace_run_reservation
              WHERE workspace_id = ?1
                AND conversation_id = ?2
                AND run_id = ?3
              LIMIT 1`,
-          ).get(workspaceId, conversationId, reservationRunId)
-          : null;
-        const directBarrierRunId = item?.reservedRunId ?? (runId === "latest" ? null : runId);
-        const directBarrier = directBarrierRunId
-          ? db.query<TerminalHandoffBarrierRow, [string, string, string]>(
-            `SELECT * FROM conversation_terminal_handoff_barrier
+                )
+                .get(workspaceId, conversationId, reservationRunId)
+            : null;
+          const directBarrierRunId = item?.reservedRunId ?? (runId === "latest" ? null : runId);
+          const directBarrier = directBarrierRunId
+            ? db
+                .query<TerminalHandoffBarrierRow, [string, string, string]>(
+                  `SELECT * FROM conversation_terminal_handoff_barrier
              WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3
              LIMIT 1`,
-          ).get(workspaceId, conversationId, directBarrierRunId)
-          : null;
-        const activeBarrier = db.query<TerminalHandoffBarrierRow, [string, string]>(
-          `SELECT * FROM conversation_terminal_handoff_barrier
+                )
+                .get(workspaceId, conversationId, directBarrierRunId)
+            : null;
+          const activeBarrier = db
+            .query<TerminalHandoffBarrierRow, [string, string]>(
+              `SELECT * FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1
              AND conversation_id = ?2
              AND state IN ('observed', 'evidence_requested', 'unresolved')
            ORDER BY created_at ASC, run_id ASC
            LIMIT 1`,
-        ).get(workspaceId, conversationId);
+            )
+            .get(workspaceId, conversationId);
 
-        return {
-          item,
-          reservation: reservationRow ? reservationRowToItem(reservationRow) : null,
-          // A successor is blocked by the active conversation fence. For an
-          // exact historical run with no queue item, expose only its own fence.
-          terminalHandoff: item
-            ? (activeBarrier ? terminalHandoffBarrierRowToItem(activeBarrier) : null)
-            : (directBarrier ? terminalHandoffBarrierRowToItem(directBarrier) : null),
-        };
-      })());
+          return {
+            item,
+            reservation: reservationRow ? reservationRowToItem(reservationRow) : null,
+            // A successor is blocked by the active conversation fence. For an
+            // exact historical run with no queue item, expose only its own fence.
+            terminalHandoff: item
+              ? activeBarrier
+                ? terminalHandoffBarrierRowToItem(activeBarrier)
+                : null
+              : directBarrier
+                ? terminalHandoffBarrierRowToItem(directBarrier)
+                : null,
+          };
+        })(),
+      );
     },
 
     listStarting() {
       return withDb((db) => {
-        return db.query<QueueRow, []>(
-          `SELECT * FROM conversation_run_queue
+        return db
+          .query<QueueRow, []>(
+            `SELECT * FROM conversation_run_queue
            WHERE state = 'starting'
            ORDER BY created_at ASC, queue_item_id ASC`,
-        ).all().map(rowToItem);
+          )
+          .all()
+          .map(rowToItem);
       });
     },
 
     claimStartingWithReservation(queueItemId) {
-      return withDb((db) => db.transaction(() => {
-        const timestamp = now();
-        const candidate = db.query<QueueRow, [string]>(
-          `SELECT * FROM conversation_run_queue
+      return withDb((db) =>
+        db.transaction(() => {
+          const timestamp = now();
+          const candidate = db
+            .query<QueueRow, [string]>(
+              `SELECT * FROM conversation_run_queue
            WHERE queue_item_id = ?1 AND state = 'pending'
            LIMIT 1`,
-        ).get(queueItemId);
-        if (!candidate) return null;
-        // The timestamp must be chosen at first admission, not enqueue, so the
-        // prompt sorts after the assistant turn that completed while it waited.
-        // Persisting this exact value in the claim transaction makes retry and
-        // restart safe: a second submit can never get a different OpenCode id.
-        const admissionMessageId = candidate.opencode_message_id?.trim() || (
-          candidate.kind === "prompt_async" && candidate.client_message_id?.trim()
-            ? createConversationRunOpenCodeMessageId({
-              workspaceId: candidate.workspace_id,
-              engineSessionId: candidate.opencode_session_id,
-              clientMessageId: candidate.client_message_id,
-              runId: candidate.reserved_run_id,
-              timestamp,
-            })
-            : null
-        );
-        const result = db.query(
-          `UPDATE conversation_run_queue
+            )
+            .get(queueItemId);
+          if (!candidate) return null;
+          // The timestamp must be chosen at first admission, not enqueue, so the
+          // prompt sorts after the assistant turn that completed while it waited.
+          // Persisting this exact value in the claim transaction makes retry and
+          // restart safe: a second submit can never get a different OpenCode id.
+          const admissionMessageId =
+            candidate.opencode_message_id?.trim() ||
+            (candidate.kind === "prompt_async" && candidate.client_message_id?.trim()
+              ? createConversationRunOpenCodeMessageId({
+                  workspaceId: candidate.workspace_id,
+                  engineSessionId: candidate.opencode_session_id,
+                  clientMessageId: candidate.client_message_id,
+                  runId: candidate.reserved_run_id,
+                  timestamp,
+                })
+              : null);
+          const result = db
+            .query(
+              `UPDATE conversation_run_queue
            SET state = 'starting',
                attempts = attempts + 1,
                started_at = ?2,
@@ -1228,24 +1270,27 @@ export function createConversationRunQueueStore(options?: {
                  AND barrier.conversation_id = conversation_run_queue.conversation_id
                  AND barrier.state IN ('observed', 'evidence_requested', 'unresolved')
              )`,
-        ).run(queueItemId, timestamp, admissionMessageId);
-        if (result.changes !== 1) return null;
-        const row = db.query<QueueRow, [string]>(
-          `SELECT * FROM conversation_run_queue WHERE queue_item_id = ?1 LIMIT 1`,
-        ).get(queueItemId);
-        if (!row) return null;
-        const conflict = db.query<{ run_id: string }, [string, string, string]>(
-          `SELECT run_id FROM conversation_workspace_run_reservation
+            )
+            .run(queueItemId, timestamp, admissionMessageId);
+          if (result.changes !== 1) return null;
+          const row = db
+            .query<QueueRow, [string]>(`SELECT * FROM conversation_run_queue WHERE queue_item_id = ?1 LIMIT 1`)
+            .get(queueItemId);
+          if (!row) return null;
+          const conflict = db
+            .query<{ run_id: string }, [string, string, string]>(
+              `SELECT run_id FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1
              AND conversation_id = ?2
              AND run_id <> ?3
              AND state IN ('starting', 'active', 'terminalization_pending', 'terminal_handoff_pending', 'terminal_handoff_unresolved')
            ORDER BY created_at ASC, run_id ASC
            LIMIT 1`,
-        ).get(row.workspace_id, row.conversation_id, row.reserved_run_id);
-        if (conflict?.run_id) throw new ConversationRunReservationConflictError(conflict.run_id);
-        db.query(
-          `INSERT INTO conversation_workspace_run_reservation (
+            )
+            .get(row.workspace_id, row.conversation_id, row.reserved_run_id);
+          if (conflict?.run_id) throw new ConversationRunReservationConflictError(conflict.run_id);
+          db.query(
+            `INSERT INTO conversation_workspace_run_reservation (
             workspace_id, conversation_id, run_id, state,
             provider_start_abort_directory, provider_start_abort_opencode_session_id,
             created_at, updated_at
@@ -1256,68 +1301,80 @@ export function createConversationRunQueueStore(options?: {
             provider_start_abort_directory = excluded.provider_start_abort_directory,
             provider_start_abort_opencode_session_id = excluded.provider_start_abort_opencode_session_id,
             updated_at = excluded.updated_at`,
-        ).run(
-          row.workspace_id,
-          row.conversation_id,
-          row.reserved_run_id,
-          row.directory,
-          row.opencode_session_id,
-          timestamp,
-        );
-        const reservation = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+          ).run(
+            row.workspace_id,
+            row.conversation_id,
+            row.reserved_run_id,
+            row.directory,
+            row.opencode_session_id,
+            timestamp,
+          );
+          const reservation = db
+            .query<WorkspaceRunReservationRow, [string, string]>(
+              `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(row.workspace_id, row.reserved_run_id);
-        if (!reservation) throw new Error("failed to reserve claimed conversation run");
-        // Once a successor is durably claimed, its predecessor's resolved
-        // handoff fence has served its purpose and must not accumulate forever.
-        db.query(
-          `DELETE FROM conversation_terminal_handoff_barrier
+            )
+            .get(row.workspace_id, row.reserved_run_id);
+          if (!reservation) throw new Error("failed to reserve claimed conversation run");
+          // Once a successor is durably claimed, its predecessor's resolved
+          // handoff fence has served its purpose and must not accumulate forever.
+          db.query(
+            `DELETE FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND state = 'resolved'`,
-        ).run(row.workspace_id, row.conversation_id);
-        return { item: rowToItem(row), reservation: reservationRowToItem(reservation) };
-      })());
+          ).run(row.workspace_id, row.conversation_id);
+          return {
+            item: rowToItem(row),
+            reservation: reservationRowToItem(reservation),
+          };
+        })(),
+      );
     },
 
     pendingConversationKeys() {
       return withDb((db) =>
-        db.query<{ workspace_id: string; conversation_id: string }, []>(
-          `SELECT DISTINCT workspace_id, conversation_id FROM conversation_run_queue
+        db
+          .query<{ workspace_id: string; conversation_id: string }, []>(
+            `SELECT DISTINCT workspace_id, conversation_id FROM conversation_run_queue
            WHERE state = 'pending'
            ORDER BY workspace_id ASC, conversation_id ASC`,
-        ).all().map((row) => ({
-          workspaceId: row.workspace_id,
-          conversationId: row.conversation_id,
-        })),
+          )
+          .all()
+          .map((row) => ({
+            workspaceId: row.workspace_id,
+            conversationId: row.conversation_id,
+          })),
       );
     },
 
     reserveWorkspaceRun(input) {
-      return withDb((db) => db.transaction(() => {
-        const workspaceId = normalizeText(input.workspaceId);
-        const conversationId = normalizeText(input.conversationId);
-        const runId = normalizeText(input.runId);
-        if (!workspaceId || !conversationId || !runId) {
-          throw new Error("workspaceId, conversationId, and runId are required");
-        }
-        const timestamp = now();
-        const state = input.state === "active" ? "active" : "starting";
-        const directory = normalizeText(input.directory) || null;
-        const opencodeSessionId = normalizeText(input.opencodeSessionId) || null;
-        const conflicting = db.query<{ run_id: string }, [string, string, string]>(
-          `SELECT run_id FROM conversation_workspace_run_reservation
+      return withDb((db) =>
+        db.transaction(() => {
+          const workspaceId = normalizeText(input.workspaceId);
+          const conversationId = normalizeText(input.conversationId);
+          const runId = normalizeText(input.runId);
+          if (!workspaceId || !conversationId || !runId) {
+            throw new Error("workspaceId, conversationId, and runId are required");
+          }
+          const timestamp = now();
+          const state = input.state === "active" ? "active" : "starting";
+          const directory = normalizeText(input.directory) || null;
+          const opencodeSessionId = normalizeText(input.opencodeSessionId) || null;
+          const conflicting = db
+            .query<{ run_id: string }, [string, string, string]>(
+              `SELECT run_id FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1
              AND conversation_id = ?2
              AND run_id <> ?3
              AND state IN ('starting', 'active', 'terminalization_pending', 'terminal_handoff_pending', 'terminal_handoff_unresolved')
            ORDER BY created_at ASC, run_id ASC
            LIMIT 1`,
-        ).get(workspaceId, conversationId, runId);
-        if (conflicting?.run_id) {
-          throw new ConversationRunReservationConflictError(conflicting.run_id);
-        }
-        db.query(
-          `INSERT INTO conversation_workspace_run_reservation (
+            )
+            .get(workspaceId, conversationId, runId);
+          if (conflicting?.run_id) {
+            throw new ConversationRunReservationConflictError(conflicting.run_id);
+          }
+          db.query(
+            `INSERT INTO conversation_workspace_run_reservation (
             workspace_id, conversation_id, run_id, state,
             provider_start_abort_directory, provider_start_abort_opencode_session_id,
             created_at, updated_at
@@ -1328,14 +1385,17 @@ export function createConversationRunQueueStore(options?: {
             provider_start_abort_directory = excluded.provider_start_abort_directory,
             provider_start_abort_opencode_session_id = excluded.provider_start_abort_opencode_session_id,
             updated_at = excluded.updated_at`,
-        ).run(workspaceId, conversationId, runId, state, directory, opencodeSessionId, timestamp);
-        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+          ).run(workspaceId, conversationId, runId, state, directory, opencodeSessionId, timestamp);
+          const row = db
+            .query<WorkspaceRunReservationRow, [string, string]>(
+              `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(workspaceId, runId);
-        if (!row) throw new Error("failed to reserve workspace conversation run");
-        return reservationRowToItem(row);
-      })());
+            )
+            .get(workspaceId, runId);
+          if (!row) throw new Error("failed to reserve workspace conversation run");
+          return reservationRowToItem(row);
+        })(),
+      );
     },
 
     attachWorkspaceRunEngineOwner(workspaceId, runId, owner) {
@@ -1348,10 +1408,12 @@ export function createConversationRunQueueStore(options?: {
         const normalizedSkillViewRevision = normalizeText(owner.skillViewRevision);
         const normalizedAuthorizationRevision = normalizeText(owner.authorizationRevision);
         const normalizedOpenCodeConfigDigest = normalizeText(owner.openCodeConfigDigest);
-        if (!normalizedWorkspaceId || !normalizedRunId || !normalizedSlotId || !normalizedOwnerId || !normalizedBaseUrl) return null;
+        if (!normalizedWorkspaceId || !normalizedRunId || !normalizedSlotId || !normalizedOwnerId || !normalizedBaseUrl)
+          return null;
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_workspace_run_reservation
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_run_reservation
            SET engine_slot_id = ?3,
                engine_owner_id = ?4,
                directory_instance_epoch = ?5,
@@ -1378,25 +1440,28 @@ export function createConversationRunQueueStore(options?: {
                  AND COALESCE(opencode_config_digest, '') = ?11
                )
              )`,
-        ).run(
-          normalizedWorkspaceId,
-          normalizedRunId,
-          normalizedSlotId,
-          normalizedOwnerId,
-          owner.directoryInstanceEpoch ?? null,
-          owner.enginePid,
-          owner.engineStartedAt,
-          normalizedBaseUrl,
-          normalizedSkillViewRevision,
-          normalizedAuthorizationRevision,
-          normalizedOpenCodeConfigDigest,
-          timestamp,
-        );
+          )
+          .run(
+            normalizedWorkspaceId,
+            normalizedRunId,
+            normalizedSlotId,
+            normalizedOwnerId,
+            owner.directoryInstanceEpoch ?? null,
+            owner.enginePid,
+            owner.engineStartedAt,
+            normalizedBaseUrl,
+            normalizedSkillViewRevision,
+            normalizedAuthorizationRevision,
+            normalizedOpenCodeConfigDigest,
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+        const row = db
+          .query<WorkspaceRunReservationRow, [string, string]>(
+            `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(normalizedWorkspaceId, normalizedRunId);
+          )
+          .get(normalizedWorkspaceId, normalizedRunId);
         return row ? reservationRowToItem(row) : null;
       });
     },
@@ -1404,16 +1469,20 @@ export function createConversationRunQueueStore(options?: {
     activateWorkspaceRun(workspaceId, runId) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_workspace_run_reservation
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_run_reservation
            SET state = 'active', updated_at = ?3
            WHERE workspace_id = ?1 AND run_id = ?2`,
-        ).run(normalizeText(workspaceId), normalizeText(runId), timestamp);
+          )
+          .run(normalizeText(workspaceId), normalizeText(runId), timestamp);
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+        const row = db
+          .query<WorkspaceRunReservationRow, [string, string]>(
+            `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(normalizeText(workspaceId), normalizeText(runId));
+          )
+          .get(normalizeText(workspaceId), normalizeText(runId));
         return row ? reservationRowToItem(row) : null;
       });
     },
@@ -1421,8 +1490,9 @@ export function createConversationRunQueueStore(options?: {
     markWorkspaceRunTerminalizationPending(input) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_workspace_run_reservation
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_run_reservation
            SET state = 'terminalization_pending',
                terminalization_reason = ?3,
                terminalization_attempts = ?4,
@@ -1431,21 +1501,24 @@ export function createConversationRunQueueStore(options?: {
                terminalization_deadline_at = ?7,
                updated_at = ?8
            WHERE workspace_id = ?1 AND run_id = ?2`,
-        ).run(
-          normalizeText(input.workspaceId),
-          normalizeText(input.runId),
-          normalizeText(input.reason),
-          Math.max(0, Math.floor(input.attempts)),
-          normalizeText(input.lastError),
-          Math.max(0, Math.floor(input.nextAttemptAt)),
-          Math.max(0, Math.floor(input.deadlineAt)),
-          timestamp,
-        );
+          )
+          .run(
+            normalizeText(input.workspaceId),
+            normalizeText(input.runId),
+            normalizeText(input.reason),
+            Math.max(0, Math.floor(input.attempts)),
+            normalizeText(input.lastError),
+            Math.max(0, Math.floor(input.nextAttemptAt)),
+            Math.max(0, Math.floor(input.deadlineAt)),
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+        const row = db
+          .query<WorkspaceRunReservationRow, [string, string]>(
+            `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(normalizeText(input.workspaceId), normalizeText(input.runId));
+          )
+          .get(normalizeText(input.workspaceId), normalizeText(input.runId));
         return row ? reservationRowToItem(row) : null;
       });
     },
@@ -1456,8 +1529,9 @@ export function createConversationRunQueueStore(options?: {
         const requestedAt = Number.isFinite(input.requestedAt)
           ? Math.max(0, Math.floor(input.requestedAt!))
           : timestamp;
-        const result = db.query(
-          `UPDATE conversation_workspace_run_reservation
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_run_reservation
            SET state = 'terminal_handoff_pending',
                terminal_handoff_reason = ?3,
                terminal_handoff_fingerprint = ?4,
@@ -1466,20 +1540,23 @@ export function createConversationRunQueueStore(options?: {
                terminal_handoff_decided_at = NULL,
                updated_at = ?7
            WHERE workspace_id = ?1 AND run_id = ?2`,
-        ).run(
-          normalizeText(input.workspaceId),
-          normalizeText(input.runId),
-          normalizeText(input.reason),
-          normalizeText(input.fingerprint),
-          Math.max(1, Math.floor(input.attempts)),
-          requestedAt,
-          timestamp,
-        );
+          )
+          .run(
+            normalizeText(input.workspaceId),
+            normalizeText(input.runId),
+            normalizeText(input.reason),
+            normalizeText(input.fingerprint),
+            Math.max(1, Math.floor(input.attempts)),
+            requestedAt,
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+        const row = db
+          .query<WorkspaceRunReservationRow, [string, string]>(
+            `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(normalizeText(input.workspaceId), normalizeText(input.runId));
+          )
+          .get(normalizeText(input.workspaceId), normalizeText(input.runId));
         return row ? reservationRowToItem(row) : null;
       });
     },
@@ -1487,11 +1564,10 @@ export function createConversationRunQueueStore(options?: {
     markWorkspaceRunTerminalHandoffUnresolved(input) {
       return withDb((db) => {
         const timestamp = now();
-        const decidedAt = Number.isFinite(input.decidedAt)
-          ? Math.max(0, Math.floor(input.decidedAt!))
-          : timestamp;
-        const result = db.query(
-          `UPDATE conversation_workspace_run_reservation
+        const decidedAt = Number.isFinite(input.decidedAt) ? Math.max(0, Math.floor(input.decidedAt!)) : timestamp;
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_run_reservation
            SET state = 'terminal_handoff_unresolved',
                terminal_handoff_reason = ?3,
                terminal_handoff_fingerprint = ?4,
@@ -1499,20 +1575,23 @@ export function createConversationRunQueueStore(options?: {
                terminal_handoff_decided_at = ?6,
                updated_at = ?7
            WHERE workspace_id = ?1 AND run_id = ?2`,
-        ).run(
-          normalizeText(input.workspaceId),
-          normalizeText(input.runId),
-          normalizeText(input.reason),
-          normalizeText(input.fingerprint),
-          Math.max(0, Math.floor(input.attempts)),
-          decidedAt,
-          timestamp,
-        );
+          )
+          .run(
+            normalizeText(input.workspaceId),
+            normalizeText(input.runId),
+            normalizeText(input.reason),
+            normalizeText(input.fingerprint),
+            Math.max(0, Math.floor(input.attempts)),
+            decidedAt,
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+        const row = db
+          .query<WorkspaceRunReservationRow, [string, string]>(
+            `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(normalizeText(input.workspaceId), normalizeText(input.runId));
+          )
+          .get(normalizeText(input.workspaceId), normalizeText(input.runId));
         return row ? reservationRowToItem(row) : null;
       });
     },
@@ -1520,87 +1599,110 @@ export function createConversationRunQueueStore(options?: {
     reopenWorkspaceRunTerminalHandoff(workspaceId, runId) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_workspace_run_reservation
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_run_reservation
            SET state = 'active',
                updated_at = ?3
            WHERE workspace_id = ?1
              AND run_id = ?2
              AND state = 'terminal_handoff_unresolved'`,
-        ).run(
-          normalizeText(workspaceId),
-          normalizeText(runId),
-          timestamp,
-        );
+          )
+          .run(normalizeText(workspaceId), normalizeText(runId), timestamp);
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+        const row = db
+          .query<WorkspaceRunReservationRow, [string, string]>(
+            `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(normalizeText(workspaceId), normalizeText(runId));
+          )
+          .get(normalizeText(workspaceId), normalizeText(runId));
         return row ? reservationRowToItem(row) : null;
       });
     },
 
     getTerminalHandoffBarrier(workspaceId, conversationId, runId) {
       return withDb((db) => {
-        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
-          `SELECT * FROM conversation_terminal_handoff_barrier
+        const row = db
+          .query<TerminalHandoffBarrierRow, [string, string, string]>(
+            `SELECT * FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
-        ).get(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId));
+          )
+          .get(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId));
         return row ? terminalHandoffBarrierRowToItem(row) : null;
       });
     },
 
     getActiveTerminalHandoffBarrier(workspaceId, conversationId) {
       return withDb((db) => {
-        const row = db.query<TerminalHandoffBarrierRow, [string, string]>(
-          `SELECT * FROM conversation_terminal_handoff_barrier
+        const row = db
+          .query<TerminalHandoffBarrierRow, [string, string]>(
+            `SELECT * FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1 AND conversation_id = ?2
              AND state IN ('observed', 'evidence_requested', 'unresolved')
            ORDER BY updated_at DESC, run_id ASC LIMIT 1`,
-        ).get(normalizeText(workspaceId), normalizeText(conversationId));
+          )
+          .get(normalizeText(workspaceId), normalizeText(conversationId));
         return row ? terminalHandoffBarrierRowToItem(row) : null;
       });
     },
 
     observeTerminalHandoffBarrier(input) {
-      return withDb((db) => db.transaction(() => {
-        const timestamp = now();
-        const workspaceId = normalizeText(input.workspaceId);
-        const conversationId = normalizeText(input.conversationId);
-        const runId = normalizeText(input.runId);
-        db.query(
-          `INSERT INTO conversation_terminal_handoff_barrier (
+      return withDb((db) =>
+        db.transaction(() => {
+          const timestamp = now();
+          const workspaceId = normalizeText(input.workspaceId);
+          const conversationId = normalizeText(input.conversationId);
+          const runId = normalizeText(input.runId);
+          db.query(
+            `INSERT INTO conversation_terminal_handoff_barrier (
              workspace_id, conversation_id, run_id, fingerprint, state, reason, attempts, created_at, updated_at
            ) VALUES (?1, ?2, ?3, ?4, 'observed', ?5, 0, ?6, ?6)
            ON CONFLICT(workspace_id, conversation_id, run_id) DO NOTHING`,
-        ).run(workspaceId, conversationId, runId, normalizeText(input.fingerprint), normalizeText(input.reason), timestamp);
-        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
-          `SELECT * FROM conversation_terminal_handoff_barrier
+          ).run(
+            workspaceId,
+            conversationId,
+            runId,
+            normalizeText(input.fingerprint),
+            normalizeText(input.reason),
+            timestamp,
+          );
+          const row = db
+            .query<TerminalHandoffBarrierRow, [string, string, string]>(
+              `SELECT * FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
-        ).get(workspaceId, conversationId, runId);
-        if (!row) throw new Error("failed to observe terminal handoff barrier");
-        return terminalHandoffBarrierRowToItem(row);
-      })());
+            )
+            .get(workspaceId, conversationId, runId);
+          if (!row) throw new Error("failed to observe terminal handoff barrier");
+          return terminalHandoffBarrierRowToItem(row);
+        })(),
+      );
     },
 
     requestTerminalHandoffBarrierEvidence(input) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_terminal_handoff_barrier
+        const result = db
+          .query(
+            `UPDATE conversation_terminal_handoff_barrier
            SET fingerprint = ?4, state = 'evidence_requested', reason = ?5,
                attempts = attempts + 1, requested_at = ?6, decided_at = NULL, updated_at = ?6
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 AND state = 'observed'`,
-        ).run(
-          normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId),
-          normalizeText(input.fingerprint), normalizeText(input.reason), timestamp,
-        );
+          )
+          .run(
+            normalizeText(input.workspaceId),
+            normalizeText(input.conversationId),
+            normalizeText(input.runId),
+            normalizeText(input.fingerprint),
+            normalizeText(input.reason),
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
-          `SELECT * FROM conversation_terminal_handoff_barrier
+        const row = db
+          .query<TerminalHandoffBarrierRow, [string, string, string]>(
+            `SELECT * FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
-        ).get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
+          )
+          .get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
         return row ? terminalHandoffBarrierRowToItem(row) : null;
       });
     },
@@ -1608,17 +1710,27 @@ export function createConversationRunQueueStore(options?: {
     resolveTerminalHandoffBarrier(input) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_terminal_handoff_barrier
+        const result = db
+          .query(
+            `UPDATE conversation_terminal_handoff_barrier
            SET state = 'resolved', reason = ?4, decided_at = ?5, updated_at = ?5
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3
              AND state IN ('observed', 'evidence_requested', 'unresolved')`,
-        ).run(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId), normalizeText(input.reason), timestamp);
+          )
+          .run(
+            normalizeText(input.workspaceId),
+            normalizeText(input.conversationId),
+            normalizeText(input.runId),
+            normalizeText(input.reason),
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
-          `SELECT * FROM conversation_terminal_handoff_barrier
+        const row = db
+          .query<TerminalHandoffBarrierRow, [string, string, string]>(
+            `SELECT * FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
-        ).get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
+          )
+          .get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
         return row ? terminalHandoffBarrierRowToItem(row) : null;
       });
     },
@@ -1626,17 +1738,27 @@ export function createConversationRunQueueStore(options?: {
     markTerminalHandoffBarrierUnresolved(input) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_terminal_handoff_barrier
+        const result = db
+          .query(
+            `UPDATE conversation_terminal_handoff_barrier
            SET state = 'unresolved', reason = ?4, decided_at = ?5, updated_at = ?5
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3
              AND state IN ('observed', 'evidence_requested')`,
-        ).run(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId), normalizeText(input.reason), timestamp);
+          )
+          .run(
+            normalizeText(input.workspaceId),
+            normalizeText(input.conversationId),
+            normalizeText(input.runId),
+            normalizeText(input.reason),
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
-          `SELECT * FROM conversation_terminal_handoff_barrier
+        const row = db
+          .query<TerminalHandoffBarrierRow, [string, string, string]>(
+            `SELECT * FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
-        ).get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
+          )
+          .get(normalizeText(input.workspaceId), normalizeText(input.conversationId), normalizeText(input.runId));
         return row ? terminalHandoffBarrierRowToItem(row) : null;
       });
     },
@@ -1644,32 +1766,42 @@ export function createConversationRunQueueStore(options?: {
     reopenTerminalHandoffBarrier(workspaceId, conversationId, runId) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_terminal_handoff_barrier
+        const result = db
+          .query(
+            `UPDATE conversation_terminal_handoff_barrier
            SET state = 'observed', updated_at = ?4
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 AND state = 'unresolved'`,
-        ).run(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId), timestamp);
+          )
+          .run(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId), timestamp);
         if (result.changes !== 1) return null;
-        const row = db.query<TerminalHandoffBarrierRow, [string, string, string]>(
-          `SELECT * FROM conversation_terminal_handoff_barrier
+        const row = db
+          .query<TerminalHandoffBarrierRow, [string, string, string]>(
+            `SELECT * FROM conversation_terminal_handoff_barrier
            WHERE workspace_id = ?1 AND conversation_id = ?2 AND run_id = ?3 LIMIT 1`,
-        ).get(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId));
+          )
+          .get(normalizeText(workspaceId), normalizeText(conversationId), normalizeText(runId));
         return row ? terminalHandoffBarrierRowToItem(row) : null;
       });
     },
 
     listTerminalHandoffBarriers() {
-      return withDb((db) => db.query<TerminalHandoffBarrierRow, []>(
-        `SELECT * FROM conversation_terminal_handoff_barrier
+      return withDb((db) =>
+        db
+          .query<TerminalHandoffBarrierRow, []>(
+            `SELECT * FROM conversation_terminal_handoff_barrier
          ORDER BY workspace_id ASC, conversation_id ASC, created_at ASC, run_id ASC`,
-      ).all().map(terminalHandoffBarrierRowToItem));
+          )
+          .all()
+          .map(terminalHandoffBarrierRowToItem),
+      );
     },
 
     markWorkspaceRunProviderStartAbortPending(input) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_workspace_run_reservation
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_run_reservation
            SET provider_start_abort_pending = 1,
                provider_start_abort_directory = ?3,
                provider_start_abort_opencode_session_id = ?4,
@@ -1679,78 +1811,95 @@ export function createConversationRunQueueStore(options?: {
                provider_start_abort_deadline_at = ?8,
                updated_at = ?9
            WHERE workspace_id = ?1 AND run_id = ?2`,
-        ).run(
-          normalizeText(input.workspaceId),
-          normalizeText(input.runId),
-          normalizeText(input.directory),
-          normalizeText(input.opencodeSessionId),
-          Math.max(0, Math.floor(input.attempts ?? 0)),
-          normalizeText(input.lastError) || null,
-          typeof input.nextAttemptAt === "number" && Number.isFinite(input.nextAttemptAt)
-            ? input.nextAttemptAt
-            : null,
-          typeof input.deadlineAt === "number" && Number.isFinite(input.deadlineAt)
-            ? input.deadlineAt
-            : null,
-          timestamp,
-        );
+          )
+          .run(
+            normalizeText(input.workspaceId),
+            normalizeText(input.runId),
+            normalizeText(input.directory),
+            normalizeText(input.opencodeSessionId),
+            Math.max(0, Math.floor(input.attempts ?? 0)),
+            normalizeText(input.lastError) || null,
+            typeof input.nextAttemptAt === "number" && Number.isFinite(input.nextAttemptAt)
+              ? input.nextAttemptAt
+              : null,
+            typeof input.deadlineAt === "number" && Number.isFinite(input.deadlineAt) ? input.deadlineAt : null,
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
-          `SELECT * FROM conversation_workspace_run_reservation
+        const row = db
+          .query<WorkspaceRunReservationRow, [string, string]>(
+            `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
-        ).get(normalizeText(input.workspaceId), normalizeText(input.runId));
+          )
+          .get(normalizeText(input.workspaceId), normalizeText(input.runId));
         return row ? reservationRowToItem(row) : null;
       });
     },
 
     releaseWorkspaceRun(workspaceId, runId) {
-      return withDb((db) => db.query(
-        `DELETE FROM conversation_workspace_run_reservation
+      return withDb(
+        (db) =>
+          db
+            .query(
+              `DELETE FROM conversation_workspace_run_reservation
          WHERE workspace_id = ?1 AND run_id = ?2`,
-      ).run(normalizeText(workspaceId), normalizeText(runId)).changes > 0);
+            )
+            .run(normalizeText(workspaceId), normalizeText(runId)).changes > 0,
+      );
     },
 
     listWorkspaceRunReservations() {
-      return withDb((db) => db.query<WorkspaceRunReservationRow, []>(
-        `SELECT * FROM conversation_workspace_run_reservation
+      return withDb((db) =>
+        db
+          .query<WorkspaceRunReservationRow, []>(
+            `SELECT * FROM conversation_workspace_run_reservation
          ORDER BY workspace_id ASC, created_at ASC, run_id ASC`,
-      ).all().map(reservationRowToItem));
+          )
+          .all()
+          .map(reservationRowToItem),
+      );
     },
 
     acquireWorkspaceRuntimeOperation(input) {
-      return withDb((db) => db.transaction(() => {
-        const workspaceId = normalizeText(input.workspaceId);
-        const kind = input.kind;
-        const sourceClass = input.sourceClass;
-        const reasonCode = normalizeText(input.reasonCode);
-        const expiresAt = Math.max(0, Math.floor(input.expiresAt));
-        if (!workspaceId || !reasonCode || !Number.isSafeInteger(expiresAt) || expiresAt <= now()) {
-          throw new Error("workspaceId, reasonCode, and a future expiresAt are required");
-        }
-        const timestamp = now();
-        const existing = db.query<WorkspaceRuntimeOperationRow, [string]>(
-          `SELECT * FROM conversation_workspace_runtime_operation
+      return withDb((db) =>
+        db.transaction(() => {
+          const workspaceId = normalizeText(input.workspaceId);
+          const kind = input.kind;
+          const sourceClass = input.sourceClass;
+          const reasonCode = normalizeText(input.reasonCode);
+          const expiresAt = Math.max(0, Math.floor(input.expiresAt));
+          if (!workspaceId || !reasonCode || !Number.isSafeInteger(expiresAt) || expiresAt <= now()) {
+            throw new Error("workspaceId, reasonCode, and a future expiresAt are required");
+          }
+          const timestamp = now();
+          const existing = db
+            .query<WorkspaceRuntimeOperationRow, [string]>(
+              `SELECT * FROM conversation_workspace_runtime_operation
            WHERE workspace_id = ?1 LIMIT 1`,
-        ).get(workspaceId);
-        if (
-          existing &&
-          (existing.state === "granted" || existing.state === "executing") &&
-          existing.expires_at > timestamp
-        ) {
-          return { operation: runtimeOperationRowToItem(existing), acquired: false };
-        }
-        if (existing && (existing.state === "granted" || existing.state === "executing")) {
-          db.query(
-            `UPDATE conversation_workspace_runtime_operation
+            )
+            .get(workspaceId);
+          if (
+            existing &&
+            (existing.state === "granted" || existing.state === "executing") &&
+            existing.expires_at > timestamp
+          ) {
+            return {
+              operation: runtimeOperationRowToItem(existing),
+              acquired: false,
+            };
+          }
+          if (existing && (existing.state === "granted" || existing.state === "executing")) {
+            db.query(
+              `UPDATE conversation_workspace_runtime_operation
              SET state = 'outcome_unknown',
                  terminal_code = 'lease_expired',
                  updated_at = ?2
              WHERE workspace_id = ?1`,
-          ).run(workspaceId, timestamp);
-        }
-        const operationId = normalizeText(input.operationId) || randomUUID();
-        db.query(
-          `INSERT INTO conversation_workspace_runtime_operation (
+            ).run(workspaceId, timestamp);
+          }
+          const operationId = normalizeText(input.operationId) || randomUUID();
+          db.query(
+            `INSERT INTO conversation_workspace_runtime_operation (
              workspace_id, operation_id, kind, source_class, reason_code, state,
              created_at, updated_at, expires_at, terminal_code
            ) VALUES (?1, ?2, ?3, ?4, ?5, 'granted', ?6, ?6, ?7, NULL)
@@ -1764,22 +1913,27 @@ export function createConversationRunQueueStore(options?: {
              updated_at = excluded.updated_at,
              expires_at = excluded.expires_at,
              terminal_code = NULL`,
-        ).run(workspaceId, operationId, kind, sourceClass, reasonCode, timestamp, expiresAt);
-        const row = db.query<WorkspaceRuntimeOperationRow, [string]>(
-          `SELECT * FROM conversation_workspace_runtime_operation
+          ).run(workspaceId, operationId, kind, sourceClass, reasonCode, timestamp, expiresAt);
+          const row = db
+            .query<WorkspaceRuntimeOperationRow, [string]>(
+              `SELECT * FROM conversation_workspace_runtime_operation
            WHERE workspace_id = ?1 LIMIT 1`,
-        ).get(workspaceId);
-        if (!row) throw new Error("failed to acquire workspace runtime operation");
-        return { operation: runtimeOperationRowToItem(row), acquired: true };
-      })());
+            )
+            .get(workspaceId);
+          if (!row) throw new Error("failed to acquire workspace runtime operation");
+          return { operation: runtimeOperationRowToItem(row), acquired: true };
+        })(),
+      );
     },
 
     getWorkspaceRuntimeOperation(workspaceId) {
       return withDb((db) => {
-        const row = db.query<WorkspaceRuntimeOperationRow, [string]>(
-          `SELECT * FROM conversation_workspace_runtime_operation
+        const row = db
+          .query<WorkspaceRuntimeOperationRow, [string]>(
+            `SELECT * FROM conversation_workspace_runtime_operation
            WHERE workspace_id = ?1 LIMIT 1`,
-        ).get(normalizeText(workspaceId));
+          )
+          .get(normalizeText(workspaceId));
         return row ? runtimeOperationRowToItem(row) : null;
       });
     },
@@ -1787,16 +1941,20 @@ export function createConversationRunQueueStore(options?: {
     beginWorkspaceRuntimeOperation(workspaceId, operationId) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_workspace_runtime_operation
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_runtime_operation
            SET state = 'executing', updated_at = ?3
            WHERE workspace_id = ?1 AND operation_id = ?2 AND state = 'granted' AND expires_at > ?3`,
-        ).run(normalizeText(workspaceId), normalizeText(operationId), timestamp);
+          )
+          .run(normalizeText(workspaceId), normalizeText(operationId), timestamp);
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRuntimeOperationRow, [string]>(
-          `SELECT * FROM conversation_workspace_runtime_operation
+        const row = db
+          .query<WorkspaceRuntimeOperationRow, [string]>(
+            `SELECT * FROM conversation_workspace_runtime_operation
            WHERE workspace_id = ?1 LIMIT 1`,
-        ).get(normalizeText(workspaceId));
+          )
+          .get(normalizeText(workspaceId));
         return row ? runtimeOperationRowToItem(row) : null;
       });
     },
@@ -1804,50 +1962,64 @@ export function createConversationRunQueueStore(options?: {
     completeWorkspaceRuntimeOperation(input) {
       return withDb((db) => {
         const timestamp = now();
-        const result = db.query(
-          `UPDATE conversation_workspace_runtime_operation
+        const result = db
+          .query(
+            `UPDATE conversation_workspace_runtime_operation
            SET state = ?3, terminal_code = ?4, updated_at = ?5
            WHERE workspace_id = ?1
              AND operation_id = ?2
              AND state IN ('granted', 'executing')`,
-        ).run(
-          normalizeText(input.workspaceId),
-          normalizeText(input.operationId),
-          input.state,
-          normalizeText(input.terminalCode) || null,
-          timestamp,
-        );
+          )
+          .run(
+            normalizeText(input.workspaceId),
+            normalizeText(input.operationId),
+            input.state,
+            normalizeText(input.terminalCode) || null,
+            timestamp,
+          );
         if (result.changes !== 1) return null;
-        const row = db.query<WorkspaceRuntimeOperationRow, [string]>(
-          `SELECT * FROM conversation_workspace_runtime_operation
+        const row = db
+          .query<WorkspaceRuntimeOperationRow, [string]>(
+            `SELECT * FROM conversation_workspace_runtime_operation
            WHERE workspace_id = ?1 LIMIT 1`,
-        ).get(normalizeText(input.workspaceId));
+          )
+          .get(normalizeText(input.workspaceId));
         return row ? runtimeOperationRowToItem(row) : null;
       });
     },
 
     expireWorkspaceRuntimeOperations(at = now()) {
-      return withDb((db) => db.transaction(() => {
-        const timestamp = Math.max(0, Math.floor(at));
-        db.query(
-          `UPDATE conversation_workspace_runtime_operation
+      return withDb((db) =>
+        db.transaction(() => {
+          const timestamp = Math.max(0, Math.floor(at));
+          db.query(
+            `UPDATE conversation_workspace_runtime_operation
            SET state = 'outcome_unknown', terminal_code = 'lease_expired', updated_at = ?1
            WHERE state IN ('granted', 'executing') AND expires_at <= ?1`,
-        ).run(timestamp);
-        return db.query<WorkspaceRuntimeOperationRow, [number]>(
-          `SELECT * FROM conversation_workspace_runtime_operation
+          ).run(timestamp);
+          return db
+            .query<WorkspaceRuntimeOperationRow, [number]>(
+              `SELECT * FROM conversation_workspace_runtime_operation
            WHERE state = 'outcome_unknown' AND terminal_code = 'lease_expired' AND updated_at = ?1
            ORDER BY workspace_id ASC`,
-        ).all(timestamp).map(runtimeOperationRowToItem);
-      })());
+            )
+            .all(timestamp)
+            .map(runtimeOperationRowToItem);
+        })(),
+      );
     },
 
     listActiveWorkspaceRuntimeOperations(at = now()) {
-      return withDb((db) => db.query<WorkspaceRuntimeOperationRow, [number]>(
-        `SELECT * FROM conversation_workspace_runtime_operation
+      return withDb((db) =>
+        db
+          .query<WorkspaceRuntimeOperationRow, [number]>(
+            `SELECT * FROM conversation_workspace_runtime_operation
          WHERE state IN ('granted', 'executing') AND expires_at > ?1
          ORDER BY workspace_id ASC`,
-      ).all(Math.max(0, Math.floor(at))).map(runtimeOperationRowToItem));
+          )
+          .all(Math.max(0, Math.floor(at)))
+          .map(runtimeOperationRowToItem),
+      );
     },
   };
 }

@@ -371,6 +371,15 @@ desktop acceptance evidence. A WebDriverIO scenario must use the real Tauri
 runtime, visible controls, explicit inputs for mutations, and a redacted
 scenario artifact.
 
+The retained session-queue durability Pilot fixture is also historical, not
+acceptance evidence. It documents deterministic restart, queue hydration,
+single-dispatch, and durable-failure assertions that do not yet have an
+equivalent owned WebDriverIO fixture lifecycle. Do not delete it on the basis
+of the ordinary same-conversation queue scenario alone. Its replacement must
+first give the WebDriver runner ownership of the isolated Veslo server and
+fake OpenCode lifecycle across server restarts; after that WebDriver scenario
+passes, remove the Pilot scenario and its fixture together.
+
 The macOS build requires every `externalBin` resource declared by the Tauri
 config to exist. The documented `prepare:sidecar` command provisions the pinned
 Node.js runtime from the official `nodejs.org` macOS archive for the resolved

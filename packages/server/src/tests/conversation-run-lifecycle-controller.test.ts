@@ -26,14 +26,13 @@ import {
   type ConversationWorkspaceRunEngineOwner,
   type ConversationWorkspaceRunReservation,
 } from "../conversation-run-queue-store.js";
-import {
-  setConversationRunLifecycleControllerFactoryForTests,
-  startServer,
-} from "../server.js";
+import { setConversationRunLifecycleControllerFactoryForTests, startServer } from "../server.js";
 import { createConversationRunOpenCodeMessageId } from "../conversation-run-message-id.js";
 
 const tempDirs: string[] = [];
-const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
+const runningServers: Array<{
+  stop?: (closeActiveConnections?: boolean) => void;
+}> = [];
 const envRestores: Array<() => void> = [];
 
 afterEach(async () => {
@@ -120,9 +119,7 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
 
   private withIdleTerminalHandoff(result: LifecycleRunStatusResult | null): LifecycleRunStatusResult | null {
     if (!result || !["completed", "failed", "aborted"].includes(result.status)) return result;
-    return result.runtimeReadyForSuccessor === undefined
-      ? { ...result, runtimeReadyForSuccessor: true }
-      : result;
+    return result.runtimeReadyForSuccessor === undefined ? { ...result, runtimeReadyForSuccessor: true } : result;
   }
 
   async active(workspaceId: string, conversationId: string): Promise<LifecycleRunStatusResult | null> {
@@ -132,22 +129,20 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     return this.withIdleTerminalHandoff(this.activeResult);
   }
 
-  async register(
-    input: Parameters<OrchestratorLifecycleClient["register"]>[0],
-  ): Promise<LifecycleRunStatusResult | null> {
+  async register(input: Parameters<OrchestratorLifecycleClient["register"]>[0]): Promise<LifecycleRunStatusResult | null> {
     this.registerInputs.push(input);
-    this.calls.push(
-      `register:${input.workspaceId}:${input.conversationId}:${input.runId}:${input.opencodeSessionId}:${input.kind}`,
-    );
+    this.calls.push(`register:${input.workspaceId}:${input.conversationId}:${input.runId}:${input.opencodeSessionId}:${input.kind}`);
     this.onRegister?.(input);
     if (this.registerError) throw this.registerError;
-    return this.registerResult ?? {
-      runId: input.runId,
-      status: "running",
-      stale: false,
-      clientMessageId: input.clientMessageId ?? null,
-      origin: input.origin ?? null,
-    };
+    return (
+      this.registerResult ?? {
+        runId: input.runId,
+        status: "running",
+        stale: false,
+        clientMessageId: input.clientMessageId ?? null,
+        origin: input.origin ?? null,
+      }
+    );
   }
 
   async markFailed(workspaceId: string, runId: string, reason: string): Promise<void> {
@@ -202,11 +197,9 @@ class QueueHarness implements ConversationRunQueueStore {
   enqueue(input: Parameters<ConversationRunQueueStore["enqueue"]>[0]) {
     this.enqueueCalls.push(input);
     const existing = input.clientMessageId
-      ? this.items.find((item) =>
-        item.workspaceId === input.workspaceId &&
-        item.conversationId === input.conversationId &&
-        item.clientMessageId === input.clientMessageId
-      )
+      ? this.items.find(
+          (item) => item.workspaceId === input.workspaceId && item.conversationId === input.conversationId && item.clientMessageId === input.clientMessageId,
+        )
       : null;
     if (existing) {
       return {
@@ -248,9 +241,7 @@ class QueueHarness implements ConversationRunQueueStore {
   }
 
   nextPending(workspaceId: string, conversationId: string): ConversationRunQueueItem | null {
-    return this.items.find((item) =>
-      item.workspaceId === workspaceId && item.conversationId === conversationId && item.state === "pending"
-    ) ?? null;
+    return this.items.find((item) => item.workspaceId === workspaceId && item.conversationId === conversationId && item.state === "pending") ?? null;
   }
 
   listForConversation(): ReturnType<ConversationRunQueueStore["listForConversation"]> {
@@ -260,39 +251,37 @@ class QueueHarness implements ConversationRunQueueStore {
   readConversationRunStatusSnapshot(
     input: Parameters<ConversationRunQueueStore["readConversationRunStatusSnapshot"]>[0],
   ): ReturnType<ConversationRunQueueStore["readConversationRunStatusSnapshot"]> {
-    const item = input.runId === "latest"
-      ? this.items.find((candidate) =>
-        candidate.workspaceId === input.workspaceId &&
-        candidate.conversationId === input.conversationId &&
-        (candidate.state === "pending" || candidate.state === "starting") &&
-        this.reservations.has(`${candidate.workspaceId}\0${candidate.reservedRunId}`)
-      ) ?? this.items.find((candidate) =>
-        candidate.workspaceId === input.workspaceId &&
-        candidate.conversationId === input.conversationId &&
-        (candidate.state === "pending" || candidate.state === "starting")
-      ) ?? null
-      : this.items.find((candidate) =>
-        candidate.workspaceId === input.workspaceId &&
-        candidate.conversationId === input.conversationId &&
-        candidate.reservedRunId === input.runId
-      ) ?? null;
+    const item =
+      input.runId === "latest"
+        ? (this.items.find(
+            (candidate) =>
+              candidate.workspaceId === input.workspaceId &&
+              candidate.conversationId === input.conversationId &&
+              (candidate.state === "pending" || candidate.state === "starting") &&
+              this.reservations.has(`${candidate.workspaceId}\0${candidate.reservedRunId}`),
+          ) ??
+          this.items.find(
+            (candidate) =>
+              candidate.workspaceId === input.workspaceId &&
+              candidate.conversationId === input.conversationId &&
+              (candidate.state === "pending" || candidate.state === "starting"),
+          ) ??
+          null)
+        : (this.items.find(
+            (candidate) =>
+              candidate.workspaceId === input.workspaceId && candidate.conversationId === input.conversationId && candidate.reservedRunId === input.runId,
+          ) ?? null);
     const selectedRunId = item?.reservedRunId ?? (input.runId === "latest" ? null : input.runId);
-    const reservation = selectedRunId
-      ? this.reservations.get(`${input.workspaceId}\0${selectedRunId}`) ?? null
-      : null;
-    const directBarrier = selectedRunId
-      ? this.getTerminalHandoffBarrier(input.workspaceId, input.conversationId, selectedRunId)
-      : null;
+    const reservation = selectedRunId ? (this.reservations.get(`${input.workspaceId}\0${selectedRunId}`) ?? null) : null;
+    const directBarrier = selectedRunId ? this.getTerminalHandoffBarrier(input.workspaceId, input.conversationId, selectedRunId) : null;
     return {
       item,
       reservation,
-      terminalHandoff: item
-        ? this.getActiveTerminalHandoffBarrier(input.workspaceId, input.conversationId)
-        : directBarrier,
+      terminalHandoff: item ? this.getActiveTerminalHandoffBarrier(input.workspaceId, input.conversationId) : directBarrier,
     };
   }
 
-  markStarting(queueItemId: string): ConversationRunQueueItem | null {
+  setStartingWithoutReservationForTest(queueItemId: string): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
     if (!item || item.state !== "pending") return null;
     item.state = "starting";
@@ -317,7 +306,7 @@ class QueueHarness implements ConversationRunQueueStore {
     if (this.reservationConflictRunId) {
       throw new ConversationRunReservationConflictError(this.reservationConflictRunId);
     }
-    const item = this.markStarting(queueItemId);
+    const item = this.setStartingWithoutReservationForTest(queueItemId);
     if (!item) return null;
     const reservation = this.reserveWorkspaceRun({
       workspaceId: item.workspaceId,
@@ -362,40 +351,32 @@ class QueueHarness implements ConversationRunQueueStore {
     return item;
   }
 
-  getForConversation(
-    workspaceId: string,
-    conversationId: string,
-    queueItemId: string,
-  ): ConversationRunQueueItem | null {
-    return this.items.find((item) =>
-      item.workspaceId === workspaceId &&
-      item.conversationId === conversationId &&
-      item.queueItemId === queueItemId
-    ) ?? null;
+  getForConversation(workspaceId: string, conversationId: string, queueItemId: string): ConversationRunQueueItem | null {
+    return this.items.find((item) => item.workspaceId === workspaceId && item.conversationId === conversationId && item.queueItemId === queueItemId) ?? null;
   }
 
-  getForReservedRun(
-    workspaceId: string,
-    conversationId: string,
-    reservedRunId: string,
-  ): ConversationRunQueueItem | null {
-    return this.items.find((item) =>
-      item.workspaceId === workspaceId &&
-      item.conversationId === conversationId &&
-      item.reservedRunId === reservedRunId
-    ) ?? null;
+  getForReservedRun(workspaceId: string, conversationId: string, reservedRunId: string): ConversationRunQueueItem | null {
+    return (
+      this.items.find((item) => item.workspaceId === workspaceId && item.conversationId === conversationId && item.reservedRunId === reservedRunId) ?? null
+    );
   }
 
   listStarting(): ConversationRunQueueItem[] {
     return this.items.filter((item) => item.state === "starting");
   }
 
-  pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }> {
+  pendingConversationKeys(): Array<{
+    workspaceId: string;
+    conversationId: string;
+  }> {
     const keys = new Map<string, { workspaceId: string; conversationId: string }>();
     for (const item of this.items) {
       if (item.state !== "pending") continue;
       const key = `${item.workspaceId}\0${item.conversationId}`;
-      keys.set(key, { workspaceId: item.workspaceId, conversationId: item.conversationId });
+      keys.set(key, {
+        workspaceId: item.workspaceId,
+        conversationId: item.conversationId,
+      });
     }
     return [...keys.values()];
   }
@@ -442,11 +423,7 @@ class QueueHarness implements ConversationRunQueueStore {
     return reservation;
   }
 
-  attachWorkspaceRunEngineOwner(
-    workspaceId: string,
-    runId: string,
-    owner: ConversationWorkspaceRunEngineOwner,
-  ) {
+  attachWorkspaceRunEngineOwner(workspaceId: string, runId: string, owner: ConversationWorkspaceRunEngineOwner) {
     const key = `${workspaceId}\0${runId}`;
     const previous = this.reservations.get(key);
     if (!previous) return null;
@@ -458,7 +435,8 @@ class QueueHarness implements ConversationRunQueueStore {
         previous.enginePid !== owner.enginePid ||
         previous.engineStartedAt !== owner.engineStartedAt ||
         previous.engineBaseUrl !== owner.engineBaseUrl)
-    ) return null;
+    )
+      return null;
     const reservation = { ...previous, ...owner, updatedAt: Date.now() };
     this.reservations.set(key, reservation);
     return reservation;
@@ -468,7 +446,11 @@ class QueueHarness implements ConversationRunQueueStore {
     const key = `${workspaceId}\0${runId}`;
     const previous = this.reservations.get(key);
     if (!previous) return null;
-    const reservation = { ...previous, state: "active" as const, updatedAt: Date.now() };
+    const reservation = {
+      ...previous,
+      state: "active" as const,
+      updatedAt: Date.now(),
+    };
     this.reservations.set(key, reservation);
     return reservation;
   }
@@ -491,9 +473,7 @@ class QueueHarness implements ConversationRunQueueStore {
     return reservation;
   }
 
-  markWorkspaceRunTerminalHandoffPending(
-    input: Parameters<ConversationRunQueueStore["markWorkspaceRunTerminalHandoffPending"]>[0],
-  ) {
+  markWorkspaceRunTerminalHandoffPending(input: Parameters<ConversationRunQueueStore["markWorkspaceRunTerminalHandoffPending"]>[0]) {
     const key = `${input.workspaceId}\0${input.runId}`;
     const previous = this.reservations.get(key);
     if (!previous) return null;
@@ -511,9 +491,7 @@ class QueueHarness implements ConversationRunQueueStore {
     return reservation;
   }
 
-  markWorkspaceRunTerminalHandoffUnresolved(
-    input: Parameters<ConversationRunQueueStore["markWorkspaceRunTerminalHandoffUnresolved"]>[0],
-  ) {
+  markWorkspaceRunTerminalHandoffUnresolved(input: Parameters<ConversationRunQueueStore["markWorkspaceRunTerminalHandoffUnresolved"]>[0]) {
     const key = `${input.workspaceId}\0${input.runId}`;
     const previous = this.reservations.get(key);
     if (!previous) return null;
@@ -548,9 +526,11 @@ class QueueHarness implements ConversationRunQueueStore {
   }
 
   getActiveTerminalHandoffBarrier(workspaceId: string, conversationId: string) {
-    return [...this.handoffBarriers.values()].find((barrier) =>
-      barrier.workspaceId === workspaceId && barrier.conversationId === conversationId && barrier.state !== "resolved"
-    ) ?? null;
+    return (
+      [...this.handoffBarriers.values()].find(
+        (barrier) => barrier.workspaceId === workspaceId && barrier.conversationId === conversationId && barrier.state !== "resolved",
+      ) ?? null
+    );
   }
 
   observeTerminalHandoffBarrier(input: Parameters<ConversationRunQueueStore["observeTerminalHandoffBarrier"]>[0]) {
@@ -593,7 +573,13 @@ class QueueHarness implements ConversationRunQueueStore {
     const key = `${input.workspaceId}\0${input.conversationId}\0${input.runId}`;
     const previous = this.handoffBarriers.get(key);
     if (!previous || previous.state === "resolved") return null;
-    const barrier = { ...previous, state: "resolved" as const, reason: input.reason, decidedAt: Date.now(), updatedAt: Date.now() };
+    const barrier = {
+      ...previous,
+      state: "resolved" as const,
+      reason: input.reason,
+      decidedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
     this.handoffBarriers.set(key, barrier);
     return barrier;
   }
@@ -602,7 +588,13 @@ class QueueHarness implements ConversationRunQueueStore {
     const key = `${input.workspaceId}\0${input.conversationId}\0${input.runId}`;
     const previous = this.handoffBarriers.get(key);
     if (!previous || (previous.state !== "observed" && previous.state !== "evidence_requested")) return null;
-    const barrier = { ...previous, state: "unresolved" as const, reason: input.reason, decidedAt: Date.now(), updatedAt: Date.now() };
+    const barrier = {
+      ...previous,
+      state: "unresolved" as const,
+      reason: input.reason,
+      decidedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
     this.handoffBarriers.set(key, barrier);
     return barrier;
   }
@@ -611,7 +603,11 @@ class QueueHarness implements ConversationRunQueueStore {
     const key = `${workspaceId}\0${conversationId}\0${runId}`;
     const previous = this.handoffBarriers.get(key);
     if (!previous || previous.state !== "unresolved") return null;
-    const barrier = { ...previous, state: "observed" as const, updatedAt: Date.now() };
+    const barrier = {
+      ...previous,
+      state: "observed" as const,
+      updatedAt: Date.now(),
+    };
     this.handoffBarriers.set(key, barrier);
     return barrier;
   }
@@ -620,9 +616,7 @@ class QueueHarness implements ConversationRunQueueStore {
     return [...this.handoffBarriers.values()];
   }
 
-  markWorkspaceRunProviderStartAbortPending(
-    input: Parameters<ConversationRunQueueStore["markWorkspaceRunProviderStartAbortPending"]>[0],
-  ) {
+  markWorkspaceRunProviderStartAbortPending(input: Parameters<ConversationRunQueueStore["markWorkspaceRunProviderStartAbortPending"]>[0]) {
     const key = `${input.workspaceId}\0${input.runId}`;
     const previous = this.reservations.get(key);
     if (!previous) return null;
@@ -680,7 +674,11 @@ class QueueHarness implements ConversationRunQueueStore {
     if (!operation || operation.operationId !== operationId || operation.state !== "granted" || operation.expiresAt <= Date.now()) {
       return null;
     }
-    const next = { ...operation, state: "executing" as const, updatedAt: Date.now() };
+    const next = {
+      ...operation,
+      state: "executing" as const,
+      updatedAt: Date.now(),
+    };
     this.runtimeOperations.set(workspaceId, next);
     return next;
   }
@@ -690,7 +688,12 @@ class QueueHarness implements ConversationRunQueueStore {
     if (!operation || operation.operationId !== input.operationId || (operation.state !== "granted" && operation.state !== "executing")) {
       return null;
     }
-    const next = { ...operation, state: input.state, terminalCode: input.terminalCode ?? null, updatedAt: Date.now() };
+    const next = {
+      ...operation,
+      state: input.state,
+      terminalCode: input.terminalCode ?? null,
+      updatedAt: Date.now(),
+    };
     this.runtimeOperations.set(input.workspaceId, next);
     return next;
   }
@@ -699,7 +702,12 @@ class QueueHarness implements ConversationRunQueueStore {
     const expired: ConversationWorkspaceRuntimeOperation[] = [];
     for (const [workspaceId, operation] of this.runtimeOperations) {
       if ((operation.state !== "granted" && operation.state !== "executing") || operation.expiresAt > now) continue;
-      const next = { ...operation, state: "outcome_unknown" as const, terminalCode: "lease_expired", updatedAt: now };
+      const next = {
+        ...operation,
+        state: "outcome_unknown" as const,
+        terminalCode: "lease_expired",
+        updatedAt: now,
+      };
       this.runtimeOperations.set(workspaceId, next);
       expired.push(next);
     }
@@ -707,8 +715,8 @@ class QueueHarness implements ConversationRunQueueStore {
   }
 
   listActiveWorkspaceRuntimeOperations(now = Date.now()) {
-    return [...this.runtimeOperations.values()].filter((operation) =>
-      (operation.state === "granted" || operation.state === "executing") && operation.expiresAt > now
+    return [...this.runtimeOperations.values()].filter(
+      (operation) => (operation.state === "granted" || operation.state === "executing") && operation.expiresAt > now,
     );
   }
 }
@@ -755,11 +763,16 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
 }
 
 function controllerHarness(options?: {
-  ingestTerminalTranscript?: (input: { runId: string }) => Promise<{ kind: "persisted" | "unchanged" | "incomplete" | "exhausted" } | void>;
+  ingestTerminalTranscript?: (input: { runId: string }) => Promise<{
+    kind: "persisted" | "unchanged" | "incomplete" | "exhausted";
+  } | void>;
   withLifecycle?: boolean;
   engineOwnerAttachGraceMs?: number;
   submitEngineOwner?: ConversationWorkspaceRunEngineOwner | null;
-  startupReservation?: Partial<ConversationWorkspaceRunReservation> & { conversationId: string; runId: string };
+  startupReservation?: Partial<ConversationWorkspaceRunReservation> & {
+    conversationId: string;
+    runId: string;
+  };
 }) {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
@@ -796,14 +809,25 @@ function controllerHarness(options?: {
   const submitCalls: unknown[] = [];
   const admissionOrder: string[] = [];
   const admittedRunIds: string[] = [];
-  const activeGatewayCalls: Array<{ kind: "register" | "unregister"; input: unknown }> = [];
+  const activeGatewayCalls: Array<{
+    kind: "register" | "unregister";
+    input: unknown;
+  }> = [];
   const activeProxyAbortCalls: unknown[] = [];
   const providerWatchCalls: unknown[] = [];
   const abortCalls: unknown[] = [];
-  const drainCalls: Array<{ workspaceId: string; conversationId: string; delayMs: number }> = [];
+  const drainCalls: Array<{
+    workspaceId: string;
+    conversationId: string;
+    delayMs: number;
+  }> = [];
   const traceEntries: Array<Record<string, unknown>> = [];
   const backgroundTraceEntries: Array<Array<Record<string, unknown>>> = [];
-  const terminalRecoveries: Array<{ runId: string; lifecycle: string; canonicalRecovery: string }> = [];
+  const terminalRecoveries: Array<{
+    runId: string;
+    lifecycle: string;
+    canonicalRecovery: string;
+  }> = [];
   const reconcileCalls: Array<{
     workspaceId: string;
     conversationId: string;
@@ -855,9 +879,7 @@ function controllerHarness(options?: {
     queueDrainPollMs: 1_500,
     resolveLifecycleReconcilePollMs: () => 2_000,
     resolveLifecycleReconcileMaxAttempts: () => 3,
-    ingestTerminalTranscript: options?.ingestTerminalTranscript
-      ? async (input) => await options.ingestTerminalTranscript!({ runId: input.runId })
-      : undefined,
+    ingestTerminalTranscript: options?.ingestTerminalTranscript ? async (input) => await options.ingestTerminalTranscript!({ runId: input.runId }) : undefined,
     onTerminalTranscriptRecovery: (input) => {
       terminalRecoveries.push({
         runId: input.runId,
@@ -918,7 +940,10 @@ function enqueuePendingRun(queue: QueueHarness, overrides: Partial<Parameters<Qu
     clientMessageId: "msg-queued",
     origin: "composer",
     kind: "prompt_async",
-    bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "Queued" }] }),
+    bodyJson: JSON.stringify({
+      kind: "prompt_async",
+      parts: [{ type: "text", text: "Queued" }],
+    }),
     activeRunId: null,
     ...overrides,
   }).item;
@@ -967,40 +992,44 @@ test("controller shell starts, stops, and clears diagnostics timers", () => {
     },
   });
 
-  expect(controller.snapshotForTests()).toEqual(snapshotStub({
-    diagnostics: { enabled: true, intervalMs: 250, runs: 0 },
-  }));
+  expect(controller.snapshotForTests()).toEqual(
+    snapshotStub({
+      diagnostics: { enabled: true, intervalMs: 250, runs: 0 },
+    }),
+  );
 
   controller.start();
   controller.start();
 
-  expect(controller.snapshotForTests()).toEqual(snapshotStub({
-    started: true,
-    activeTimerCount: 1,
-    diagnostics: { enabled: true, intervalMs: 250, runs: 0 },
-  }));
+  expect(controller.snapshotForTests()).toEqual(
+    snapshotStub({
+      started: true,
+      activeTimerCount: 1,
+      diagnostics: { enabled: true, intervalMs: 250, runs: 0 },
+    }),
+  );
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([250]);
 
   timers.fire(timers.activeTimers()[0]!.id);
 
-  expect(controller.snapshotForTests()).toEqual(snapshotStub({
-    started: true,
-    activeTimerCount: 1,
-    diagnostics: { enabled: true, intervalMs: 250, runs: 1 },
-  }));
+  expect(controller.snapshotForTests()).toEqual(
+    snapshotStub({
+      started: true,
+      activeTimerCount: 1,
+      diagnostics: { enabled: true, intervalMs: 250, runs: 1 },
+    }),
+  );
 
   controller.stop();
   controller.stop();
 
-  expect(controller.snapshotForTests()).toEqual(snapshotStub({
-    diagnostics: { enabled: true, intervalMs: 250, runs: 1 },
-  }));
+  expect(controller.snapshotForTests()).toEqual(
+    snapshotStub({
+      diagnostics: { enabled: true, intervalMs: 250, runs: 1 },
+    }),
+  );
   expect(timers.activeTimers()).toEqual([]);
-  expect(traceEvents).toEqual([
-    "conversation-run-lifecycle:start",
-    "conversation-run-lifecycle:diagnostics",
-    "conversation-run-lifecycle:stop",
-  ]);
+  expect(traceEvents).toEqual(["conversation-run-lifecycle:start", "conversation-run-lifecycle:diagnostics", "conversation-run-lifecycle:stop"]);
 });
 
 test("controller shell records explicit ports without invoking behavior", () => {
@@ -1152,9 +1181,7 @@ test("multi-step owner loss releases one run and drains the next run onto the ne
     clientMessageId: "msg-b",
   });
 
-  expect(queue.reservations.get("ws_1\0run-a")).toEqual(
-    expect.objectContaining({ state: "active", ...firstOwner }),
-  );
+  expect(queue.reservations.get("ws_1\0run-a")).toEqual(expect.objectContaining({ state: "active", ...firstOwner }));
 
   const staleLoss = controller.notifyEngineLoss({
     eventId: "loss-stale-before-restart",
@@ -1192,9 +1219,7 @@ test("multi-step owner loss releases one run and drains the next run onto the ne
 
   expect(queue.items.find((item) => item.reservedRunId === "run-b")?.state).toBe("submitted");
   expect(submitCalls.map((call) => (call as { runId: string }).runId)).toEqual(["run-a", "run-b"]);
-  expect(queue.reservations.get("ws_1\0run-b")).toEqual(
-    expect.objectContaining({ state: "active", ...secondOwner }),
-  );
+  expect(queue.reservations.get("ws_1\0run-b")).toEqual(expect.objectContaining({ state: "active", ...secondOwner }));
 
   const staleSecondLoss = controller.notifyEngineLoss({
     eventId: "loss-stale-after-restart",
@@ -1259,13 +1284,17 @@ test("multi-step owner-loss race is reconciled when the response owner arrives a
   });
   expect(queue.reservations.has("ws_1\0run-race")).toBe(false);
   expect(timers.activeTimers().some((timer) => timer.delayMs === 0)).toBe(true);
-  const submitTrace = (submitCalls[0] as {
-    runTrace: { entries: Array<Record<string, unknown>> };
-  }).runTrace;
-  expect(submitTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:engine-owner-persist-failed",
-    runId: "run-race",
-  }));
+  const submitTrace = (
+    submitCalls[0] as {
+      runTrace: { entries: Array<Record<string, unknown>> };
+    }
+  ).runTrace;
+  expect(submitTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:engine-owner-persist-failed",
+      runId: "run-race",
+    }),
+  );
 });
 
 test("server stop calls the lifecycle controller stop hook", async () => {
@@ -1348,7 +1377,12 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     approval: { mode: "auto", timeoutMs: 1_000 },
     corsOrigins: ["*"],
     workspaces: [
-      { id: "ws_1", name: "Workspace", path: workspaceRoot, workspaceType: "local" },
+      {
+        id: "ws_1",
+        name: "Workspace",
+        path: workspaceRoot,
+        workspaceType: "local",
+      },
     ],
     authorizedRoots: [workspaceRoot],
     readOnly: false,
@@ -1385,11 +1419,7 @@ test("submitRun registers inactive local runs before submitting", async () => {
   expect(result.payload.status).toBe("submitted");
   expect(result.payload.runId).toBe("run-reserved");
   expect(result.payload.upstream).toEqual({ accepted: true });
-  expect(lifecycle.calls).toEqual([
-    "active:ws_1:conv-a",
-    "status:ws_1:conv-a:latest",
-    "register:ws_1:conv-a:run-reserved:sess-a:prompt",
-  ]);
+  expect(lifecycle.calls).toEqual(["active:ws_1:conv-a", "status:ws_1:conv-a:latest", "register:ws_1:conv-a:run-reserved:sess-a:prompt"]);
   expect(queue.items).toEqual([]);
   expect(drainCalls).toEqual([]);
   expect(submitCalls).toHaveLength(1);
@@ -1399,24 +1429,32 @@ test("submitRun registers inactive local runs before submitting", async () => {
 });
 
 test("submitRun emits an authoritative correlation record only after durable admission", async () => {
-  const input = submitInput({ runId: "run-correlation", clientMessageId: "msg-correlation" });
+  const input = submitInput({
+    runId: "run-correlation",
+    clientMessageId: "msg-correlation",
+  });
   const { controller } = controllerHarness();
 
   await controller.submitRun(input);
 
-  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:admitted",
-    correlation: {
-      version: 1,
-      authoritativeOperation: { kind: "conversation-run", id: "run-correlation" },
-      causation: { clientMessageId: "msg-correlation", queueItemId: null },
-      scope: { workspaceId: "ws_1", conversationId: "conv-a" },
-      origin: "composer",
-      phase: "admitted",
-      outcome: "accepted",
-      reason: null,
-    },
-  }));
+  expect(input.runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:admitted",
+      correlation: {
+        version: 1,
+        authoritativeOperation: {
+          kind: "conversation-run",
+          id: "run-correlation",
+        },
+        causation: { clientMessageId: "msg-correlation", queueItemId: null },
+        scope: { workspaceId: "ws_1", conversationId: "conv-a" },
+        origin: "composer",
+        phase: "admitted",
+        outcome: "accepted",
+        reason: null,
+      },
+    }),
+  );
 });
 
 test("submitRun persists the exact prompt identity before upstream dispatch", async () => {
@@ -1431,9 +1469,11 @@ test("submitRun persists the exact prompt identity before upstream dispatch", as
 test("submitRun queues immediately for server-queue-only policy", async () => {
   const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
 
-  const result = await controller.submitRun(submitInput({
-    submitQueuePolicy: "server-queue-only",
-  }));
+  const result = await controller.submitRun(
+    submitInput({
+      submitQueuePolicy: "server-queue-only",
+    }),
+  );
 
   expect(result.httpStatus).toBe(202);
   expect(result.payload.status).toBe("queued");
@@ -1449,7 +1489,11 @@ test("submitRun queues immediately for server-queue-only policy", async () => {
 
 test("submitRun queues when active peek finds an active run", async () => {
   const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
-  lifecycle.activeResult = { runId: "run-active", status: "running", stale: false };
+  lifecycle.activeResult = {
+    runId: "run-active",
+    status: "running",
+    stale: false,
+  };
 
   const result = await controller.submitRun(submitInput());
 
@@ -1545,12 +1589,7 @@ test("submitRun reuses active run after register conflict when clientMessageId m
   expect(result.payload.status).toBe("submitted");
   expect(result.payload.runId).toBe("run-active-register");
   expect(result.payload.reusedActiveRun).toBe(true);
-  expect(lifecycle.calls).toEqual([
-    "active:ws_1:conv-a",
-    "status:ws_1:conv-a:latest",
-    "register:ws_1:conv-a:run-retry:sess-a:prompt",
-    "active:ws_1:conv-a",
-  ]);
+  expect(lifecycle.calls).toEqual(["active:ws_1:conv-a", "status:ws_1:conv-a:latest", "register:ws_1:conv-a:run-retry:sess-a:prompt", "active:ws_1:conv-a"]);
   expect(queue.items).toEqual([]);
   expect(submitCalls).toEqual([]);
 });
@@ -1570,7 +1609,10 @@ test("submitRun preserves the draft instead of queueing behind an unresolved his
   lifecycle.recoverTerminalRuntimeHandoffError = new OrchestratorLifecycleRequestError(
     "/workspace/ws_1/runs/run-historical-terminal/recover-terminal-runtime-handoff",
     409,
-    { error: "terminal_handoff_recovery_owner_unknown", reason: "process_identity_unavailable" },
+    {
+      error: "terminal_handoff_recovery_owner_unknown",
+      reason: "process_identity_unavailable",
+    },
   );
 
   await expect(controller.submitRun(submitInput())).rejects.toMatchObject({
@@ -1582,18 +1624,17 @@ test("submitRun preserves the draft instead of queueing behind an unresolved his
     }),
   } satisfies Partial<ApiError>);
 
-  expect(lifecycle.calls).toEqual([
-    "active:ws_1:conv-a",
-    "status:ws_1:conv-a:latest",
-    "recoverTerminalRuntimeHandoff:ws_1:run-historical-terminal",
-  ]);
+  expect(lifecycle.calls).toEqual(["active:ws_1:conv-a", "status:ws_1:conv-a:latest", "recoverTerminalRuntimeHandoff:ws_1:run-historical-terminal"]);
   expect(queue.items).toEqual([]);
   expect(submitCalls).toEqual([]);
   // The rejected submit must leave the same durable fence the queue drain
   // leaves, so the run status can project it and the app can offer its
   // existing retry-verification action instead of a bare error.
   expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-historical-terminal")).toEqual(
-    expect.objectContaining({ state: "unresolved", reason: "process_identity_unavailable" }),
+    expect.objectContaining({
+      state: "unresolved",
+      reason: "process_identity_unavailable",
+    }),
   );
 });
 
@@ -1610,11 +1651,7 @@ test("submitRun returns a post-recovery lifecycle read failure without creating 
     engineStartedAt: 5678,
   };
   lifecycle.onRecoverTerminalRuntimeHandoff = () => {
-    lifecycle.statusError = new OrchestratorLifecycleRequestError(
-      "/workspace/ws_1/conversations/conv-a/runs/latest",
-      503,
-      { error: "daemon_unavailable" },
-    );
+    lifecycle.statusError = new OrchestratorLifecycleRequestError("/workspace/ws_1/conversations/conv-a/runs/latest", 503, { error: "daemon_unavailable" });
   };
 
   await expect(controller.submitRun(submitInput())).rejects.toMatchObject({
@@ -1647,12 +1684,14 @@ test("submitRun records unresolved when successful handoff recovery is not confi
     code: "terminal_handoff_recovery_required",
   } satisfies Partial<ApiError>);
 
-  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:terminal-handoff-recovery:result",
-    runId: "run-historical-terminal",
-    outcome: "unresolved",
-    generationEvidenceKind: "unresolved",
-  }));
+  expect(input.runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:terminal-handoff-recovery:result",
+      runId: "run-historical-terminal",
+      outcome: "unresolved",
+      generationEvidenceKind: "unresolved",
+    }),
+  );
 });
 
 test("submitRun retries one registration race after guarded terminal recovery proves the predecessor idle", async () => {
@@ -1700,12 +1739,14 @@ test("submitRun retries one registration race after guarded terminal recovery pr
   ]);
   expect(queue.items).toEqual([]);
   expect(submitCalls).toHaveLength(1);
-  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:terminal-handoff-recovery:result",
-    runId: "run-historical-terminal",
-    outcome: "lost_proven",
-    generationEvidenceKind: "lost_proven",
-  }));
+  expect(input.runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:terminal-handoff-recovery:result",
+      runId: "run-historical-terminal",
+      outcome: "lost_proven",
+      generationEvidenceKind: "lost_proven",
+    }),
+  );
 });
 
 test("submitRun reconciles an outcome-unknown guarded retry instead of queueing behind itself", async () => {
@@ -1745,28 +1786,34 @@ test("submitRun reconciles an outcome-unknown guarded retry instead of queueing 
   } satisfies Partial<ApiError>);
 
   expect(queue.items).toEqual([]);
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-reserved",
-    state: "starting",
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-reserved",
+      state: "starting",
+    }),
+  );
   expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 0 }));
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    reason: "lifecycle-register-after-proven-handoff-recovery-unconfirmed",
-    runId: "run-reserved",
-  }));
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      reason: "lifecycle-register-after-proven-handoff-recovery-unconfirmed",
+      runId: "run-reserved",
+    }),
+  );
 });
 
 test("submitRun bypasses local lifecycle and queue paths for remote workspaces", async () => {
   const { controller, lifecycle, queue, submitCalls } = controllerHarness();
 
-  const result = await controller.submitRun(submitInput({
-    workspace: {
-      id: "ws_remote",
-      name: "Remote",
-      path: "/repo",
-      workspaceType: "remote",
-    },
-  }));
+  const result = await controller.submitRun(
+    submitInput({
+      workspace: {
+        id: "ws_remote",
+        name: "Remote",
+        path: "/repo",
+        workspaceType: "remote",
+      },
+    }),
+  );
 
   expect(result.httpStatus).toBe(200);
   expect(result.payload.status).toBe("submitted");
@@ -1783,15 +1830,19 @@ test("submitRun maps lifecycle request failures to the existing API error shape"
     status: 503,
     code: "lifecycle_unavailable",
   } satisfies Partial<ApiError>);
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-reserved",
-    state: "starting",
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-reserved",
+      state: "starting",
+    }),
+  );
   expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 0 }));
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    reason: "lifecycle-register-unconfirmed",
-    runId: "run-reserved",
-  }));
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      reason: "lifecycle-register-unconfirmed",
+      runId: "run-reserved",
+    }),
+  );
 });
 
 test("pre-attachment engine-loss evidence expires without releasing a run", async () => {
@@ -1826,19 +1877,23 @@ test("pre-attachment engine-loss evidence expires without releasing a run", asyn
 
   await controller.submitRun(submitInput({ runId: "run-expired" }));
 
-  expect(queue.reservations.get("ws_1\0run-expired")).toEqual(
-    expect.objectContaining({ state: "active", ...owner }),
+  expect(queue.reservations.get("ws_1\0run-expired")).toEqual(expect.objectContaining({ state: "active", ...owner }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:engine-loss-pre-attachment-expired",
+      runId: "run-expired",
+      graceMs: 25,
+    }),
   );
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:engine-loss-pre-attachment-expired",
-    runId: "run-expired",
-    graceMs: 25,
-  }));
 });
 
 test("submitRun returns the existing queue item for an idempotent client message id", async () => {
   const { controller, lifecycle, queue } = controllerHarness();
-  lifecycle.activeResult = { runId: "run-active", status: "running", stale: false };
+  lifecycle.activeResult = {
+    runId: "run-active",
+    status: "running",
+    stale: false,
+  };
 
   const first = await controller.submitRun(submitInput({ runId: "run-first" }));
   const second = await controller.submitRun(submitInput({ runId: "run-second" }));
@@ -1859,47 +1914,42 @@ test("submitRun schedules accepted lifecycle reconciliation after successful Ope
 
   expect(result.httpStatus).toBe(200);
   expect(result.payload.status).toBe("submitted");
-  expect(reconcileCalls).toEqual([{
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "accepted",
-    delayMs: 1_234,
-  }]);
+  expect(reconcileCalls).toEqual([
+    {
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "accepted",
+      delayMs: 1_234,
+    },
+  ]);
   expect(activeGatewayCalls).toEqual([]);
   expect(providerWatchCalls).toEqual([]);
 });
 
 test("submitRun keeps the reservation through exact runtime handoff after a terminal submit failure", async () => {
-  const {
-    controller,
-    behavior,
-    lifecycle,
-    queue,
-    timers,
-    activeGatewayCalls,
-    providerWatchCalls,
-    reconcileCalls,
-  } = controllerHarness();
+  const { controller, behavior, lifecycle, queue, timers, activeGatewayCalls, providerWatchCalls, reconcileCalls } = controllerHarness();
   behavior.submitError = new Error("opencode submit failed");
   const input = submitInput({ expectAiGatewayStart: true });
 
-  await expect(controller.submitRun(input)).rejects.toThrow(
-    "opencode submit failed",
-  );
+  await expect(controller.submitRun(input)).rejects.toThrow("opencode submit failed");
 
   expect(lifecycle.calls).toContain("markFailed:ws_1:run-reserved:opencode submit failed");
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "upstream-submit-failed-terminalized",
-    delayMs: 0,
-  }));
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "upstream-submit-failed-terminalized",
+      delayMs: 0,
+    }),
+  );
   expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
-  expect(reconcileCalls).not.toContainEqual(expect.objectContaining({
-    reason: "server:conversation-run:queue-drain-scheduled",
-  }));
+  expect(reconcileCalls).not.toContainEqual(
+    expect.objectContaining({
+      reason: "server:conversation-run:queue-drain-scheduled",
+    }),
+  );
 
   lifecycle.statusResult = {
     runId: "run-reserved",
@@ -1924,25 +1974,34 @@ test("submitRun keeps the reservation through exact runtime handoff after a term
     reason: "upstream-submit-failed-runtime-idle",
   });
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    reason: "server:conversation-run:queue-drain-scheduled",
-    delayMs: 0,
-  }));
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      reason: "server:conversation-run:queue-drain-scheduled",
+      delayMs: 0,
+    }),
+  );
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
   expect(providerWatchCalls).toEqual([]);
-  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:admitted",
-    correlation: expect.objectContaining({
-      authoritativeOperation: { kind: "conversation-run", id: "run-reserved" },
-      causation: expect.objectContaining({ clientMessageId: "msg-a" }),
+  expect(input.runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:admitted",
+      correlation: expect.objectContaining({
+        authoritativeOperation: {
+          kind: "conversation-run",
+          id: "run-reserved",
+        },
+        causation: expect.objectContaining({ clientMessageId: "msg-a" }),
+      }),
     }),
-  }));
+  );
 });
 
 test("submitRun releases a failed direct legacy run so its draft can retry", async () => {
-  const { controller, behavior, queue, timers } = controllerHarness({ withLifecycle: false });
+  const { controller, behavior, queue, timers } = controllerHarness({
+    withLifecycle: false,
+  });
   behavior.submitError = new Error("opencode submit failed");
 
   await expect(controller.submitRun(submitInput())).rejects.toThrow("opencode submit failed");
@@ -1952,15 +2011,7 @@ test("submitRun releases a failed direct legacy run so its draft can retry", asy
 });
 
 test("submitRun traces lifecycle markFailed errors without hiding the submit failure", async () => {
-  const {
-    controller,
-    behavior,
-    lifecycle,
-    activeGatewayCalls,
-    reconcileCalls,
-    traceEntries,
-    queue,
-  } = controllerHarness();
+  const { controller, behavior, lifecycle, activeGatewayCalls, reconcileCalls, traceEntries, queue } = controllerHarness();
   behavior.submitError = new Error("opencode submit failed");
   lifecycle.markFailedError = new Error("lifecycle mark failed");
   const input = submitInput({ expectAiGatewayStart: true });
@@ -1968,36 +2019,44 @@ test("submitRun traces lifecycle markFailed errors without hiding the submit fai
   await expect(controller.submitRun(input)).rejects.toThrow("opencode submit failed");
 
   expect(lifecycle.calls).toContain("markFailed:ws_1:run-reserved:opencode submit failed");
-  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:lifecycle-mark-failed:error",
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "opencode submit failed",
-    message: "lifecycle mark failed",
-  }));
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:lifecycle-mark-failed:error",
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "opencode submit failed",
-    message: "lifecycle mark failed",
-  }));
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "server:conversation-run:terminalization-retry-scheduled",
-    delayMs: 1_000,
-  }));
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    workspaceId: "ws_1",
-    runId: "run-reserved",
-    state: "terminalization_pending",
-    terminalizationReason: "upstream_submit_failed",
-    terminalizationAttempts: 1,
-  }));
+  expect(input.runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:lifecycle-mark-failed:error",
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "opencode submit failed",
+      message: "lifecycle mark failed",
+    }),
+  );
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:lifecycle-mark-failed:error",
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "opencode submit failed",
+      message: "lifecycle mark failed",
+    }),
+  );
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "server:conversation-run:terminalization-retry-scheduled",
+      delayMs: 1_000,
+    }),
+  );
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      runId: "run-reserved",
+      state: "terminalization_pending",
+      terminalizationReason: "upstream_submit_failed",
+      terminalizationAttempts: 1,
+    }),
+  );
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
 });
 
@@ -2017,13 +2076,15 @@ test("terminalization retry keeps the reservation until lifecycle termination su
 
   expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
   expect(lifecycle.calls.filter((call) => call.startsWith("markFailed:"))).toHaveLength(2);
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "terminalization-retry-terminalized",
-    delayMs: 0,
-  }));
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "terminalization-retry-terminalized",
+      delayMs: 0,
+    }),
+  );
 
   lifecycle.statusResult = {
     runId: "run-reserved",
@@ -2037,11 +2098,13 @@ test("terminalization retry keeps the reservation until lifecycle termination su
   await flushMicrotasks();
 
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    reason: "server:conversation-run:queue-drain-scheduled",
-  }));
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      reason: "server:conversation-run:queue-drain-scheduled",
+    }),
+  );
 });
 
 test("startup restores a pending terminalization retry without a new submit", () => {
@@ -2061,13 +2124,15 @@ test("startup restores a pending terminalization retry without a new submit", ()
 
   controller.start();
 
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-pending",
-    state: "terminalization_pending",
-    terminalizationReason: "upstream_submit_failed",
-    terminalizationAttempts: 3,
-    terminalizationNextAttemptAt: nextAttemptAt,
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-pending",
+      state: "terminalization_pending",
+      terminalizationReason: "upstream_submit_failed",
+      terminalizationAttempts: 3,
+      terminalizationNextAttemptAt: nextAttemptAt,
+    }),
+  );
   const retryTimer = timers.activeTimers().find((timer) => timer.delayMs > 0);
   expect(retryTimer?.delayMs).toBeGreaterThanOrEqual(16_900);
   expect(retryTimer?.delayMs).toBeLessThanOrEqual(17_000);
@@ -2077,7 +2142,10 @@ test("submitRun persists its server reservation before lifecycle registration", 
   const { controller, lifecycle, queue } = controllerHarness();
   lifecycle.onRegister = (input) => {
     expect(queue.reservations.get(`${input.workspaceId}\0${input.runId}`)).toEqual(
-      expect.objectContaining({ conversationId: input.conversationId, state: "starting" }),
+      expect.objectContaining({
+        conversationId: input.conversationId,
+        state: "starting",
+      }),
     );
   };
 
@@ -2114,23 +2182,25 @@ test("provider-start timeout aborts the stuck OpenCode session before failing an
   expect(result.payload.status).toBe("submitted");
   for (let index = 0; index < 5; index += 1) await flushMicrotasks();
   expect(providerWatchCalls).toHaveLength(1);
-  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:ai-gateway-provider-start-watch:timeout",
-    providerHitScope: "none",
-    providerHitCount: 0,
-    firstProviderHitAt: null,
-    lastProviderHitAt: null,
-  }));
-  expect(abortCalls).toHaveLength(1);
-  expect(activeProxyAbortCalls).toEqual([expect.objectContaining({
-    workspaceId: "ws_1",
-    runId: "run-reserved",
-    sessionId: "sess-a",
-    reason: "ai-gateway-provider-start-timeout",
-  })]);
-  expect(lifecycle.calls).toContain(
-    "markFailed:ws_1:run-reserved:AI gateway provider request did not start within 25ms; OpenCode session was aborted.",
+  expect(input.runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:ai-gateway-provider-start-watch:timeout",
+      providerHitScope: "none",
+      providerHitCount: 0,
+      firstProviderHitAt: null,
+      lastProviderHitAt: null,
+    }),
   );
+  expect(abortCalls).toHaveLength(1);
+  expect(activeProxyAbortCalls).toEqual([
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      runId: "run-reserved",
+      sessionId: "sess-a",
+      reason: "ai-gateway-provider-start-timeout",
+    }),
+  ]);
+  expect(lifecycle.calls).toContain("markFailed:ws_1:run-reserved:AI gateway provider request did not start within 25ms; OpenCode session was aborted.");
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
   expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
 
@@ -2145,13 +2215,12 @@ test("provider-start timeout aborts the stuck OpenCode session before failing an
   timers.fire(drainTimer!.id);
   for (let index = 0; index < 5; index += 1) await flushMicrotasks();
 
-  expect(submitCalls.map((call) => (call as { runId: string }).runId)).toEqual([
-    "run-reserved",
-    "run-queued",
-  ]);
-  expect(reconcileCalls).not.toContainEqual(expect.objectContaining({
-    reason: "ai-gateway-provider-start-timeout",
-  }));
+  expect(submitCalls.map((call) => (call as { runId: string }).runId)).toEqual(["run-reserved", "run-queued"]);
+  expect(reconcileCalls).not.toContainEqual(
+    expect.objectContaining({
+      reason: "ai-gateway-provider-start-timeout",
+    }),
+  );
 });
 
 test("terminal transcript keeps the reservation until the runtime handoff is idle", async () => {
@@ -2210,11 +2279,13 @@ test("stale terminal handoff asks the lifecycle owner once to retire an absent o
   });
   expect(lifecycle.calls).toContain("recoverTerminalRuntimeHandoff:ws_1:run-reserved");
   expect(queue.items[0]?.state).toBe("pending");
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:terminal-runtime-handoff-recovery",
-    runId: "run-reserved",
-    outcome: "requested",
-  }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:terminal-runtime-handoff-recovery",
+      runId: "run-reserved",
+      outcome: "requested",
+    }),
+  );
 
   lifecycle.statusResult = {
     ...lifecycle.statusResult,
@@ -2264,11 +2335,13 @@ test("stale terminal handoff does not repeat a rejected recovery request on ever
   });
 
   expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-reserved")).toHaveLength(1);
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-reserved",
-    state: "terminal_handoff_unresolved",
-    terminalHandoffAttempts: 1,
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-reserved",
+      state: "terminal_handoff_unresolved",
+      terminalHandoffAttempts: 1,
+    }),
+  );
 });
 
 test("explicit terminal handoff retry is the only way to reopen a durable unresolved decision", async () => {
@@ -2286,7 +2359,10 @@ test("explicit terminal handoff retry is the only way to reopen a durable unreso
   lifecycle.recoverTerminalRuntimeHandoffError = new OrchestratorLifecycleRequestError(
     "/workspace/ws_1/runs/run-reserved/recover-terminal-runtime-handoff",
     409,
-    { error: "terminal_handoff_recovery_owner_live_or_ambiguous", reason: "exact_process_alive" },
+    {
+      error: "terminal_handoff_recovery_owner_live_or_ambiguous",
+      reason: "exact_process_alive",
+    },
   );
 
   await controller.reconcileConversationRunLifecycle({
@@ -2295,25 +2371,31 @@ test("explicit terminal handoff retry is the only way to reopen a durable unreso
     runId: "run-reserved",
     reason: "initial-terminal-handoff",
   });
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-reserved",
-    state: "terminal_handoff_unresolved",
-    terminalHandoffReason: "exact_process_alive",
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-reserved",
+      state: "terminal_handoff_unresolved",
+      terminalHandoffReason: "exact_process_alive",
+    }),
+  );
 
   lifecycle.recoverTerminalRuntimeHandoffError = null;
-  await expect(controller.retryTerminalRuntimeHandoff({
-    workspace: input.workspace,
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "terminal-runtime-handoff-explicit-retry",
-  })).resolves.toBe(true);
+  await expect(
+    controller.retryTerminalRuntimeHandoff({
+      workspace: input.workspace,
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "terminal-runtime-handoff-explicit-retry",
+    }),
+  ).resolves.toBe(true);
 
   expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-reserved")).toHaveLength(2);
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-reserved",
-    state: "terminal_handoff_pending",
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-reserved",
+      state: "terminal_handoff_pending",
+    }),
+  );
 });
 
 test("stale terminal status errors never request owner-loss recovery", async () => {
@@ -2339,10 +2421,12 @@ test("stale terminal status errors never request owner-loss recovery", async () 
   });
 
   expect(lifecycle.calls).not.toContain("recoverTerminalRuntimeHandoff:ws_1:run-reserved");
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-reserved",
-    state: "active",
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-reserved",
+      state: "active",
+    }),
+  );
 });
 
 test("provider-start terminal handoff requests one generation-fenced runtime recovery", async () => {
@@ -2428,12 +2512,12 @@ test("provider-start timeout retries a failed OpenCode abort without releasing t
   expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
   expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
-  expect(reconcileCalls.some((call) =>
-    call.reason === "ai-gateway-provider-start-timeout-abort-retry" &&
-    typeof call.delayMs === "number" &&
-    call.delayMs > 4_900 &&
-    call.delayMs <= 5_000,
-  )).toBe(true);
+  expect(
+    reconcileCalls.some(
+      (call) =>
+        call.reason === "ai-gateway-provider-start-timeout-abort-retry" && typeof call.delayMs === "number" && call.delayMs > 4_900 && call.delayMs <= 5_000,
+    ),
+  ).toBe(true);
 
   await controller.reconcileConversationRunLifecycle({
     workspace: submitInput().workspace,
@@ -2459,9 +2543,7 @@ test("provider-start timeout retries a failed OpenCode abort without releasing t
   timers.fire(retryTimer!.id);
   for (let index = 0; index < 5; index += 1) await flushMicrotasks();
 
-  expect(lifecycle.calls).toContain(
-    "markFailed:ws_1:run-reserved:AI gateway provider request did not start within 25ms; OpenCode session was aborted.",
-  );
+  expect(lifecycle.calls).toContain("markFailed:ws_1:run-reserved:AI gateway provider request did not start within 25ms; OpenCode session was aborted.");
   expect(abortCalls).toHaveLength(2);
   lifecycle.statusResult = {
     runId: "run-reserved",
@@ -2492,12 +2574,14 @@ test("provider-start abort recovery has a durable finite retry budget", async ()
   }
 
   expect(abortCalls).toHaveLength(3);
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-reserved",
-    providerStartAbortPending: true,
-    providerStartAbortAttempts: 3,
-    providerStartAbortNextAttemptAt: null,
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-reserved",
+      providerStartAbortPending: true,
+      providerStartAbortAttempts: 3,
+      providerStartAbortNextAttemptAt: null,
+    }),
+  );
   expect(timers.activeTimers().some((timer) => [5_000, 10_000, 20_000].includes(timer.delayMs))).toBe(false);
 });
 
@@ -2533,10 +2617,12 @@ test("startup rechecks an exhausted provider-start abort recovery before drainin
 
   expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-stale");
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:provider-start-timeout-abort:recovery-exhausted",
-    runId: "run-stale",
-  }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:provider-start-timeout-abort:recovery-exhausted",
+      runId: "run-stale",
+    }),
+  );
 
   const drain = timers.activeTimers().find((timer) => timer.delayMs === 0);
   expect(drain).toBeDefined();
@@ -2554,7 +2640,11 @@ test("provider-start timeout releases a run that completed before its abort retr
 
   await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
   for (let index = 0; index < 5; index += 1) await flushMicrotasks();
-  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+  };
   behavior.abortError = null;
 
   const retryTimer = timers.activeTimers().find((timer) => timer.delayMs === 5_000);
@@ -2589,7 +2679,11 @@ test("provider-start watcher errors retain the normal lifecycle reconcile budget
 
 test("guarded workspace reload blocks an admitted run and succeeds after terminal release", async () => {
   const { controller, lifecycle } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+  };
   let reloads = 0;
 
   await controller.submitRun(submitInput());
@@ -2620,7 +2714,11 @@ test("guarded workspace reload blocks an admitted run and succeeds after termina
 
 test("control-plane rebind remains grantable while a run is reserved", async () => {
   const { controller, lifecycle } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+  };
 
   await controller.submitRun(submitInput());
   const granted = await controller.requestWorkspaceRuntimeOperation({
@@ -2631,39 +2729,51 @@ test("control-plane rebind remains grantable while a run is reserved", async () 
     reasonCode: "sse_invalid_bearer",
     expiresAt: Date.now() + 10_000,
   });
-  expect(granted).toEqual(expect.objectContaining({
-    kind: "granted",
-    operation: expect.objectContaining({ operationId: "rebind-a", state: "granted" }),
-  }));
-  expect(await controller.beginWorkspaceRuntimeOperation("ws_1", "rebind-a")).toEqual(
-    expect.objectContaining({ state: "executing" }),
+  expect(granted).toEqual(
+    expect.objectContaining({
+      kind: "granted",
+      operation: expect.objectContaining({
+        operationId: "rebind-a",
+        state: "granted",
+      }),
+    }),
   );
+  expect(await controller.beginWorkspaceRuntimeOperation("ws_1", "rebind-a")).toEqual(expect.objectContaining({ state: "executing" }));
 });
 
 test("idle-only runtime operation records why an active reservation blocks it", async () => {
   const { controller, traceEntries } = controllerHarness();
   await controller.submitRun(submitInput());
 
-  await expect(controller.requestWorkspaceRuntimeOperation({
-    workspaceId: "ws_1",
-    operationId: "reload-a",
-    kind: "reload_workspace_if_idle",
-    sourceClass: "automatic",
-    reasonCode: "test-reload",
-    expiresAt: Date.now() + 10_000,
-  })).resolves.toEqual({ kind: "blocked", reason: "active-runs" });
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:runtime-operation:blocked",
-    workspaceId: "ws_1",
-    operationKind: "reload_workspace_if_idle",
-    reason: "active-runs",
-    reservationCount: 1,
-  }));
+  await expect(
+    controller.requestWorkspaceRuntimeOperation({
+      workspaceId: "ws_1",
+      operationId: "reload-a",
+      kind: "reload_workspace_if_idle",
+      sourceClass: "automatic",
+      reasonCode: "test-reload",
+      expiresAt: Date.now() + 10_000,
+    }),
+  ).resolves.toEqual({ kind: "blocked", reason: "active-runs" });
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:runtime-operation:blocked",
+      workspaceId: "ws_1",
+      operationKind: "reload_workspace_if_idle",
+      reason: "active-runs",
+      reservationCount: 1,
+    }),
+  );
 });
 
 test("runtime-operation lease queues new input until completion then permits the server queue", async () => {
   const { controller, lifecycle, queue, submitCalls } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-next", status: "completed", stale: false, runtimeReadyForSuccessor: true };
+  lifecycle.statusResult = {
+    runId: "run-next",
+    status: "completed",
+    stale: false,
+    runtimeReadyForSuccessor: true,
+  };
   const granted = await controller.requestWorkspaceRuntimeOperation({
     workspaceId: "ws_1",
     operationId: "rebind-a",
@@ -2694,7 +2804,12 @@ test("runtime-operation lease queues new input until completion then permits the
 
 test("unknown runtime-operation outcome keeps queued input fenced until a new explicit operation is granted", async () => {
   const { controller, lifecycle, queue, submitCalls } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-next", status: "completed", stale: false, runtimeReadyForSuccessor: true };
+  lifecycle.statusResult = {
+    runId: "run-next",
+    status: "completed",
+    stale: false,
+    runtimeReadyForSuccessor: true,
+  };
   const first = await controller.requestWorkspaceRuntimeOperation({
     workspaceId: "ws_1",
     operationId: "rebind-expired",
@@ -2725,15 +2840,24 @@ test("unknown runtime-operation outcome keeps queued input fenced until a new ex
     reasonCode: "sse_invalid_bearer",
     expiresAt: Date.now() + 10_000,
   });
-  expect(replacement).toEqual(expect.objectContaining({
-    kind: "granted",
-    operation: expect.objectContaining({ operationId: "rebind-retry", state: "granted" }),
-  }));
+  expect(replacement).toEqual(
+    expect.objectContaining({
+      kind: "granted",
+      operation: expect.objectContaining({
+        operationId: "rebind-retry",
+        state: "granted",
+      }),
+    }),
+  );
 });
 
 test("workspace idle subscribers are notified once when the final run reaches terminal state", async () => {
   const { controller, lifecycle } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+  };
   const idleWorkspaces: string[] = [];
   const unsubscribe = controller.subscribeWorkspaceIdle((workspaceId) => {
     idleWorkspaces.push(workspaceId);
@@ -2759,7 +2883,11 @@ test("workspace idle subscribers are notified once when the final run reaches te
 
 test("terminal release is idempotent for guarded workspace reload", async () => {
   const { controller, lifecycle } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+  };
   await controller.submitRun(submitInput());
   const terminal = {
     workspace: submitInput().workspace,
@@ -2789,21 +2917,15 @@ test("submitRun retains managed-AI correlation in direct start mode until the ru
 });
 
 test("submitRun keeps active gateway context after provider start and clears it on terminal lifecycle reconcile", async () => {
-  const {
-    controller,
-    lifecycle,
-    timers,
-    activeGatewayCalls,
-    providerWatchCalls,
-    abortCalls,
-    reconcileCalls,
-  } = controllerHarness();
+  const { controller, lifecycle, timers, activeGatewayCalls, providerWatchCalls, abortCalls, reconcileCalls } = controllerHarness();
 
-  const result = await controller.submitRun(submitInput({
-    expectAiGatewayStart: true,
-    runtimeAuthorizationActorTokenHash: "request-actor-hash",
-    runtimeAuthorizationOrgId: "org-a",
-  }));
+  const result = await controller.submitRun(
+    submitInput({
+      expectAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: "request-actor-hash",
+      runtimeAuthorizationOrgId: "org-a",
+    }),
+  );
 
   expect(result.httpStatus).toBe(200);
   expect(result.payload.status).toBe("submitted");
@@ -2815,15 +2937,21 @@ test("submitRun keeps active gateway context after provider start and clears it 
     runtimeAuthorizationActorTokenHash: "request-actor-hash",
     runtimeAuthorizationOrgId: "org-a",
   });
-  expect(reconcileCalls).toEqual([{
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "accepted",
-    delayMs: 1_234,
-  }]);
+  expect(reconcileCalls).toEqual([
+    {
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "accepted",
+      delayMs: 1_234,
+    },
+  ]);
 
-  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+  };
   timers.fire(timers.activeTimers()[0]!.id);
   await flushMicrotasks();
 
@@ -2845,7 +2973,11 @@ test("terminal lifecycle reconcile requests one server-owned transcript ingest b
   });
 
   await controller.submitRun(submitInput());
-  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+  };
   timers.fire(timers.activeTimers()[0]!.id);
   await flushMicrotasks();
 
@@ -2859,7 +2991,11 @@ test("terminal delivery evidence calls an exhausted canonical ingest unavailable
   });
 
   await controller.submitRun(submitInput());
-  lifecycle.statusResult = { runId: "run-reserved", status: "failed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "failed",
+    stale: false,
+  };
   timers.fire(timers.activeTimers()[0]!.id);
   await flushMicrotasks();
   await flushMicrotasks();
@@ -2875,7 +3011,11 @@ test("terminal delivery evidence records unavailable recovery even when no inges
   const { controller, lifecycle, timers, terminalRecoveries } = controllerHarness();
 
   await controller.submitRun(submitInput());
-  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "completed",
+    stale: false,
+  };
   timers.fire(timers.activeTimers()[0]!.id);
   await flushMicrotasks();
 
@@ -2889,11 +3029,13 @@ test("terminal delivery evidence records unavailable recovery even when no inges
 test("submitRun tracks active gateway context for command runs when provider start is expected", async () => {
   const { controller, activeGatewayCalls, providerWatchCalls, reconcileCalls } = controllerHarness();
 
-  const result = await controller.submitRun(submitInput({
-    kind: "command",
-    body: { kind: "command", command: "skills.run", arguments: "{}" },
-    expectAiGatewayStart: true,
-  }));
+  const result = await controller.submitRun(
+    submitInput({
+      kind: "command",
+      body: { kind: "command", command: "skills.run", arguments: "{}" },
+      expectAiGatewayStart: true,
+    }),
+  );
 
   expect(result.httpStatus).toBe(200);
   expect(result.payload.status).toBe("submitted");
@@ -2916,19 +3058,25 @@ test("submitRun tracks active gateway context for command runs when provider sta
     clientMessageId: "msg-a",
     origin: "composer",
   });
-  expect(reconcileCalls).toEqual([{
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "accepted",
-    delayMs: 1_234,
-  }]);
+  expect(reconcileCalls).toEqual([
+    {
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-reserved",
+      reason: "accepted",
+      delayMs: 1_234,
+    },
+  ]);
 });
 
 test("queue drain keeps pending work blocked while latest lifecycle is active", async () => {
   const { controller, lifecycle, queue, submitCalls, timers, backgroundTraceEntries } = controllerHarness();
   enqueuePendingRun(queue);
-  lifecycle.statusResult = { runId: "run-active", status: "running", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-active",
+    status: "running",
+    stale: false,
+  };
 
   await controller.drainConversationQueue("ws_1", "conv-a");
   await controller.drainConversationQueue("ws_1", "conv-a");
@@ -2937,26 +3085,28 @@ test("queue drain keeps pending work blocked while latest lifecycle is active", 
   expect(submitCalls).toEqual([]);
   expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest", "status:ws_1:conv-a:latest"]);
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
-  const activeDeferrals = backgroundTraceEntries.flat().filter(
-    (entry) => entry.event === "server:conversation-run:queue-drain-active-deferred",
-  );
-  expect(activeDeferrals).toEqual([expect.objectContaining({
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    queueItemId: queue.items[0]?.queueItemId,
-    runId: "run-queued",
-    blockingRunId: "run-active",
-    status: "running",
-    stale: false,
-    clientMessageId: "msg-queued",
-    queuedClientMessageId: "msg-queued",
-    blockingClientMessageId: null,
-  })]);
+  const activeDeferrals = backgroundTraceEntries.flat().filter((entry) => entry.event === "server:conversation-run:queue-drain-active-deferred");
+  expect(activeDeferrals).toEqual([
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      queueItemId: queue.items[0]?.queueItemId,
+      runId: "run-queued",
+      blockingRunId: "run-active",
+      status: "running",
+      stale: false,
+      clientMessageId: "msg-queued",
+      queuedClientMessageId: "msg-queued",
+      blockingClientMessageId: null,
+    }),
+  ]);
 });
 
 test("queue drain turns an unresolved terminal predecessor into one durable barrier without another poll", async () => {
   const { controller, lifecycle, queue, timers, backgroundTraceEntries } = controllerHarness();
-  const queued = enqueuePendingRun(queue, { clientMessageId: "msg-historical-successor" });
+  const queued = enqueuePendingRun(queue, {
+    clientMessageId: "msg-historical-successor",
+  });
   lifecycle.statusResult = {
     runId: "run-historical-terminal",
     status: "failed",
@@ -2970,23 +3120,30 @@ test("queue drain turns an unresolved terminal predecessor into one durable barr
   lifecycle.recoverTerminalRuntimeHandoffError = new OrchestratorLifecycleRequestError(
     "/workspace/ws_1/runs/run-historical-terminal/recover-terminal-runtime-handoff",
     409,
-    { error: "terminal_handoff_recovery_owner_unknown", reason: "process_identity_unavailable" },
+    {
+      error: "terminal_handoff_recovery_owner_unknown",
+      reason: "process_identity_unavailable",
+    },
   );
 
   await controller.drainConversationQueue("ws_1", "conv-a");
 
   expect(queue.getForReservedRun("ws_1", "conv-a", queued.reservedRunId)?.state).toBe("pending");
-  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-historical-terminal")).toEqual(expect.objectContaining({
-    state: "unresolved",
-    reason: "process_identity_unavailable",
-  }));
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-historical-terminal")).toEqual(
+    expect.objectContaining({
+      state: "unresolved",
+      reason: "process_identity_unavailable",
+    }),
+  );
   expect(timers.activeTimers()).toEqual([]);
-  expect(backgroundTraceEntries.flat()).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-drain-terminal-handoff-unresolved",
-    queueItemId: queued.queueItemId,
-    blockingRunId: "run-historical-terminal",
-    reason: "process_identity_unavailable",
-  }));
+  expect(backgroundTraceEntries.flat()).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-drain-terminal-handoff-unresolved",
+      queueItemId: queued.queueItemId,
+      blockingRunId: "run-historical-terminal",
+      reason: "process_identity_unavailable",
+    }),
+  );
 });
 
 test("queue drain reconciles the run holding a conflicting stale reservation", async () => {
@@ -3009,20 +3166,29 @@ test("queue drain reconciles the run holding a conflicting stale reservation", a
   await controller.drainConversationQueue("ws_1", "conv-a");
 
   expect(queue.getForReservedRun("ws_1", "conv-a", queued.reservedRunId)?.state).toBe("pending");
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-terminal",
-    reason: "queue-drain-reservation-conflict",
-    delayMs: 0,
-  }));
-  expect(timers.activeTimers().map((timer) => timer.delayMs).sort((left, right) => left - right)).toEqual([0, 1_500]);
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-drain-reservation-conflict",
-    queueItemId: queued.queueItemId,
-    activeRunId: "run-terminal",
-    reservationConflictAttempts: 1,
-  }));
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-terminal",
+      reason: "queue-drain-reservation-conflict",
+      delayMs: 0,
+    }),
+  );
+  expect(
+    timers
+      .activeTimers()
+      .map((timer) => timer.delayMs)
+      .sort((left, right) => left - right),
+  ).toEqual([0, 1_500]);
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-drain-reservation-conflict",
+      queueItemId: queued.queueItemId,
+      activeRunId: "run-terminal",
+      reservationConflictAttempts: 1,
+    }),
+  );
 });
 
 test("queue drain claims a proven-lost predecessor release without provider-start evidence", async () => {
@@ -3045,12 +3211,14 @@ test("queue drain claims a proven-lost predecessor release without provider-star
 
   await controller.drainConversationQueue("ws_1", "conv-a");
 
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:lifecycle-reconcile-scheduled",
-    runId: "run-terminal",
-    reason: "queue-drain-reservation-conflict",
-    predecessorReleaseProven: true,
-  }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:lifecycle-reconcile-scheduled",
+      runId: "run-terminal",
+      reason: "queue-drain-reservation-conflict",
+      predecessorReleaseProven: true,
+    }),
+  );
 });
 
 test("queue drain never claims a predecessor release while its engine owner is still attached", async () => {
@@ -3073,12 +3241,14 @@ test("queue drain never claims a predecessor release while its engine owner is s
 
   await controller.drainConversationQueue("ws_1", "conv-a");
 
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:lifecycle-reconcile-scheduled",
-    runId: "run-terminal",
-    reason: "queue-drain-reservation-conflict",
-    predecessorReleaseProven: false,
-  }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:lifecycle-reconcile-scheduled",
+      runId: "run-terminal",
+      reason: "queue-drain-reservation-conflict",
+      predecessorReleaseProven: false,
+    }),
+  );
 });
 
 test("queue drain caps repeated reservation conflicts and persists one unresolved barrier", async () => {
@@ -3101,23 +3271,27 @@ test("queue drain caps repeated reservation conflicts and persists one unresolve
 
   expect(timers.timers).toHaveLength(timerCountBeforeCap);
   expect(queue.getForReservedRun("ws_1", "conv-a", queued.reservedRunId)?.state).toBe("pending");
-  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-terminal")).toEqual(expect.objectContaining({
-    state: "unresolved",
-    reason: "reservation_conflict_unresolved",
-  }));
-  expect(backgroundTraceEntries.flat().filter(
-    (entry) => entry.event === "server:conversation-run:queue-drain-reservation-conflict-unresolved",
-  )).toEqual([expect.objectContaining({
-    queueItemId: queued.queueItemId,
-    blockingRunId: "run-terminal",
-    reason: "reservation_conflict_unresolved",
-    reservationConflictAttempts: 40,
-  })]);
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-terminal")).toEqual(
+    expect.objectContaining({
+      state: "unresolved",
+      reason: "reservation_conflict_unresolved",
+    }),
+  );
+  expect(backgroundTraceEntries.flat().filter((entry) => entry.event === "server:conversation-run:queue-drain-reservation-conflict-unresolved")).toEqual([
+    expect.objectContaining({
+      queueItemId: queued.queueItemId,
+      blockingRunId: "run-terminal",
+      reason: "reservation_conflict_unresolved",
+      reservationConflictAttempts: 40,
+    }),
+  ]);
 });
 
 test("queue drain does not make a durable handoff barrier from a post-recovery lifecycle read failure", async () => {
   const { controller, lifecycle, queue, timers, backgroundTraceEntries } = controllerHarness();
-  const queued = enqueuePendingRun(queue, { clientMessageId: "msg-retry-after-lifecycle-read" });
+  const queued = enqueuePendingRun(queue, {
+    clientMessageId: "msg-retry-after-lifecycle-read",
+  });
   lifecycle.statusResult = {
     runId: "run-historical-terminal",
     status: "failed",
@@ -3129,11 +3303,7 @@ test("queue drain does not make a durable handoff barrier from a post-recovery l
     engineStartedAt: 5678,
   };
   lifecycle.onRecoverTerminalRuntimeHandoff = () => {
-    lifecycle.statusError = new OrchestratorLifecycleRequestError(
-      "/workspace/ws_1/conversations/conv-a/runs/latest",
-      503,
-      { error: "daemon_unavailable" },
-    );
+    lifecycle.statusError = new OrchestratorLifecycleRequestError("/workspace/ws_1/conversations/conv-a/runs/latest", 503, { error: "daemon_unavailable" });
   };
 
   await controller.drainConversationQueue("ws_1", "conv-a");
@@ -3141,36 +3311,34 @@ test("queue drain does not make a durable handoff barrier from a post-recovery l
   expect(queue.getForReservedRun("ws_1", "conv-a", queued.reservedRunId)?.state).toBe("pending");
   expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-historical-terminal")).toBeNull();
   expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 1_500 }));
-  expect(backgroundTraceEntries.flat()).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-drain-status-error",
-    queueItemId: queued.queueItemId,
-    lifecycleHttpStatus: 503,
-  }));
+  expect(backgroundTraceEntries.flat()).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-drain-status-error",
+      queueItemId: queued.queueItemId,
+      lifecycleHttpStatus: 503,
+    }),
+  );
 });
 
 test("queue-drain status diagnostics retain a safe error classification without a redacted message", async () => {
   const { controller, lifecycle, queue, backgroundTraceEntries } = controllerHarness();
   enqueuePendingRun(queue);
-  lifecycle.statusError = new OrchestratorLifecycleRequestError(
-    "/workspace/ws_1/conversations/conv-a/runs/latest",
-    503,
-    { error: "daemon_unavailable" },
-  );
+  lifecycle.statusError = new OrchestratorLifecycleRequestError("/workspace/ws_1/conversations/conv-a/runs/latest", 503, { error: "daemon_unavailable" });
 
   await controller.drainConversationQueue("ws_1", "conv-a");
 
-  expect(backgroundTraceEntries.flat()).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-drain-status-error",
-    queueItemId: "queue-1",
-    runId: "run-queued",
-    clientMessageId: "msg-queued",
-    errorKind: "lifecycle_request_failed",
-    lifecycleHttpStatus: 503,
-    nextRetryInMs: 1_500,
-  }));
-  expect(backgroundTraceEntries.flat().find(
-    (entry) => entry.event === "server:conversation-run:queue-drain-status-error",
-  )).not.toHaveProperty("message");
+  expect(backgroundTraceEntries.flat()).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-drain-status-error",
+      queueItemId: "queue-1",
+      runId: "run-queued",
+      clientMessageId: "msg-queued",
+      errorKind: "lifecycle_request_failed",
+      lifecycleHttpStatus: 503,
+      nextRetryInMs: 1_500,
+    }),
+  );
+  expect(backgroundTraceEntries.flat().find((entry) => entry.event === "server:conversation-run:queue-drain-status-error")).not.toHaveProperty("message");
 });
 
 test("queue drain delegates generic stale active runs to normal lifecycle reconciliation", async () => {
@@ -3190,14 +3358,16 @@ test("queue drain delegates generic stale active runs to normal lifecycle reconc
   expect(submitCalls).toEqual([]);
   expect(lifecycle.calls).toContain("status:ws_1:conv-a:latest");
   expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
-  expect(backgroundTraceEntries.flat()).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-drain-stale-active-deferred",
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-queued",
-    blockingRunId: "run-zombie",
-    waitReason: "engine_unreachable",
-  }));
+  expect(backgroundTraceEntries.flat()).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-drain-stale-active-deferred",
+      workspaceId: "ws_1",
+      conversationId: "conv-a",
+      runId: "run-queued",
+      blockingRunId: "run-zombie",
+      waitReason: "engine_unreachable",
+    }),
+  );
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 
   timers.fire(timers.activeTimers()[0]!.id);
@@ -3210,7 +3380,11 @@ test("queue drain delegates generic stale active runs to normal lifecycle reconc
 
 test("lifecycle reconcile keeps polling stale status until terminal", async () => {
   const { controller, lifecycle, timers, workspaces } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-stale", status: "running", stale: true };
+  lifecycle.statusResult = {
+    runId: "run-stale",
+    status: "running",
+    stale: true,
+  };
 
   await controller.reconcileConversationRunLifecycle({
     workspace: workspaces[0]!,
@@ -3242,13 +3416,13 @@ test("lifecycle reconciliation closes an unreachable engine after its progress g
   });
 
   expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-unreachable");
-  expect(lifecycle.calls).toContain(
-    "markFailed:ws_1:run-unreachable:engine remained unreachable after useful run progress stopped",
+  expect(lifecycle.calls).toContain("markFailed:ws_1:run-unreachable:engine remained unreachable after useful run progress stopped");
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:lifecycle-reconcile-engine-unreachable",
+      runId: "run-unreachable",
+    }),
   );
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:lifecycle-reconcile-engine-unreachable",
-    runId: "run-unreachable",
-  }));
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 
@@ -3271,9 +3445,7 @@ test("lifecycle reconcile fails stale active runs after poll budget exhaustion a
   });
 
   expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-stale");
-  expect(lifecycle.calls).toContain(
-    "markFailed:ws_1:run-stale:run lifecycle reconcile exhausted while active status remained unresolved",
-  );
+  expect(lifecycle.calls).toContain("markFailed:ws_1:run-stale:run lifecycle reconcile exhausted while active status remained unresolved");
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 
@@ -3299,10 +3471,12 @@ test("lifecycle reconcile keeps an exact no-output model retry in low-churn back
   expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-model-retry");
   expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
   expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 30_000 }));
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:model-retry-background-reconcile",
-    runId: "run-model-retry",
-  }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:model-retry-background-reconcile",
+      runId: "run-model-retry",
+    }),
+  );
 });
 
 test("startup reconciliation closes an old assistant-message orphan without repeated polling", async () => {
@@ -3327,10 +3501,12 @@ test("startup reconciliation closes an old assistant-message orphan without repe
     "markFailed:ws_1:run-orphaned:startup lifecycle reservation had no useful progress while its assistant message remained open",
   );
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:lifecycle-reconcile-startup-orphaned",
-    runId: "run-orphaned",
-  }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:lifecycle-reconcile-startup-orphaned",
+      runId: "run-orphaned",
+    }),
+  );
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 
@@ -3360,9 +3536,7 @@ test("lifecycle reconcile ingests an unresolved active transcript before poll bu
     attempt: 2,
   });
 
-  expect(lifecycle.calls).toContain(
-    "markFailed:ws_1:run-active:run lifecycle reconcile exhausted while active status remained unresolved",
-  );
+  expect(lifecycle.calls).toContain("markFailed:ws_1:run-active:run lifecycle reconcile exhausted while active status remained unresolved");
   expect(ingestedRunIds).toEqual(["run-active"]);
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
@@ -3387,9 +3561,7 @@ test("lifecycle reconcile trace includes active run diagnostics", async () => {
     reason: "accepted",
   });
 
-  expect(
-    traceEntries.find((entry) => entry.event === "server:conversation-run:lifecycle-reconcile"),
-  ).toMatchObject({
+  expect(traceEntries.find((entry) => entry.event === "server:conversation-run:lifecycle-reconcile")).toMatchObject({
     runId: "run-active",
     status: "running",
     stale: false,
@@ -3422,9 +3594,7 @@ test("lifecycle reconcile trace records a redacted terminal failure and engine b
     reason: "accepted",
   });
 
-  expect(
-    traceEntries.find((entry) => entry.event === "server:conversation-run:lifecycle-reconcile"),
-  ).toMatchObject({
+  expect(traceEntries.find((entry) => entry.event === "server:conversation-run:lifecycle-reconcile")).toMatchObject({
     runId: "run-failed",
     status: "failed",
     terminalError: "provider rejected request: api_key=[redacted]",
@@ -3439,7 +3609,11 @@ test("lifecycle reconcile trace records a redacted terminal failure and engine b
 test("queue drain submits the next pending item after terminal latest lifecycle", async () => {
   const { controller, lifecycle, queue, submitCalls } = controllerHarness();
   const queued = enqueuePendingRun(queue);
-  lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-terminal",
+    status: "completed",
+    stale: false,
+  };
 
   await controller.drainConversationQueue("ws_1", "conv-a");
 
@@ -3448,32 +3622,34 @@ test("queue drain submits the next pending item after terminal latest lifecycle"
   const submittedMessageId = (submitCalls[0] as SubmittedOpenCodeCall).opencodeMessageId;
   expect(submittedMessageId).toMatch(/^msg_[0-9a-f]{26}$/);
   expect(lifecycle.registerInputs[0]?.opencodeMessageId).toBe(submittedMessageId);
-  expect(lifecycle.calls).toEqual([
-    "status:ws_1:conv-a:latest",
-    "register:ws_1:conv-a:run-queued:sess-a:prompt",
-  ]);
+  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest", "register:ws_1:conv-a:run-queued:sess-a:prompt"]);
   expect(submitCalls).toHaveLength(1);
-  const admittedTrace = (submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries.find(
-    (entry) => entry.event === "server:conversation-run:admitted",
-  );
+  const admittedTrace = (submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries.find((entry) => entry.event === "server:conversation-run:admitted");
   expect(admittedTrace).toMatchObject({
     correlation: expect.objectContaining({
       authoritativeOperation: { kind: "conversation-run", id: "run-queued" },
-      causation: expect.objectContaining({ queueItemId: queued.queueItemId, clientMessageId: "msg-queued" }),
+      causation: expect.objectContaining({
+        queueItemId: queued.queueItemId,
+        clientMessageId: "msg-queued",
+      }),
     }),
   });
-  expect((submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-drain-claimed",
-    queueItemId: queued.queueItemId,
-    runId: "run-queued",
-    queueWaitMs: expect.any(Number),
-  }));
-  expect((submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-drain-submitted",
-    queueItemId: queued.queueItemId,
-    runId: "run-queued",
-    queueWaitMs: expect.any(Number),
-  }));
+  expect((submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-drain-claimed",
+      queueItemId: queued.queueItemId,
+      runId: "run-queued",
+      queueWaitMs: expect.any(Number),
+    }),
+  );
+  expect((submitCalls[0] as SubmittedOpenCodeCall).runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-drain-submitted",
+      queueItemId: queued.queueItemId,
+      runId: "run-queued",
+      queueWaitMs: expect.any(Number),
+    }),
+  );
 });
 
 test("queue drain gives a delayed draft an admission-time OpenCode message id", async () => {
@@ -3482,27 +3658,35 @@ test("queue drain gives a delayed draft an admission-time OpenCode message id", 
   // Model a draft that waited behind a previous assistant turn. Its queue
   // timestamp must never determine OpenCode's chronological turn ordering.
   queue.items[0]!.createdAt = 1;
-  lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-terminal",
+    status: "completed",
+    stale: false,
+  };
 
   await controller.drainConversationQueue("ws_1", "conv-a");
 
   const submittedMessageId = (submitCalls[0] as SubmittedOpenCodeCall).opencodeMessageId;
   const startedAt = queue.items[0]?.startedAt;
   expect(startedAt).toEqual(expect.any(Number));
-  expect(submittedMessageId).toBe(createConversationRunOpenCodeMessageId({
-    workspaceId: "ws_1",
-    engineSessionId: "sess-a",
-    clientMessageId: "msg-queued",
-    runId: "run-queued",
-    timestamp: startedAt!,
-  }));
-  expect(submittedMessageId).not.toBe(createConversationRunOpenCodeMessageId({
-    workspaceId: "ws_1",
-    engineSessionId: "sess-a",
-    clientMessageId: "msg-queued",
-    runId: "run-queued",
-    timestamp: queued.createdAt,
-  }));
+  expect(submittedMessageId).toBe(
+    createConversationRunOpenCodeMessageId({
+      workspaceId: "ws_1",
+      engineSessionId: "sess-a",
+      clientMessageId: "msg-queued",
+      runId: "run-queued",
+      timestamp: startedAt!,
+    }),
+  );
+  expect(submittedMessageId).not.toBe(
+    createConversationRunOpenCodeMessageId({
+      workspaceId: "ws_1",
+      engineSessionId: "sess-a",
+      clientMessageId: "msg-queued",
+      runId: "run-queued",
+      timestamp: queued.createdAt,
+    }),
+  );
 });
 
 test("queue drain reuses an attached terminal runtime only after exact idle evidence", async () => {
@@ -3518,19 +3702,28 @@ test("queue drain reuses an attached terminal runtime only after exact idle evid
 
   await controller.drainConversationQueue("ws_1", "conv-a");
 
-  expect(lifecycle.calls).toEqual([
-    "status:ws_1:conv-a:latest",
-    "register:ws_1:conv-a:run-queued:sess-a:prompt",
-  ]);
+  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest", "register:ws_1:conv-a:run-queued:sess-a:prompt"]);
   expect(queue.items[0]?.state).toBe("submitted");
   expect(submitCalls).toHaveLength(1);
 });
 
 test("submitRun does not retain a local reservation when the legacy runtime has no lifecycle owner", async () => {
-  const { controller, queue, submitCalls } = controllerHarness({ withLifecycle: false });
+  const { controller, queue, submitCalls } = controllerHarness({
+    withLifecycle: false,
+  });
 
-  await controller.submitRun(submitInput({ runId: "run-legacy-first", clientMessageId: "msg-legacy-first" }));
-  await controller.submitRun(submitInput({ runId: "run-legacy-follow-up", clientMessageId: "msg-legacy-follow-up" }));
+  await controller.submitRun(
+    submitInput({
+      runId: "run-legacy-first",
+      clientMessageId: "msg-legacy-first",
+    }),
+  );
+  await controller.submitRun(
+    submitInput({
+      runId: "run-legacy-follow-up",
+      clientMessageId: "msg-legacy-follow-up",
+    }),
+  );
 
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
   expect(submitCalls).toHaveLength(2);
@@ -3559,15 +3752,17 @@ test("lifecycle reconcile marks missing aborted runs as aborted and wakes queue"
     abortRequested: true,
   });
 
-  expect(lifecycle.calls).toContain(
-    "markAborted:ws_1:run-abort:user abort reconciled after missing lifecycle status",
-  );
+  expect(lifecycle.calls).toContain("markAborted:ws_1:run-abort:user abort reconciled after missing lifecycle status");
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 
 test("lifecycle reconcile marks inactive abort-requested runs as aborted and wakes queue", async () => {
   const { controller, lifecycle, timers, workspaces } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-abort", status: "completed", stale: false };
+  lifecycle.statusResult = {
+    runId: "run-abort",
+    status: "completed",
+    stale: false,
+  };
 
   await controller.reconcileConversationRunLifecycle({
     workspace: workspaces[0]!,
@@ -3577,9 +3772,7 @@ test("lifecycle reconcile marks inactive abort-requested runs as aborted and wak
     abortRequested: true,
   });
 
-  expect(lifecycle.calls).toContain(
-    "markAborted:ws_1:run-abort:user abort reconciled after engine became inactive",
-  );
+  expect(lifecycle.calls).toContain("markAborted:ws_1:run-abort:user abort reconciled after engine became inactive");
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 
@@ -3599,7 +3792,9 @@ test("queue drain re-pends items when lifecycle register sees another active run
 
 test("submitRun rejects a local server-queue-only intent without a lifecycle owner", async () => {
   const input = submitInput({ submitQueuePolicy: "server-queue-only" });
-  const { controller, queue, submitCalls } = controllerHarness({ withLifecycle: false });
+  const { controller, queue, submitCalls } = controllerHarness({
+    withLifecycle: false,
+  });
 
   await expect(controller.submitRun(input)).rejects.toMatchObject({
     status: 503,
@@ -3608,10 +3803,12 @@ test("submitRun rejects a local server-queue-only intent without a lifecycle own
 
   expect(queue.items).toEqual([]);
   expect(submitCalls).toEqual([]);
-  expect(input.runTrace.entries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-policy-lifecycle-unavailable",
-    runId: "run-reserved",
-  }));
+  expect(input.runTrace.entries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-policy-lifecycle-unavailable",
+      runId: "run-reserved",
+    }),
+  );
 });
 
 test("queue drain retains an unconfirmed lifecycle registration for exact recovery", async () => {
@@ -3623,28 +3820,26 @@ test("queue drain retains an unconfirmed lifecycle registration for exact recove
   await controller.drainConversationQueue("ws_1", "conv-a");
 
   expect(queue.items[0]).toEqual(expect.objectContaining({ state: "starting" }));
-  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
-    runId: "run-queued",
-    state: "starting",
-  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(
+    expect.objectContaining({
+      runId: "run-queued",
+      state: "starting",
+    }),
+  );
   expect(submitCalls).toEqual([]);
   expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 0 }));
-  expect(reconcileCalls).toContainEqual(expect.objectContaining({
-    reason: "queue-lifecycle-register-unconfirmed",
-    runId: "run-queued",
-  }));
+  expect(reconcileCalls).toContainEqual(
+    expect.objectContaining({
+      reason: "queue-lifecycle-register-unconfirmed",
+      runId: "run-queued",
+    }),
+  );
 });
 
 test("exact missing lifecycle recovery re-pends an unconfirmed queued registration", async () => {
   const { controller, lifecycle, queue } = controllerHarness();
   const item = enqueuePendingRun(queue);
-  queue.markStarting(item.queueItemId);
-  queue.reserveWorkspaceRun({
-    workspaceId: "ws_1",
-    conversationId: "conv-a",
-    runId: "run-queued",
-    state: "starting",
-  });
+  queue.claimStartingWithReservation(item.queueItemId);
   lifecycle.statusResult = null;
 
   await controller.reconcileConversationRunLifecycle({
@@ -3669,12 +3864,14 @@ test("queue drain marks pending items failed when accepted submit fails", async 
 
   expect(queue.items[0]?.state).toBe("failed");
   expect(queue.items[0]?.error).toBe("accepted submit failed");
-  expect(backgroundTraceEntries.flat()).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:queue-drain-submit-failed",
-    queueItemId: queue.items[0]?.queueItemId,
-    runId: "run-queued",
-    message: "accepted submit failed",
-  }));
+  expect(backgroundTraceEntries.flat()).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:queue-drain-submit-failed",
+      queueItemId: queue.items[0]?.queueItemId,
+      runId: "run-queued",
+      message: "accepted submit failed",
+    }),
+  );
 });
 
 test("queue drain reuses one OpenCode message id when the same queued run is retried", async () => {
@@ -3695,10 +3892,7 @@ test("queue drain reuses one OpenCode message id when the same queued run is ret
 
   const secondMessageId = (submitCalls[1] as SubmittedOpenCodeCall).opencodeMessageId;
   expect(secondMessageId).toBe(firstMessageId);
-  expect(lifecycle.registerInputs.map((input) => input.opencodeMessageId)).toEqual([
-    firstMessageId,
-    secondMessageId,
-  ]);
+  expect(lifecycle.registerInputs.map((input) => input.opencodeMessageId)).toEqual([firstMessageId, secondMessageId]);
 });
 
 test("stop clears queued drain and lifecycle reconcile timers", () => {
@@ -3743,8 +3937,15 @@ test("snapshot exposes pending lifecycle timer diagnostics", () => {
 
 test("startup schedules queue drains for pending conversation keys", () => {
   const { controller, queue, timers } = controllerHarness();
-  enqueuePendingRun(queue, { conversationId: "conv-a", reservedRunId: "run-a" });
-  enqueuePendingRun(queue, { conversationId: "conv-b", reservedRunId: "run-b", clientMessageId: "msg-b" });
+  enqueuePendingRun(queue, {
+    conversationId: "conv-a",
+    reservedRunId: "run-a",
+  });
+  enqueuePendingRun(queue, {
+    conversationId: "conv-b",
+    reservedRunId: "run-b",
+    clientMessageId: "msg-b",
+  });
 
   controller.start();
 
@@ -3753,8 +3954,11 @@ test("startup schedules queue drains for pending conversation keys", () => {
 
 test("startup returns an absent starting queue row to pending before scheduling its drain", async () => {
   const { controller, queue, timers, traceEntries } = controllerHarness();
-  const item = enqueuePendingRun(queue, { conversationId: "conv-a", reservedRunId: "run-a" });
-  queue.markStarting(item.queueItemId);
+  const item = enqueuePendingRun(queue, {
+    conversationId: "conv-a",
+    reservedRunId: "run-a",
+  });
+  queue.setStartingWithoutReservationForTest(item.queueItemId);
 
   controller.start();
   await Promise.resolve();
@@ -3789,17 +3993,21 @@ test("startup retains a durable unresolved terminal handoff without recreating i
   controller.start();
 
   expect(timers.activeTimers()).toEqual([]);
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:terminal-runtime-handoff-unresolved",
-    workspaceId: "ws_1",
-    runId: "run-a",
-    startup: true,
-  }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:terminal-runtime-handoff-unresolved",
+      workspaceId: "ws_1",
+      runId: "run-a",
+      startup: true,
+    }),
+  );
 });
 
 test("a stale terminal predecessor without a reservation owns a durable handoff barrier", async () => {
   const { controller, lifecycle, queue, workspaces, timers } = controllerHarness();
-  const successor = enqueuePendingRun(queue, { reservedRunId: "run-successor" });
+  const successor = enqueuePendingRun(queue, {
+    reservedRunId: "run-successor",
+  });
   lifecycle.statusResult = {
     runId: "run-predecessor",
     status: "failed",
@@ -3820,10 +4028,12 @@ test("a stale terminal predecessor without a reservation owns a durable handoff 
   });
 
   expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-predecessor")).toHaveLength(1);
-  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(expect.objectContaining({
-    state: "evidence_requested",
-    attempts: 1,
-  }));
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(
+    expect.objectContaining({
+      state: "evidence_requested",
+      attempts: 1,
+    }),
+  );
   expect(queue.getForReservedRun("ws_1", "conv-a", successor.reservedRunId)?.state).toBe("pending");
   expect(queue.listWorkspaceRunReservations()).toEqual([]);
 
@@ -3864,15 +4074,19 @@ test("startup converts an interrupted reservationless handoff into an explicit r
 
   controller.start();
 
-  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(expect.objectContaining({
-    state: "unresolved",
-    reason: "recovery_interrupted_by_restart",
-  }));
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(
+    expect.objectContaining({
+      state: "unresolved",
+      reason: "recovery_interrupted_by_restart",
+    }),
+  );
   expect(timers.activeTimers()).toEqual([]);
-  expect(traceEntries).toContainEqual(expect.objectContaining({
-    event: "server:conversation-run:terminal-runtime-handoff-unresolved",
-    reservationPresent: false,
-  }));
+  expect(traceEntries).toContainEqual(
+    expect.objectContaining({
+      event: "server:conversation-run:terminal-runtime-handoff-unresolved",
+      reservationPresent: false,
+    }),
+  );
 });
 
 test("a reservationless handoff becomes unresolved when its post-recovery read is still ambiguous", async () => {
@@ -3900,10 +4114,12 @@ test("a reservationless handoff becomes unresolved when its post-recovery read i
     delayMs: 0,
   });
 
-  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(expect.objectContaining({
-    state: "unresolved",
-    reason: "recovery_result_not_confirmed",
-  }));
+  expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")).toEqual(
+    expect.objectContaining({
+      state: "unresolved",
+      reason: "recovery_result_not_confirmed",
+    }),
+  );
   expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-predecessor")).toHaveLength(1);
 });
 
@@ -3937,33 +4153,40 @@ test("explicit retry reopens only the matching reservationless handoff barrier",
     unavailableReason: "no_current_engine",
   };
 
-  await expect(controller.retryTerminalRuntimeHandoff({
-    workspace: workspaces[0]!,
-    conversationId: "conv-a",
-    runId: "run-predecessor",
-    directory: "/repo",
-    opencodeSessionId: "sess-a",
-    reason: "terminal-runtime-handoff-explicit-retry",
-    delayMs: 0,
-  })).resolves.toBe(true);
+  await expect(
+    controller.retryTerminalRuntimeHandoff({
+      workspace: workspaces[0]!,
+      conversationId: "conv-a",
+      runId: "run-predecessor",
+      directory: "/repo",
+      opencodeSessionId: "sess-a",
+      reason: "terminal-runtime-handoff-explicit-retry",
+      delayMs: 0,
+    }),
+  ).resolves.toBe(true);
 
   expect(lifecycle.calls.filter((call) => call === "recoverTerminalRuntimeHandoff:ws_1:run-predecessor")).toHaveLength(1);
   expect(queue.getTerminalHandoffBarrier("ws_1", "conv-a", "run-predecessor")?.state).toBe("evidence_requested");
-  expect(await controller.retryTerminalRuntimeHandoff({
-    workspace: workspaces[0]!,
-    conversationId: "conv-a",
-    runId: "run-other",
-    directory: "/repo",
-    opencodeSessionId: "sess-a",
-    reason: "terminal-runtime-handoff-explicit-retry",
-    delayMs: 0,
-  })).toBe(false);
+  expect(
+    await controller.retryTerminalRuntimeHandoff({
+      workspace: workspaces[0]!,
+      conversationId: "conv-a",
+      runId: "run-other",
+      directory: "/repo",
+      opencodeSessionId: "sess-a",
+      reason: "terminal-runtime-handoff-explicit-retry",
+      delayMs: 0,
+    }),
+  ).toBe(false);
 });
 
 test("startup keeps an active starting queue row out of replay and restores its reservation", async () => {
   const { controller, lifecycle, queue, timers, submitCalls } = controllerHarness();
-  const item = enqueuePendingRun(queue, { conversationId: "conv-a", reservedRunId: "run-a" });
-  queue.markStarting(item.queueItemId);
+  const item = enqueuePendingRun(queue, {
+    conversationId: "conv-a",
+    reservedRunId: "run-a",
+  });
+  queue.claimStartingWithReservation(item.queueItemId);
   lifecycle.statusResult = { runId: "run-a", status: "running", stale: false };
 
   controller.start();
@@ -3971,22 +4194,13 @@ test("startup keeps an active starting queue row out of replay and restores its 
   await Promise.resolve();
 
   expect(queue.items[0]?.state).toBe("starting");
-  expect(queue.reservations.get("ws_1\0run-a")).toEqual(
-    expect.objectContaining({ state: "starting", conversationId: "conv-a" }),
-  );
+  expect(queue.reservations.get("ws_1\0run-a")).toEqual(expect.objectContaining({ state: "starting", conversationId: "conv-a" }));
   expect(submitCalls).toEqual([]);
   expect(timers.activeTimers().some((timer) => timer.delayMs === 0)).toBe(true);
 });
 
 test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, and schedules reconcile", async () => {
-  const {
-    controller,
-    lifecycle,
-    workspaces,
-    activeProxyAbortCalls,
-    abortCalls,
-    reconcileCalls,
-  } = controllerHarness();
+  const { controller, lifecycle, workspaces, activeProxyAbortCalls, abortCalls, reconcileCalls } = controllerHarness();
 
   const result = await controller.abortRun({
     workspace: workspaces[0]!,
@@ -3999,18 +4213,21 @@ test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, a
     runId: "run-abort",
   });
 
-  expect(result).toEqual({ upstream: { aborted: true }, abortedGatewayRequestCount: 1 });
-  expect(activeProxyAbortCalls).toEqual([{
-    workspaceId: "ws_1",
-    runId: "run-abort",
-    sessionId: "sess-a",
-    reason: "conversation-abort",
-  }]);
+  expect(result).toEqual({
+    upstream: { aborted: true },
+    abortedGatewayRequestCount: 1,
+  });
+  expect(activeProxyAbortCalls).toEqual([
+    {
+      workspaceId: "ws_1",
+      runId: "run-abort",
+      sessionId: "sess-a",
+      reason: "conversation-abort",
+    },
+  ]);
   expect(abortCalls).toHaveLength(1);
   expect(lifecycle.calls).toContain("markAbortRequested:ws_1:run-abort");
-  expect(lifecycle.calls).toContain(
-    "markAborted:ws_1:run-abort:user abort reconciled after OpenCode abort",
-  );
+  expect(lifecycle.calls).toContain("markAborted:ws_1:run-abort:user abort reconciled after OpenCode abort");
   expect(reconcileCalls).toContainEqual({
     workspaceId: "ws_1",
     conversationId: "conv-a",
@@ -4021,15 +4238,7 @@ test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, a
 });
 
 test("abortRun records lifecycle intent when OpenCode abort fails", async () => {
-  const {
-    controller,
-    lifecycle,
-    workspaces,
-    behavior,
-    activeProxyAbortCalls,
-    abortCalls,
-    reconcileCalls,
-  } = controllerHarness();
+  const { controller, lifecycle, workspaces, behavior, activeProxyAbortCalls, abortCalls, reconcileCalls } = controllerHarness();
   behavior.abortError = new Error("opencode abort failed");
 
   const result = await controller.abortRun({

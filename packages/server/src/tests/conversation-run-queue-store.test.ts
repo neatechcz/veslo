@@ -4,10 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
-import {
-  ConversationRunReservationConflictError,
-  createConversationRunQueueStore,
-} from "../conversation-run-queue-store.js";
+import { ConversationRunReservationConflictError, createConversationRunQueueStore } from "../conversation-run-queue-store.js";
 
 const tempDirs: string[] = [];
 
@@ -27,7 +24,10 @@ const tempDataDir = async () => {
 
 describe("conversation run queue store", () => {
   test("enqueue is idempotent by client message id", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 1_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 1_000,
+    });
     const input = {
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -37,7 +37,10 @@ describe("conversation run queue store", () => {
       clientMessageId: "msg-a",
       origin: "session:normal",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
       activeRunId: "run-active",
     };
 
@@ -52,7 +55,10 @@ describe("conversation run queue store", () => {
   });
 
   test("enqueue rejects same client message id with different request body", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 1_500 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 1_500,
+    });
     const input = {
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -62,7 +68,10 @@ describe("conversation run queue store", () => {
       clientMessageId: "msg-a",
       origin: "session:normal",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
       activeRunId: "run-active",
     };
 
@@ -72,15 +81,21 @@ describe("conversation run queue store", () => {
       store.enqueue({
         ...input,
         reservedRunId: "run-b",
-        bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "different" }] }),
-      })
+        bodyJson: JSON.stringify({
+          kind: "prompt_async",
+          parts: [{ type: "text", text: "different" }],
+        }),
+      }),
     ).toThrow("clientMessageId was already used for a different queued run request");
 
     expect(store.nextPending("ws-a", "conv-a")?.reservedRunId).toBe("run-a");
   });
 
   test("workspace-wide idempotency conflicts when the same key targets another conversation", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 1_600 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 1_600,
+    });
     const input = {
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -89,23 +104,33 @@ describe("conversation run queue store", () => {
       reservedRunId: "run-a",
       clientMessageId: "msg-cross-conversation",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
     };
 
     const first = store.enqueue(input);
-    expect(() => store.enqueue({
-      ...input,
-      conversationId: "conv-b",
-      opencodeSessionId: "sess-b",
-      reservedRunId: "run-b",
-    })).toThrow("clientMessageId was already used for a different queued run request");
-    expect(() => store.enqueue({
-      ...input,
-      conversationId: "conv-b",
-      opencodeSessionId: "sess-b",
-      reservedRunId: "run-c",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "different" }] }),
-    })).toThrow("clientMessageId was already used for a different queued run request");
+    expect(() =>
+      store.enqueue({
+        ...input,
+        conversationId: "conv-b",
+        opencodeSessionId: "sess-b",
+        reservedRunId: "run-b",
+      }),
+    ).toThrow("clientMessageId was already used for a different queued run request");
+    expect(() =>
+      store.enqueue({
+        ...input,
+        conversationId: "conv-b",
+        opencodeSessionId: "sess-b",
+        reservedRunId: "run-c",
+        bodyJson: JSON.stringify({
+          kind: "prompt_async",
+          parts: [{ type: "text", text: "different" }],
+        }),
+      }),
+    ).toThrow("clientMessageId was already used for a different queued run request");
     expect(first.item.conversationId).toBe("conv-a");
   });
 
@@ -149,12 +174,18 @@ describe("conversation run queue store", () => {
         started_at, submitted_at, completed_at, error
       ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'prompt_async', ?, NULL, ?, NULL, 0, ?, ?, NULL, NULL, NULL, NULL)
     `);
-    const body = JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] });
+    const body = JSON.stringify({
+      kind: "prompt_async",
+      parts: [{ type: "text", text: "hello" }],
+    });
     insert.run("queue-b", "ws-a", "conv-b", "sess-b", "/tmp/workspace-a", "run-b", "msg-legacy", body, "submitted", 1_000, 1_000);
     insert.run("queue-a", "ws-a", "conv-a", "sess-a", "/tmp/workspace-a", "run-a", "msg-legacy", body, "pending", 1_001, 1_001);
     db.close();
 
-    const store = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir,
+      now: () => 2_000,
+    });
     const pending = store.getForConversation("ws-a", "conv-a", "queue-a");
     const submitted = store.getForConversation("ws-a", "conv-b", "queue-b");
 
@@ -167,7 +198,10 @@ describe("conversation run queue store", () => {
 
   test("lists starting rows without changing their unknown submit outcome", async () => {
     let timestamp = 2_000;
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => timestamp });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => timestamp,
+    });
     const queued = store.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -175,10 +209,13 @@ describe("conversation run queue store", () => {
       directory: "/tmp/workspace-a",
       reservedRunId: "run-a",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
       activeRunId: "run-active",
     });
-    const starting = store.markStarting(queued.item.queueItemId);
+    const starting = store.claimStartingWithReservation(queued.item.queueItemId)?.item;
     expect(starting?.state).toBe("starting");
     expect(store.nextPending("ws-a", "conv-a")).toBeNull();
 
@@ -193,7 +230,10 @@ describe("conversation run queue store", () => {
   });
 
   test("marks pending items through starting and submitted states", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 2_000,
+    });
     const queued = store.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -201,11 +241,14 @@ describe("conversation run queue store", () => {
       directory: "/tmp/workspace-a",
       reservedRunId: "run-a",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
       activeRunId: "run-active",
     });
 
-    const starting = store.markStarting(queued.item.queueItemId);
+    const starting = store.claimStartingWithReservation(queued.item.queueItemId)?.item;
     expect(starting?.state).toBe("starting");
     expect(starting?.attempts).toBe(1);
 
@@ -216,8 +259,14 @@ describe("conversation run queue store", () => {
 
   test("claims a pending row exactly once across two stores sharing one SQLite file", async () => {
     const dataDir = await tempDataDir();
-    const firstStore = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
-    const secondStore = createConversationRunQueueStore({ dataDir, now: () => 2_001 });
+    const firstStore = createConversationRunQueueStore({
+      dataDir,
+      now: () => 2_000,
+    });
+    const secondStore = createConversationRunQueueStore({
+      dataDir,
+      now: () => 2_001,
+    });
     const queued = firstStore.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -225,26 +274,33 @@ describe("conversation run queue store", () => {
       directory: "/tmp/workspace-a",
       reservedRunId: "run-a",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
     });
 
-    const claims = [
-      firstStore.claimStartingWithReservation(queued.item.queueItemId),
-      secondStore.claimStartingWithReservation(queued.item.queueItemId),
-    ];
+    const claims = [firstStore.claimStartingWithReservation(queued.item.queueItemId), secondStore.claimStartingWithReservation(queued.item.queueItemId)];
 
     expect(claims.filter((claim) => claim?.item.state === "starting")).toHaveLength(1);
     expect(claims.filter((claim) => claim === null)).toHaveLength(1);
     expect(firstStore.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("starting");
     expect(firstStore.listWorkspaceRunReservations()).toEqual([
-      expect.objectContaining({ workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a" }),
+      expect.objectContaining({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        runId: "run-a",
+      }),
     ]);
   });
 
   test("persists one OpenCode admission message id through a queue retry and store restart", async () => {
     const dataDir = await tempDataDir();
     let timestamp = 2_000;
-    const firstStore = createConversationRunQueueStore({ dataDir, now: () => timestamp });
+    const firstStore = createConversationRunQueueStore({
+      dataDir,
+      now: () => timestamp,
+    });
     const queued = firstStore.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -253,7 +309,10 @@ describe("conversation run queue store", () => {
       reservedRunId: "run-a",
       clientMessageId: "msg-a",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
     });
 
     const firstClaim = firstStore.claimStartingWithReservation(queued.item.queueItemId);
@@ -263,14 +322,20 @@ describe("conversation run queue store", () => {
     expect(firstStore.markPending(queued.item.queueItemId)?.opencodeMessageId).toBe(firstMessageId);
 
     timestamp = 3_000;
-    const restartedStore = createConversationRunQueueStore({ dataDir, now: () => timestamp });
+    const restartedStore = createConversationRunQueueStore({
+      dataDir,
+      now: () => timestamp,
+    });
     const retryClaim = restartedStore.claimStartingWithReservation(queued.item.queueItemId);
     expect(retryClaim?.item.opencodeMessageId).toBe(firstMessageId);
     expect(retryClaim?.item.startedAt).toBe(timestamp);
   });
 
   test("reads one durable latest-status snapshot with the reservation-backed queue item and blocking fence", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 2_000,
+    });
     const first = store.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -315,7 +380,12 @@ describe("conversation run queue store", () => {
     });
     expect(latest.item?.queueItemId).toBe(active.queueItemId);
     expect(latest.reservation?.runId).toBe(active.reservedRunId);
-    expect(latest.terminalHandoff).toEqual(expect.objectContaining({ runId: "run-predecessor", state: "unresolved" }));
+    expect(latest.terminalHandoff).toEqual(
+      expect.objectContaining({
+        runId: "run-predecessor",
+        state: "unresolved",
+      }),
+    );
 
     const exactFirst = store.readConversationRunStatusSnapshot({
       workspaceId: "ws-a",
@@ -328,7 +398,10 @@ describe("conversation run queue store", () => {
   });
 
   test("rolls a conflicting admission claim back to pending", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 2_000,
+    });
     store.reserveWorkspaceRun({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -341,18 +414,21 @@ describe("conversation run queue store", () => {
       directory: "/tmp/workspace-a",
       reservedRunId: "run-queued",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
     });
 
-    expect(() => store.claimStartingWithReservation(queued.item.queueItemId))
-      .toThrow(ConversationRunReservationConflictError);
-    expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)).toEqual(
-      expect.objectContaining({ state: "pending", attempts: 0 }),
-    );
+    expect(() => store.claimStartingWithReservation(queued.item.queueItemId)).toThrow(ConversationRunReservationConflictError);
+    expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)).toEqual(expect.objectContaining({ state: "pending", attempts: 0 }));
   });
 
   test("guards stale queue transitions without overwriting the winning state", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 2_000,
+    });
     const queued = store.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -360,7 +436,10 @@ describe("conversation run queue store", () => {
       directory: "/tmp/workspace-a",
       reservedRunId: "run-a",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
     });
 
     expect(store.markPending(queued.item.queueItemId, "run-other")).toBeNull();
@@ -368,38 +447,48 @@ describe("conversation run queue store", () => {
     expect(store.markFailed(queued.item.queueItemId, "stale failure")).toBeNull();
     expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("pending");
 
-    expect(store.markStarting(queued.item.queueItemId)?.state).toBe("starting");
+    expect(store.claimStartingWithReservation(queued.item.queueItemId)?.item.state).toBe("starting");
     expect(store.markPending(queued.item.queueItemId, "run-active")?.state).toBe("pending");
     expect(store.markSubmitted(queued.item.queueItemId)).toBeNull();
     expect(store.markFailed(queued.item.queueItemId, "stale failure")).toBeNull();
     expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("pending");
 
-    expect(store.markStarting(queued.item.queueItemId)?.state).toBe("starting");
+    expect(store.claimStartingWithReservation(queued.item.queueItemId)?.item.state).toBe("starting");
     expect(store.markSubmitted(queued.item.queueItemId)?.state).toBe("submitted");
     expect(store.markFailed(queued.item.queueItemId, "late failure")).toBeNull();
     expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("submitted");
   });
 
   test("lists scoped readable rows in stable cursor order without submitted rows", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
-    const enqueue = (clientMessageId: string) => store.enqueue({
-      workspaceId: "ws-a",
-      conversationId: "conv-a",
-      opencodeSessionId: "sess-a",
-      directory: "/tmp/workspace-a",
-      reservedRunId: `run-${clientMessageId}`,
-      clientMessageId,
-      kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: clientMessageId }] }),
-    }).item;
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 2_000,
+    });
+    const enqueue = (clientMessageId: string) =>
+      store.enqueue({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        opencodeSessionId: "sess-a",
+        directory: "/tmp/workspace-a",
+        reservedRunId: `run-${clientMessageId}`,
+        clientMessageId,
+        kind: "prompt_async",
+        bodyJson: JSON.stringify({
+          kind: "prompt_async",
+          parts: [{ type: "text", text: clientMessageId }],
+        }),
+      }).item;
     const pending = enqueue("pending");
     const starting = enqueue("starting");
     const failed = enqueue("failed");
     const submitted = enqueue("submitted");
-    store.markStarting(starting.queueItemId);
-    store.markStarting(failed.queueItemId);
+    store.claimStartingWithReservation(starting.queueItemId);
+    store.releaseWorkspaceRun("ws-a", starting.reservedRunId);
+    store.claimStartingWithReservation(failed.queueItemId);
+    store.releaseWorkspaceRun("ws-a", failed.reservedRunId);
     store.markFailed(failed.queueItemId, "failed");
-    store.markStarting(submitted.queueItemId);
+    store.claimStartingWithReservation(submitted.queueItemId);
+    store.releaseWorkspaceRun("ws-a", submitted.reservedRunId);
     store.markSubmitted(submitted.queueItemId);
 
     const all = store.listForConversation({
@@ -440,7 +529,10 @@ describe("conversation run queue store", () => {
   });
 
   test("rejects unbounded list inputs and keeps workspace/conversation scope isolated", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 2_000,
+    });
     store.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -451,34 +543,45 @@ describe("conversation run queue store", () => {
       bodyJson: JSON.stringify({ kind: "prompt_async", parts: [] }),
     });
 
-    expect(() => store.listForConversation({
-      workspaceId: "ws-a",
-      conversationId: "conv-a",
-      states: ["submitted" as never],
-      limit: 1,
-    })).toThrow("states must contain only pending, starting, or failed");
-    expect(() => store.listForConversation({
-      workspaceId: "ws-a",
-      conversationId: "conv-a",
-      states: ["pending"],
-      limit: 101,
-    })).toThrow("limit must be an integer from 1 to 100");
-    expect(store.listForConversation({
-      workspaceId: "ws-a",
-      conversationId: "conv-other",
-      states: ["pending"],
-      limit: 10,
-    }).items).toEqual([]);
-    expect(store.listForConversation({
-      workspaceId: "ws-other",
-      conversationId: "conv-a",
-      states: ["pending"],
-      limit: 10,
-    }).items).toEqual([]);
+    expect(() =>
+      store.listForConversation({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        states: ["submitted" as never],
+        limit: 1,
+      }),
+    ).toThrow("states must contain only pending, starting, or failed");
+    expect(() =>
+      store.listForConversation({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        states: ["pending"],
+        limit: 101,
+      }),
+    ).toThrow("limit must be an integer from 1 to 100");
+    expect(
+      store.listForConversation({
+        workspaceId: "ws-a",
+        conversationId: "conv-other",
+        states: ["pending"],
+        limit: 10,
+      }).items,
+    ).toEqual([]);
+    expect(
+      store.listForConversation({
+        workspaceId: "ws-other",
+        conversationId: "conv-a",
+        states: ["pending"],
+        limit: 10,
+      }).items,
+    ).toEqual([]);
   });
 
   test("reads queue item status only inside its workspace and conversation", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 2_000,
+    });
     const queued = store.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -487,11 +590,15 @@ describe("conversation run queue store", () => {
       reservedRunId: "run-a",
       clientMessageId: "msg-a",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "hello" }],
+      }),
       activeRunId: "run-active",
     });
 
-    store.markStarting(queued.item.queueItemId);
+    store.claimStartingWithReservation(queued.item.queueItemId);
+    store.releaseWorkspaceRun("ws-a", queued.item.reservedRunId);
     store.markFailed(queued.item.queueItemId, "engine rejected queued run");
 
     const status = store.getForConversation("ws-a", "conv-a", queued.item.queueItemId);
@@ -505,7 +612,10 @@ describe("conversation run queue store", () => {
 
   test("persists workspace run reservations until their idempotent release", async () => {
     const dataDir = await tempDataDir();
-    const first = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const first = createConversationRunQueueStore({
+      dataDir,
+      now: () => 2_000,
+    });
     const reserved = first.reserveWorkspaceRun({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -515,36 +625,49 @@ describe("conversation run queue store", () => {
     });
     expect(reserved.state).toBe("starting");
     expect(first.activateWorkspaceRun("ws-a", "run-a")?.state).toBe("active");
-    expect(first.markWorkspaceRunProviderStartAbortPending({
-      workspaceId: "ws-a",
-      runId: "run-a",
-      directory: "C:/repo",
-      opencodeSessionId: "sess-a",
-    })).toEqual(expect.objectContaining({ providerStartAbortPending: true }));
-    expect(first.markWorkspaceRunTerminalHandoffPending({
-      workspaceId: "ws-a",
-      runId: "run-a",
-      reason: "no_current_engine",
-      fingerprint: "handoff-a",
-      attempts: 1,
-      requestedAt: 2_100,
-    })).toEqual(expect.objectContaining({
-      state: "terminal_handoff_pending",
-      terminalHandoffFingerprint: "handoff-a",
-    }));
-    expect(first.markWorkspaceRunTerminalHandoffUnresolved({
-      workspaceId: "ws-a",
-      runId: "run-a",
-      reason: "generation_not_found",
-      fingerprint: "handoff-a",
-      attempts: 1,
-      decidedAt: 2_200,
-    })).toEqual(expect.objectContaining({
-      state: "terminal_handoff_unresolved",
-      terminalHandoffReason: "generation_not_found",
-    }));
+    expect(
+      first.markWorkspaceRunProviderStartAbortPending({
+        workspaceId: "ws-a",
+        runId: "run-a",
+        directory: "C:/repo",
+        opencodeSessionId: "sess-a",
+      }),
+    ).toEqual(expect.objectContaining({ providerStartAbortPending: true }));
+    expect(
+      first.markWorkspaceRunTerminalHandoffPending({
+        workspaceId: "ws-a",
+        runId: "run-a",
+        reason: "no_current_engine",
+        fingerprint: "handoff-a",
+        attempts: 1,
+        requestedAt: 2_100,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        state: "terminal_handoff_pending",
+        terminalHandoffFingerprint: "handoff-a",
+      }),
+    );
+    expect(
+      first.markWorkspaceRunTerminalHandoffUnresolved({
+        workspaceId: "ws-a",
+        runId: "run-a",
+        reason: "generation_not_found",
+        fingerprint: "handoff-a",
+        attempts: 1,
+        decidedAt: 2_200,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        state: "terminal_handoff_unresolved",
+        terminalHandoffReason: "generation_not_found",
+      }),
+    );
 
-    const restarted = createConversationRunQueueStore({ dataDir, now: () => 3_000 });
+    const restarted = createConversationRunQueueStore({
+      dataDir,
+      now: () => 3_000,
+    });
     expect(restarted.listWorkspaceRunReservations()).toEqual([
       expect.objectContaining({
         workspaceId: "ws-a",
@@ -567,28 +690,38 @@ describe("conversation run queue store", () => {
   });
 
   test("rejects a second active reservation for the same conversation", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 2_000,
+    });
     store.reserveWorkspaceRun({
       workspaceId: "ws-a",
       conversationId: "conv-a",
       runId: "run-a",
     });
 
-    expect(() => store.reserveWorkspaceRun({
-      workspaceId: "ws-a",
-      conversationId: "conv-a",
-      runId: "run-b",
-    })).toThrow(ConversationRunReservationConflictError);
-    expect(store.reserveWorkspaceRun({
-      workspaceId: "ws-a",
-      conversationId: "conv-b",
-      runId: "run-b",
-    }).runId).toBe("run-b");
+    expect(() =>
+      store.reserveWorkspaceRun({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        runId: "run-b",
+      }),
+    ).toThrow(ConversationRunReservationConflictError);
+    expect(
+      store.reserveWorkspaceRun({
+        workspaceId: "ws-a",
+        conversationId: "conv-b",
+        runId: "run-b",
+      }).runId,
+    ).toBe("run-b");
   });
 
   test("persists a terminal handoff barrier without recreating an old reservation", async () => {
     const dataDir = await tempDataDir();
-    const store = createConversationRunQueueStore({ dataDir, now: () => 4_000 });
+    const store = createConversationRunQueueStore({
+      dataDir,
+      now: () => 4_000,
+    });
     const observed = store.observeTerminalHandoffBarrier({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -597,34 +730,44 @@ describe("conversation run queue store", () => {
       reason: "no_current_engine",
     });
     expect(observed.state).toBe("observed");
-    expect(store.requestTerminalHandoffBarrierEvidence({
-      workspaceId: "ws-a",
-      conversationId: "conv-a",
-      runId: "run-old",
-      fingerprint: "generation-1",
-      reason: "no_current_engine",
-    })).toEqual(expect.objectContaining({ state: "evidence_requested", attempts: 1 }));
+    expect(
+      store.requestTerminalHandoffBarrierEvidence({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        runId: "run-old",
+        fingerprint: "generation-1",
+        reason: "no_current_engine",
+      }),
+    ).toEqual(expect.objectContaining({ state: "evidence_requested", attempts: 1 }));
     expect(store.listWorkspaceRunReservations()).toEqual([]);
 
-    const restarted = createConversationRunQueueStore({ dataDir, now: () => 5_000 });
+    const restarted = createConversationRunQueueStore({
+      dataDir,
+      now: () => 5_000,
+    });
     expect(restarted.getTerminalHandoffBarrier("ws-a", "conv-a", "run-old")).toEqual(
-      expect.objectContaining({ state: "evidence_requested", fingerprint: "generation-1" }),
+      expect.objectContaining({
+        state: "evidence_requested",
+        fingerprint: "generation-1",
+      }),
     );
-    expect(restarted.markTerminalHandoffBarrierUnresolved({
-      workspaceId: "ws-a",
-      conversationId: "conv-a",
-      runId: "run-old",
-      reason: "recovery_interrupted_by_restart",
-    })).toEqual(expect.objectContaining({ state: "unresolved" }));
-    expect(restarted.reopenTerminalHandoffBarrier("ws-a", "conv-a", "run-old")).toEqual(
-      expect.objectContaining({ state: "observed" }),
-    );
-    expect(restarted.resolveTerminalHandoffBarrier({
-      workspaceId: "ws-a",
-      conversationId: "conv-a",
-      runId: "run-old",
-      reason: "runtime_ready_failed",
-    })).toEqual(expect.objectContaining({ state: "resolved" }));
+    expect(
+      restarted.markTerminalHandoffBarrierUnresolved({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        runId: "run-old",
+        reason: "recovery_interrupted_by_restart",
+      }),
+    ).toEqual(expect.objectContaining({ state: "unresolved" }));
+    expect(restarted.reopenTerminalHandoffBarrier("ws-a", "conv-a", "run-old")).toEqual(expect.objectContaining({ state: "observed" }));
+    expect(
+      restarted.resolveTerminalHandoffBarrier({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        runId: "run-old",
+        reason: "runtime_ready_failed",
+      }),
+    ).toEqual(expect.objectContaining({ state: "resolved" }));
     const successor = restarted.enqueue({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -639,7 +782,10 @@ describe("conversation run queue store", () => {
   });
 
   test("does not claim a successor while its durable terminal handoff fence is active", async () => {
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 4_000 });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => 4_000,
+    });
     store.observeTerminalHandoffBarrier({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -658,9 +804,7 @@ describe("conversation run queue store", () => {
     });
 
     expect(store.claimStartingWithReservation(successor.item.queueItemId)).toBeNull();
-    expect(store.getForConversation("ws-a", "conv-a", successor.item.queueItemId)).toEqual(
-      expect.objectContaining({ state: "pending", attempts: 0 }),
-    );
+    expect(store.getForConversation("ws-a", "conv-a", successor.item.queueItemId)).toEqual(expect.objectContaining({ state: "pending", attempts: 0 }));
 
     store.resolveTerminalHandoffBarrier({
       workspaceId: "ws-a",
@@ -669,13 +813,18 @@ describe("conversation run queue store", () => {
       reason: "runtime_ready_failed",
     });
     expect(store.claimStartingWithReservation(successor.item.queueItemId)).toEqual(
-      expect.objectContaining({ item: expect.objectContaining({ state: "starting" }) }),
+      expect.objectContaining({
+        item: expect.objectContaining({ state: "starting" }),
+      }),
     );
   });
 
   test("persists the exact engine generation owner and rejects a stale replacement", async () => {
     const dataDir = await tempDataDir();
-    const store = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const store = createConversationRunQueueStore({
+      dataDir,
+      now: () => 2_000,
+    });
     store.reserveWorkspaceRun({
       workspaceId: "ws-a",
       conversationId: "conv-a",
@@ -692,38 +841,48 @@ describe("conversation run queue store", () => {
       authorizationRevision: "authorization-1",
       openCodeConfigDigest: "config-1",
     };
-    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", owner)).toEqual(
-      expect.objectContaining(owner),
-    );
-    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
-      ...owner,
-      engineOwnerId: "generation-2",
-      enginePid: 202,
-      engineStartedAt: 2_000,
-      engineBaseUrl: "http://127.0.0.1:4202",
-    })).toBeNull();
-    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
-      ...owner,
-      engineSlotId: "other-slot",
-    })).toBeNull();
-    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
-      ...owner,
-      skillViewRevision: "skill-view-2",
-    })).toBeNull();
-    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
-      ...owner,
-      directoryInstanceEpoch: 8,
-    })).toBeNull();
+    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", owner)).toEqual(expect.objectContaining(owner));
+    expect(
+      store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
+        ...owner,
+        engineOwnerId: "generation-2",
+        enginePid: 202,
+        engineStartedAt: 2_000,
+        engineBaseUrl: "http://127.0.0.1:4202",
+      }),
+    ).toBeNull();
+    expect(
+      store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
+        ...owner,
+        engineSlotId: "other-slot",
+      }),
+    ).toBeNull();
+    expect(
+      store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
+        ...owner,
+        skillViewRevision: "skill-view-2",
+      }),
+    ).toBeNull();
+    expect(
+      store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
+        ...owner,
+        directoryInstanceEpoch: 8,
+      }),
+    ).toBeNull();
 
-    const restarted = createConversationRunQueueStore({ dataDir, now: () => 3_000 });
-    expect(restarted.listWorkspaceRunReservations()).toEqual([
-      expect.objectContaining(owner),
-    ]);
+    const restarted = createConversationRunQueueStore({
+      dataDir,
+      now: () => 3_000,
+    });
+    expect(restarted.listWorkspaceRunReservations()).toEqual([expect.objectContaining(owner)]);
   });
 
   test("persists one active runtime-operation lease per workspace across store instances", async () => {
     const dataDir = await tempDataDir();
-    const store = createConversationRunQueueStore({ dataDir, now: () => 1_000 });
+    const store = createConversationRunQueueStore({
+      dataDir,
+      now: () => 1_000,
+    });
     const acquired = store.acquireWorkspaceRuntimeOperation({
       workspaceId: "ws-a",
       operationId: "operation-a",
@@ -741,11 +900,12 @@ describe("conversation run queue store", () => {
         state: "granted",
       }),
     });
-    expect(store.beginWorkspaceRuntimeOperation("ws-a", "operation-a")).toEqual(
-      expect.objectContaining({ state: "executing" }),
-    );
+    expect(store.beginWorkspaceRuntimeOperation("ws-a", "operation-a")).toEqual(expect.objectContaining({ state: "executing" }));
 
-    const restarted = createConversationRunQueueStore({ dataDir, now: () => 1_500 });
+    const restarted = createConversationRunQueueStore({
+      dataDir,
+      now: () => 1_500,
+    });
     const duplicate = restarted.acquireWorkspaceRuntimeOperation({
       workspaceId: "ws-a",
       operationId: "operation-b",
@@ -765,7 +925,10 @@ describe("conversation run queue store", () => {
 
   test("does not allow an expired or completed runtime-operation lease to block later work", async () => {
     let currentTime = 1_000;
-    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => currentTime });
+    const store = createConversationRunQueueStore({
+      dataDir: await tempDataDir(),
+      now: () => currentTime,
+    });
     store.acquireWorkspaceRuntimeOperation({
       workspaceId: "ws-a",
       operationId: "operation-a",
@@ -774,17 +937,21 @@ describe("conversation run queue store", () => {
       reasonCode: "sse_invalid_bearer",
       expiresAt: 1_500,
     });
-    expect(store.completeWorkspaceRuntimeOperation({
-      workspaceId: "ws-a",
-      operationId: "wrong-operation",
-      state: "completed",
-    })).toBeNull();
-    expect(store.completeWorkspaceRuntimeOperation({
-      workspaceId: "ws-a",
-      operationId: "operation-a",
-      state: "completed",
-      terminalCode: "rebound",
-    })).toEqual(expect.objectContaining({ state: "completed", terminalCode: "rebound" }));
+    expect(
+      store.completeWorkspaceRuntimeOperation({
+        workspaceId: "ws-a",
+        operationId: "wrong-operation",
+        state: "completed",
+      }),
+    ).toBeNull();
+    expect(
+      store.completeWorkspaceRuntimeOperation({
+        workspaceId: "ws-a",
+        operationId: "operation-a",
+        state: "completed",
+        terminalCode: "rebound",
+      }),
+    ).toEqual(expect.objectContaining({ state: "completed", terminalCode: "rebound" }));
 
     const afterCompletion = store.acquireWorkspaceRuntimeOperation({
       workspaceId: "ws-a",
@@ -798,16 +965,22 @@ describe("conversation run queue store", () => {
 
     currentTime = 2_100;
     expect(store.expireWorkspaceRuntimeOperations()).toEqual([
-      expect.objectContaining({ operationId: "operation-b", state: "outcome_unknown", terminalCode: "lease_expired" }),
+      expect.objectContaining({
+        operationId: "operation-b",
+        state: "outcome_unknown",
+        terminalCode: "lease_expired",
+      }),
     ]);
     expect(store.listActiveWorkspaceRuntimeOperations()).toEqual([]);
-    expect(store.acquireWorkspaceRuntimeOperation({
-      workspaceId: "ws-a",
-      operationId: "operation-c",
-      kind: "rebind_control_plane",
-      sourceClass: "automatic",
-      reasonCode: "sse_invalid_bearer",
-      expiresAt: 3_000,
-    })).toEqual(expect.objectContaining({ acquired: true }));
+    expect(
+      store.acquireWorkspaceRuntimeOperation({
+        workspaceId: "ws-a",
+        operationId: "operation-c",
+        kind: "rebind_control_plane",
+        sourceClass: "automatic",
+        reasonCode: "sse_invalid_bearer",
+        expiresAt: 3_000,
+      }),
+    ).toEqual(expect.objectContaining({ acquired: true }));
   });
 });

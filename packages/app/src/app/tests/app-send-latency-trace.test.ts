@@ -4,53 +4,19 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const appSendTraceSource = readFileSync(new URL("../context/app-send-trace.ts", import.meta.url), "utf8");
-const conversationServiceSource = readFileSync(
-  new URL("../context/conversation-service.ts", import.meta.url),
-  "utf8",
-);
+const conversationServiceSource = readFileSync(new URL("../context/conversation-service.ts", import.meta.url), "utf8");
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 const schedulerSource = readFileSync(new URL("../lib/workspace-runtime-schedulers.ts", import.meta.url), "utf8");
 const mcpRefreshSource = readFileSync(new URL("../lib/mcp-server-refresh.ts", import.meta.url), "utf8");
-const mcpRuntimeStatusSource = readFileSync(
-  new URL("../lib/mcp-runtime-status-refresh.ts", import.meta.url),
-  "utf8",
-);
-const mcpConnectionWorkflowSource = readFileSync(
-  new URL("../context/mcp-connection-workflow.ts", import.meta.url),
-  "utf8",
-);
+const mcpRuntimeStatusSource = readFileSync(new URL("../lib/mcp-runtime-status-refresh.ts", import.meta.url), "utf8");
+const mcpConnectionWorkflowSource = readFileSync(new URL("../context/mcp-connection-workflow.ts", import.meta.url), "utf8");
 const composerSource = readFileSync(new URL("../components/session/composer.tsx", import.meta.url), "utf8");
-const sidebarWorkspaceSessionsSource = readFileSync(
-  new URL("../context/sidebar-workspace-sessions.ts", import.meta.url),
-  "utf8",
-);
-const sessionCapabilitiesStoreSource = readFileSync(
-  new URL("../context/session-capabilities-store.ts", import.meta.url),
-  "utf8",
-);
-const workspaceSessionSnapshotsSource = readFileSync(
-  new URL("../context/workspace-session-snapshots.ts", import.meta.url),
-  "utf8",
-);
-const mutationWorkflowSource = readFileSync(
-  new URL("../pages/session-mutation-workflow.ts", import.meta.url),
-  "utf8",
-);
-const sendWorkflowSource = readFileSync(
-  new URL("../pages/session-send-workflow.ts", import.meta.url),
-  "utf8",
-);
-const createWorkflowSource = readFileSync(
-  new URL("../pages/session-creation-workflow.ts", import.meta.url),
-  "utf8",
-);
-
-function conversationRunCompatibilityBridgeSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow(", start);
-  assert.ok(start >= 0 && end > start, "conversation run compatibility bridge source should be present");
-  return sendWorkflowSource.slice(start, end);
-}
+const sidebarWorkspaceSessionsSource = readFileSync(new URL("../context/sidebar-workspace-sessions.ts", import.meta.url), "utf8");
+const sessionCapabilitiesStoreSource = readFileSync(new URL("../context/session-capabilities-store.ts", import.meta.url), "utf8");
+const workspaceSessionSnapshotsSource = readFileSync(new URL("../context/workspace-session-snapshots.ts", import.meta.url), "utf8");
+const mutationWorkflowSource = readFileSync(new URL("../pages/session-mutation-workflow.ts", import.meta.url), "utf8");
+const sendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
+const createWorkflowSource = readFileSync(new URL("../pages/session-creation-workflow.ts", import.meta.url), "utf8");
 
 test("send preflight records per-step latency trace entries for step 2", () => {
   assert.match(
@@ -58,21 +24,10 @@ test("send preflight records per-step latency trace entries for step 2", () => {
     /const sendTraceStep = async <T,>\(/,
     "app send trace owner should expose a helper that records duration for awaited send preflight steps",
   );
-  for (const event of [
-    "sendPrompt:maybe-resolve-skill-command",
-    "sendPrompt:ensure-scoped-workspace-active",
-    "sendPrompt:create-session-and-open",
-  ]) {
-    assert.match(
-      sendWorkflowSource,
-      new RegExp(`deps\\.sendTraceStep\\(\\s*"${event}"`),
-      `${event} should be timed with sendTraceStep`,
-    );
+  for (const event of ["sendPrompt:maybe-resolve-skill-command", "sendPrompt:ensure-scoped-workspace-active", "sendPrompt:create-session-and-open"]) {
+    assert.match(sendWorkflowSource, new RegExp(`deps\\.sendTraceStep\\(\\s*"${event}"`), `${event} should be timed with sendTraceStep`);
   }
-  for (const event of [
-    "sendPrompt:ensure-local-runtime-reachable",
-    "sendPrompt:ensure-managed-ai-bootstrap-ready",
-  ]) {
+  for (const event of ["sendPrompt:ensure-local-runtime-reachable", "sendPrompt:ensure-managed-ai-bootstrap-ready"]) {
     assert.match(
       readinessSource,
       new RegExp(`deps\\.sendTraceStep\\(\\s*\`${"\\$"}\\{reason\\}:${event.replace("sendPrompt:", "")}\``),
@@ -102,16 +57,8 @@ test("send flow preserves UI trace id and forwards each trace through the shared
     /recordSendWorkflowTrace\("app", event, safePayload\);/,
     "app send trace owner should use the shared native workflow trace sink",
   );
-  assert.doesNotMatch(
-    appSendTraceSource,
-    /logUiEvent\("send-trace"/,
-    "app send trace owner must not duplicate the shared workflow trace over Tauri IPC",
-  );
-  assert.match(
-    appSendTraceSource,
-    /relativeMs/,
-    "send trace entries should include a relative timestamp for cold-start timelines",
-  );
+  assert.doesNotMatch(appSendTraceSource, /logUiEvent\("send-trace"/, "app send trace owner must not duplicate the shared workflow trace over Tauri IPC");
+  assert.match(appSendTraceSource, /relativeMs/, "send trace entries should include a relative timestamp for cold-start timelines");
   assert.match(
     source,
     /const appSendTrace = createAppSendTrace\(\);[\s\S]*createSendPreflightContext[\s\S]*recordSendTrace[\s\S]*sendTraceStep/,
@@ -220,35 +167,8 @@ test("create session preflight records duration for duplicate gates and server c
     "createSessionAndOpen:veslo-conversation-create",
     "createSessionAndOpen:select-session",
   ]) {
-    assert.match(
-      createSource,
-      new RegExp(`deps\\.sendTraceStep\\(\\s*"${event}"`),
-      `${event} should be timed with sendTraceStep`,
-    );
+    assert.match(createSource, new RegExp(`deps\\.sendTraceStep\\(\\s*"${event}"`), `${event} should be timed with sendTraceStep`);
   }
-});
-
-test("create run and compact do not fall back to legacy OpenCode SDK writes", () => {
-  const compactStart = mutationWorkflowSource.indexOf("  async function submitCurrentSessionCompaction(");
-  const compactEnd = mutationWorkflowSource.indexOf("  async function replaceUserMessage(", compactStart);
-  const createStart = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
-  const createEnd = createWorkflowSource.indexOf("\n  const createSession = (", createStart);
-
-  assert.ok(compactStart >= 0 && compactEnd > compactStart, "submitCurrentSessionCompaction source should be present");
-  assert.ok(createStart >= 0 && createEnd > createStart, "runCreateSessionFlow source should be present");
-
-  const bridgeSource = conversationRunCompatibilityBridgeSource();
-  const compactSource = mutationWorkflowSource.slice(compactStart, compactEnd);
-  const createSource = createWorkflowSource.slice(createStart, createEnd);
-
-  assert.match(
-    bridgeSource,
-    /const runConversationOrFail = async \(\s*runInput: VesloConversationRunInput,?\s*\) =>/,
-  );
-  assert.doesNotMatch(bridgeSource, /runConversationOrLegacy|sendPrompt:legacy-run-fallback|c\.session\.promptAsync|c\.session\.command|shellInSession/);
-  assert.doesNotMatch(compactSource, /compactSession:legacy-run-fallback|compactSessionTyped|falling back to OpenCode SDK/);
-  assert.doesNotMatch(createSource, /legacy-create-fallback|legacy-session-create|c\.session\.create|falling back to OpenCode SDK/);
-  assert.match(createSource, /throw new Error\([\s\S]*"Conversation service is unavailable for session creation\."[\s\S]*\);/);
 });
 
 test("create session preflight does not add a fixed abort-refresh settle delay", () => {
@@ -261,16 +181,8 @@ test("create session preflight does not add a fixed abort-refresh settle delay",
   assert.ok(settleStart >= 0 && settleEnd > settleStart, "abort-refresh trace block should be present");
   const settleSource = createSource.slice(settleStart, settleEnd);
 
-  assert.match(
-    settleSource,
-    /deps\.abortRefreshes\(\);/,
-    "create session should still synchronously cancel refresh work before session creation",
-  );
-  assert.doesNotMatch(
-    settleSource,
-    /setTimeout\([^)]*,\s*50\)/,
-    "create session should not spend a fixed 50ms delay before model submission",
-  );
+  assert.match(settleSource, /deps\.abortRefreshes\(\);/, "create session should still synchronously cancel refresh work before session creation");
+  assert.doesNotMatch(settleSource, /setTimeout\([^)]*,\s*50\)/, "create session should not spend a fixed 50ms delay before model submission");
 });
 
 test("sidebar bulk refresh is single-flight to avoid duplicate cold workspace session scans", () => {
@@ -350,11 +262,7 @@ test("runtime owner gates app-level routing client reads", () => {
     /const systemState = createSystemState\(\{[\s\S]*client,[\s\S]*routing: runtimeOwnedRouting,/,
     "system reload/runtime client reads should go through runtime-owned routing",
   );
-  assert.match(
-    source,
-    /<WorkspaceRoutingProvider value=\{runtimeOwnedRouting\}>/,
-    "routing context consumers should receive the owner-gated routing surface",
-  );
+  assert.match(source, /<WorkspaceRoutingProvider value=\{runtimeOwnedRouting\}>/, "routing context consumers should receive the owner-gated routing surface");
 });
 
 test("session-store sidebar sync skips unchanged sidebar rows", () => {
@@ -492,8 +400,13 @@ test("pending permission interval skips active sends and single-client mode cove
   );
   assert.match(
     sendWorkflowSource,
-    /deps\.recordSendTrace\("sendPrompt:success"[\s\S]*deps\.holdVisibleRuntimeActivity\(sessionID, "sendPrompt:success"\);[\s\S]*return true;/,
-    "successful sends should hold visible runtime activity until session status catches up",
+    /deps\.holdVisibleRuntimeActivity\(\s*existingSessionId,\s*compactCommand\s*\? "sendPrompt:server-submit-existing-compact-success"\s*: "sendPrompt:server-submit-existing-success",?\s*\)/,
+    "successful existing-session submits should hold visible runtime activity until session status catches up",
+  );
+  assert.match(
+    sendWorkflowSource,
+    /deps\.holdVisibleRuntimeActivity\(\s*sessionID,\s*"sendPrompt:server-submit-first-success",?\s*\)/,
+    "successful first-session submits should hold visible runtime activity until session status catches up",
   );
   assert.match(
     schedulerSource,
@@ -543,11 +456,7 @@ test("pending permission interval skips active sends and single-client mode cove
 });
 
 test("MCP auto refresh scheduler keeps UI wiring thin", () => {
-  assert.match(
-    schedulerSource,
-    /export function createMcpAutoRefreshScheduler/,
-    "MCP auto refresh scheduling should live outside the app component",
-  );
+  assert.match(schedulerSource, /export function createMcpAutoRefreshScheduler/, "MCP auto refresh scheduling should live outside the app component");
   assert.match(
     schedulerSource,
     /if \(!options\.isTauriRuntime\(\)\) return;[\s\S]*if \(options\.activeWorkspaceRuntimeReady\(\) === false\) return;[\s\S]*const projectDir = options\.workspaceProjectDir\(\)\.trim\(\);[\s\S]*if \(!projectDir\) return;[\s\S]*const activeSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredRefresh\(activeSendTraceId, projectDir\);[\s\S]*return;[\s\S]*\}[\s\S]*scheduleAutoRefresh\(projectDir\);/,
@@ -558,11 +467,7 @@ test("MCP auto refresh scheduler keeps UI wiring thin", () => {
     /export function mcpAutoRefreshTargetKey[\s\S]*export function shouldRefreshMcpAutoRefreshTarget[\s\S]*"workspace\.mcp", "refresh-skip-recent-target"/,
     "MCP scheduler should dedupe repeated auto refreshes by stable workspace/project target",
   );
-  assert.match(
-    schedulerSource,
-    /"workspace\.mcp", "refresh-skip-active-send"/,
-    "MCP scheduler should log and defer automatic refresh while a send is active",
-  );
+  assert.match(schedulerSource, /"workspace\.mcp", "refresh-skip-active-send"/, "MCP scheduler should log and defer automatic refresh while a send is active");
   assert.match(
     schedulerSource,
     /const nextActiveSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*if \(nextActiveSendTraceId\) \{[\s\S]*scheduleDeferredRefresh\(nextActiveSendTraceId, options\.workspaceProjectDir\(\)\.trim\(\)\);[\s\S]*return;[\s\S]*\}/,
@@ -587,11 +492,7 @@ test("selected transcript reads stay passive while accepted-run recovery owns se
     "ordinary selected-session transcript reads must not obtain local-server-start authority",
   );
 
-  assert.match(
-    source,
-    /recoverAcceptedConversationRunStatus,/,
-    "the accepted-run lifecycle owner should receive the dedicated recovery executor",
-  );
+  assert.match(source, /recoverAcceptedConversationRunStatus,/, "the accepted-run lifecycle owner should receive the dedicated recovery executor");
 
   assert.match(
     source,

@@ -7,13 +7,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER } from "../orchestrator-lifecycle-client.js";
 import { createConversationRunQueueStore } from "../conversation-run-queue-store.js";
-import {
-  prepareRuntimeSkillCandidate,
-  publishValidatedRuntimeSkillCandidate,
-} from "../active-runtime-skill-view.js";
+import { prepareRuntimeSkillCandidate, publishValidatedRuntimeSkillCandidate } from "../active-runtime-skill-view.js";
 import { startServer } from "../server.js";
 
-const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
+const runningServers: Array<{
+  stop?: (closeActiveConnections?: boolean) => void;
+}> = [];
 const tempDirs: string[] = [];
 const envRestores: Array<() => void> = [];
 
@@ -64,9 +63,7 @@ const removeTempDir = async (dir: string) => {
       return;
     } catch (error) {
       lastError = error;
-      const code = typeof error === "object" && error !== null && "code" in error
-        ? String((error as { code?: unknown }).code)
-        : "";
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
       if (!["EBUSY", "ENOTEMPTY", "EPERM"].includes(code) || attempt === attempts) {
         throw error;
       }
@@ -155,9 +152,7 @@ const seedLegacyOpenCodeDb = (
         data TEXT NOT NULL
       );
     `);
-    const insertSession = db.query(
-      "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    );
+    const insertSession = db.query("INSERT INTO session (id, title, directory, parent_id, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)");
     const insertMessage = db.query("INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)");
     const insertPart = db.query("INSERT INTO part (id, session_id, message_id, data) VALUES (?1, ?2, ?3, ?4)");
     for (const [index, session] of sessions.entries()) {
@@ -166,18 +161,27 @@ const seedLegacyOpenCodeDb = (
       if (session.messageText) {
         const messageId = `msg-${session.id}`;
         const partId = `prt-${session.id}`;
-        insertMessage.run(messageId, session.id, JSON.stringify({
-          id: messageId,
-          sessionID: session.id,
-          role: "assistant",
-        }));
-        insertPart.run(partId, session.id, messageId, JSON.stringify({
-          id: partId,
-          sessionID: session.id,
-          messageID: messageId,
-          type: "text",
-          text: session.messageText,
-        }));
+        insertMessage.run(
+          messageId,
+          session.id,
+          JSON.stringify({
+            id: messageId,
+            sessionID: session.id,
+            role: "assistant",
+          }),
+        );
+        insertPart.run(
+          partId,
+          session.id,
+          messageId,
+          JSON.stringify({
+            id: partId,
+            sessionID: session.id,
+            messageID: messageId,
+            type: "text",
+            text: session.messageText,
+          }),
+        );
       }
     }
   } finally {
@@ -185,10 +189,7 @@ const seedLegacyOpenCodeDb = (
   }
 };
 
-async function waitForCondition(
-  predicate: () => boolean,
-  options: { timeoutMs?: number; intervalMs?: number; message?: string } = {},
-): Promise<void> {
+async function waitForCondition(predicate: () => boolean, options: { timeoutMs?: number; intervalMs?: number; message?: string } = {}): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 1_000;
   const intervalMs = options.intervalMs ?? 10;
   const startedAt = Date.now();
@@ -288,7 +289,10 @@ describe("conversation routes", () => {
     const dataDir = await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-durable-status-"));
     tempDirs.push(workspaceRoot);
-    const queueStore = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const queueStore = createConversationRunQueueStore({
+      dataDir,
+      now: () => 2_000,
+    });
     const queued = queueStore.enqueue({
       workspaceId: "ws_1",
       conversationId: "conv-legacy",
@@ -298,7 +302,10 @@ describe("conversation routes", () => {
       clientMessageId: "msg-queued",
       origin: "session:normal",
       kind: "prompt_async",
-      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "private prompt" }] }),
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        parts: [{ type: "text", text: "private prompt" }],
+      }),
     }).item;
     queueStore.observeTerminalHandoffBarrier({
       workspaceId: "ws_1",
@@ -316,12 +323,11 @@ describe("conversation routes", () => {
     const server = startTestServer({ workspaceRoot, upstreamPort: 1 });
 
     for (const requestedRunId of [queued.reservedRunId, "latest"]) {
-      const response = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-legacy/runs/${requestedRunId}`,
-        { headers: { Authorization: "Bearer client-token" } },
-      );
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-legacy/runs/${requestedRunId}`, {
+        headers: { Authorization: "Bearer client-token" },
+      });
       expect(response.status).toBe(200);
-      const payload = await response.json() as Record<string, unknown>;
+      const payload = (await response.json()) as Record<string, unknown>;
       expect(payload).toMatchObject({
         ok: true,
         workspaceId: "ws_1",
@@ -342,19 +348,23 @@ describe("conversation routes", () => {
       expect(JSON.stringify(payload)).not.toContain("private prompt");
     }
 
-    const unrelated = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-empty/runs/latest`,
-      { headers: { Authorization: "Bearer client-token" } },
-    );
+    const unrelated = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-empty/runs/latest`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
     expect(unrelated.status).toBe(503);
-    expect(await unrelated.json()).toMatchObject({ code: "lifecycle_unavailable" });
+    expect(await unrelated.json()).toMatchObject({
+      code: "lifecycle_unavailable",
+    });
   });
 
   test("run status enriches a lifecycle observation from a post-lifecycle durable snapshot", async () => {
     const dataDir = await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-status-observation-order-"));
     tempDirs.push(workspaceRoot);
-    const queueStore = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const queueStore = createConversationRunQueueStore({
+      dataDir,
+      now: () => 2_000,
+    });
     const queued = queueStore.enqueue({
       workspaceId: "ws_1",
       conversationId: "conv-observation-order",
@@ -383,9 +393,7 @@ describe("conversation routes", () => {
       fetch: async (request) => {
         const url = new URL(request.url);
         expect(request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER)).toBe("lifecycle-token");
-        expect(url.pathname).toBe(
-          "/workspace/ws_1/conversations/conv-observation-order/runs/run-observation-order",
-        );
+        expect(url.pathname).toBe("/workspace/ws_1/conversations/conv-observation-order/runs/run-observation-order");
         lifecycleRequests += 1;
         if (mutateDuringStatusRead) {
           // This write happens after the route starts the external lifecycle
@@ -421,10 +429,9 @@ describe("conversation routes", () => {
     const lifecycleRequestsBeforeStatusRead = lifecycleRequests;
     mutateDuringStatusRead = true;
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-observation-order/runs/run-observation-order`,
-      { headers: { Authorization: "Bearer client-token" } },
-    );
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-observation-order/runs/run-observation-order`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
 
     expect(response.status).toBe(200);
     expect(lifecycleRequests).toBeGreaterThan(lifecycleRequestsBeforeStatusRead);
@@ -455,7 +462,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         if (request.method !== "POST" || url.pathname !== "/session" || typeof body?.id !== "string") {
           return Response.json({ error: "unexpected upstream route" }, { status: 404 });
         }
@@ -474,10 +481,12 @@ describe("conversation routes", () => {
       },
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
-    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
-    const create = () => fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/opencode/session`,
-      {
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const create = () =>
+      fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/opencode/session`, {
         method: "POST",
         headers: {
           Authorization: "Bearer client-token",
@@ -488,16 +497,15 @@ describe("conversation routes", () => {
           directory: workspaceRoot,
           title: "Idempotent requested session",
         }),
-      },
-    );
+      });
 
     const first = await create();
     const second = await create();
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    expect((await first.json() as { id?: string }).id).toBe(requestedSessionId);
-    expect((await second.json() as { id?: string }).id).toBe(requestedSessionId);
+    expect(((await first.json()) as { id?: string }).id).toBe(requestedSessionId);
+    expect(((await second.json()) as { id?: string }).id).toBe(requestedSessionId);
     expect(receivedBodies).toEqual([
       {
         id: requestedSessionId,
@@ -532,37 +540,40 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-1",
-          origin: "session:normal",
-          source: "enter",
-          target: { directory: workspaceRoot, pendingClientSessionId: "pending-1" },
-          draft: {
-            mode: "prompt",
-            text: "Hello",
-            parts: [{ type: "text", text: "Hello" }],
-          },
-          options: { dryRun: true },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-1",
+        origin: "session:normal",
+        source: "enter",
+        target: {
+          directory: workspaceRoot,
+          pendingClientSessionId: "pending-1",
+        },
+        draft: {
+          mode: "prompt",
+          text: "Hello",
+          parts: [{ type: "text", text: "Hello" }],
+        },
+        options: { dryRun: true },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       status?: string;
       workspaceId?: string;
       clientMessageId?: string;
       requestHash?: string;
       draftDisposition?: string;
-      target?: { directory?: string | null; pendingClientSessionId?: string | null };
+      target?: {
+        directory?: string | null;
+        pendingClientSessionId?: string | null;
+      };
     };
     expect(payload.status).toBe("dry_run");
     expect(payload.workspaceId).toBe("ws_1");
@@ -592,7 +603,10 @@ describe("conversation routes", () => {
       workspaceRoot,
       upstreamPort: upstream.port,
     });
-    const target = { directory: workspaceRoot, pendingClientSessionId: "pending-invalid" };
+    const target = {
+      directory: workspaceRoot,
+      pendingClientSessionId: "pending-invalid",
+    };
     const cases: Array<{ body: Record<string, unknown>; message: string }> = [
       {
         body: {
@@ -665,17 +679,14 @@ describe("conversation routes", () => {
     ];
 
     for (const item of cases) {
-      const response = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer client-token",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(item.body),
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify(item.body),
+      });
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({
         code: "invalid_payload",
@@ -699,7 +710,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: url.pathname,
           traceId: request.headers.get("x-veslo-send-trace-id"),
@@ -730,16 +741,18 @@ describe("conversation routes", () => {
       clientMessageId: "msg-submit-materialize",
       origin: "session:normal",
       source: "enter",
-      target: { directory: workspaceRoot, pendingClientSessionId: "pending-materialize" },
+      target: {
+        directory: workspaceRoot,
+        pendingClientSessionId: "pending-materialize",
+      },
       draft: {
         mode: "prompt",
         text: "Create from submit",
         parts: [{ type: "text", text: "Create from submit" }],
       },
     };
-    const submit = () => fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
+    const submit = () =>
+      fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
         method: "POST",
         headers: {
           Authorization: "Bearer client-token",
@@ -747,12 +760,11 @@ describe("conversation routes", () => {
           "x-veslo-send-trace-id": "submit-materialize-trace",
         },
         body: JSON.stringify(body),
-      },
-    );
+      });
 
     const firstResponse = await submit();
     expect(firstResponse.status).toBe(200);
-    const firstPayload = await firstResponse.json() as {
+    const firstPayload = (await firstResponse.json()) as {
       status?: string;
       workspaceId?: string;
       conversationId?: string;
@@ -761,7 +773,12 @@ describe("conversation routes", () => {
       clientMessageId?: string;
       pendingClientSessionId?: string | null;
       draftDisposition?: string;
-      materializedSession?: { id?: string; title?: string; conversationId?: string; opencodeSessionId?: string };
+      materializedSession?: {
+        id?: string;
+        title?: string;
+        conversationId?: string;
+        opencodeSessionId?: string;
+      };
     };
     expect(firstPayload.status).toBe("submitted");
     expect(firstPayload.workspaceId).toBe("ws_1");
@@ -799,23 +816,20 @@ describe("conversation routes", () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-private-orchestrator-"));
     tempDirs.push(workspaceRoot);
     const registeredWorkspaces = new Set<string>();
-    const orchestratorRequests: Array<{ path: string; body: Record<string, unknown> | null }> = [];
+    const orchestratorRequests: Array<{
+      path: string;
+      body: Record<string, unknown> | null;
+    }> = [];
     let createdSessionCount = 0;
     const orchestrator = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         orchestratorRequests.push({ path: url.pathname, body });
         if (request.method === "POST" && url.pathname === "/workspaces") {
-          const id = typeof body?.serverWorkspaceId === "string"
-            ? body.serverWorkspaceId
-            : typeof body?.id === "string"
-              ? body.id
-              : "";
+          const id = typeof body?.serverWorkspaceId === "string" ? body.serverWorkspaceId : typeof body?.id === "string" ? body.id : "";
           if (!id || typeof body?.path !== "string") {
             return Response.json({ error: "invalid workspace registration" }, { status: 400 });
           }
@@ -877,40 +891,38 @@ describe("conversation routes", () => {
       body: JSON.stringify({ name: "Private", path: workspaceRoot }),
     });
     expect(workspaceResponse.status).toBe(201);
-    const workspacePayload = await workspaceResponse.json() as {
+    const workspacePayload = (await workspaceResponse.json()) as {
       workspace?: { id?: string; path?: string; baseUrl?: string };
     };
     const workspaceId = workspacePayload.workspace?.id ?? "";
     expect(workspaceId).toMatch(/^ws-/);
-    expect(workspacePayload.workspace?.baseUrl).toBe(
-      `http://127.0.0.1:${orchestrator.port}/workspace/${workspaceId}/opencode`,
-    );
+    expect(workspacePayload.workspace?.baseUrl).toBe(`http://127.0.0.1:${orchestrator.port}/workspace/${workspaceId}/opencode`);
 
-    const submitResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/${encodeURIComponent(workspaceId)}/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "x-veslo-send-trace-id": "submit-private-orchestrator-trace",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-private-orchestrator",
-          origin: "composer-target:create-private",
-          source: "enter",
-          target: { directory: workspaceRoot, pendingClientSessionId: "pending-private-orchestrator" },
-          draft: {
-            mode: "prompt",
-            text: "Private server submit",
-            parts: [{ type: "text", text: "Private server submit" }],
-          },
-        }),
+    const submitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/${encodeURIComponent(workspaceId)}/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "submit-private-orchestrator-trace",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-private-orchestrator",
+        origin: "composer-target:create-private",
+        source: "enter",
+        target: {
+          directory: workspaceRoot,
+          pendingClientSessionId: "pending-private-orchestrator",
+        },
+        draft: {
+          mode: "prompt",
+          text: "Private server submit",
+          parts: [{ type: "text", text: "Private server submit" }],
+        },
+      }),
+    });
 
     expect(submitResponse.status).toBe(200);
-    const submitPayload = await submitResponse.json() as {
+    const submitPayload = (await submitResponse.json()) as {
       status?: string;
       workspaceId?: string;
       opencodeSessionId?: string;
@@ -933,28 +945,28 @@ describe("conversation routes", () => {
     expect(registrations.every((entry) => entry.body?.serverWorkspaceId === workspaceId)).toBe(true);
     expect(registrations.every((entry) => entry.body?.path === workspaceRoot)).toBe(true);
 
-    const secondSubmitResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/${encodeURIComponent(workspaceId)}/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "x-veslo-send-trace-id": "submit-private-orchestrator-second-trace",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-private-orchestrator-second",
-          origin: "composer-target:create-private",
-          source: "enter",
-          target: { directory: workspaceRoot, pendingClientSessionId: "pending-private-orchestrator-second" },
-          draft: {
-            mode: "prompt",
-            text: "Private server submit again",
-            parts: [{ type: "text", text: "Private server submit again" }],
-          },
-        }),
+    const secondSubmitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/${encodeURIComponent(workspaceId)}/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "submit-private-orchestrator-second-trace",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-private-orchestrator-second",
+        origin: "composer-target:create-private",
+        source: "enter",
+        target: {
+          directory: workspaceRoot,
+          pendingClientSessionId: "pending-private-orchestrator-second",
+        },
+        draft: {
+          mode: "prompt",
+          text: "Private server submit again",
+          parts: [{ type: "text", text: "Private server submit again" }],
+        },
+      }),
+    });
     expect(secondSubmitResponse.status).toBe(200);
     expect(orchestratorRequests.filter((entry) => entry.path === "/workspaces")).toHaveLength(2);
   });
@@ -975,16 +987,22 @@ describe("conversation routes", () => {
     });
     runningServers.push(staleUpstream as { stop?: (closeActiveConnections?: boolean) => void });
 
-    const orchestratorRequests: Array<{ path: string; method: string; body: Record<string, unknown> | null }> = [];
+    const orchestratorRequests: Array<{
+      path: string;
+      method: string;
+      body: Record<string, unknown> | null;
+    }> = [];
     const orchestrator = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
-        orchestratorRequests.push({ path: url.pathname, method: request.method, body });
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
+        orchestratorRequests.push({
+          path: url.pathname,
+          method: request.method,
+          body,
+        });
         if (request.method === "POST" && url.pathname === "/workspaces") {
           return Response.json({ ok: true });
         }
@@ -1010,21 +1028,16 @@ describe("conversation routes", () => {
       ],
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_delete/sessions/sess-delete`,
-      {
-        method: "DELETE",
-        headers: { Authorization: "Bearer client-token" },
-      },
-    );
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_delete/sessions/sess-delete`, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer client-token" },
+    });
 
     expect(response.status).toBe(200);
     expect(staleBaseUrlHit).toBe(true);
     const paths = orchestratorRequests.map((entry) => entry.path);
     expect(paths.indexOf("/workspaces")).toBeGreaterThanOrEqual(0);
-    expect(paths.indexOf("/workspace/ws_delete/opencode/session/sess-delete")).toBeGreaterThan(
-      paths.indexOf("/workspaces"),
-    );
+    expect(paths.indexOf("/workspace/ws_delete/opencode/session/sess-delete")).toBeGreaterThan(paths.indexOf("/workspaces"));
     expect(orchestratorRequests.find((entry) => entry.path === "/workspaces")?.body?.serverWorkspaceId).toBe("ws_delete");
   });
 
@@ -1044,7 +1057,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: url.pathname,
           traceId: request.headers.get("x-veslo-send-trace-id"),
@@ -1078,16 +1091,18 @@ describe("conversation routes", () => {
       clientMessageId: "msg-submit-slow",
       origin: "session:normal",
       source: "enter",
-      target: { directory: workspaceRoot, pendingClientSessionId: "pending-slow" },
+      target: {
+        directory: workspaceRoot,
+        pendingClientSessionId: "pending-slow",
+      },
       draft: {
         mode: "prompt",
         text: "Slow network duplicate send",
         parts: [{ type: "text", text: "Slow network duplicate send" }],
       },
     };
-    const submit = () => fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
+    const submit = () =>
+      fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
         method: "POST",
         headers: {
           Authorization: "Bearer client-token",
@@ -1095,37 +1110,33 @@ describe("conversation routes", () => {
           "x-veslo-send-trace-id": "submit-slow-trace",
         },
         body: JSON.stringify(body),
-      },
-    );
+      });
 
     const firstSubmit = submit();
-    await waitForCondition(
-      () => sessionRequests === 1,
-      { timeoutMs: 1_000, message: "expected the slow session creation to start" },
-    );
+    await waitForCondition(() => sessionRequests === 1, {
+      timeoutMs: 1_000,
+      message: "expected the slow session creation to start",
+    });
     const secondSubmit = submit();
     const [firstResponse, secondResponse] = await Promise.all([firstSubmit, secondSubmit]);
 
     expect(firstResponse.status).toBe(200);
     expect(secondResponse.status).toBe(200);
-    const firstPayload = await firstResponse.json() as {
+    const firstPayload = (await firstResponse.json()) as {
       status?: string;
       conversationId?: string;
       opencodeSessionId?: string;
       runId?: string;
       materializedSession?: { id?: string };
     };
-    const secondPayload = await secondResponse.json() as typeof firstPayload;
+    const secondPayload = (await secondResponse.json()) as typeof firstPayload;
     expect(firstPayload.status).toBe("submitted");
     expect(secondPayload).toEqual(firstPayload);
     expect(firstPayload.opencodeSessionId).toBe("sess-submit-slow");
     expect(firstPayload.materializedSession?.id).toBe("sess-submit-slow");
     expect(sessionRequests).toBe(1);
     expect(promptRequests).toBe(1);
-    expect(upstreamRequests.map((entry) => entry.path)).toEqual([
-      "/session",
-      "/session/sess-submit-slow/prompt_async",
-    ]);
+    expect(upstreamRequests.map((entry) => entry.path)).toEqual(["/session", "/session/sess-submit-slow/prompt_async"]);
     expect(upstreamRequests.every((entry) => entry.traceId === "submit-slow-trace")).toBe(true);
     expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
   });
@@ -1142,38 +1153,31 @@ describe("conversation routes", () => {
     const skillsRoot = join(workspaceRoot, ".opencode", "skills");
     await mkdir(skillsRoot, { recursive: true });
     const fillerSkills = Array.from({ length: 60 }, (_, index) => `general-helper-${String(index).padStart(2, "0")}`);
-    await Promise.all(fillerSkills.map(async (name, index) => {
-      const skillDir = join(skillsRoot, name);
-      await mkdir(skillDir, { recursive: true });
-      await writeFile(
-        join(skillDir, "SKILL.md"),
-        [
-          "---",
-          `name: ${name}`,
-          `description: General helper ${index} for unrelated maintenance notes.`,
-          `trigger: unrelated helper ${index}`,
-          "---",
-          "",
-          `# ${name}`,
-          "",
-        ].join("\n"),
-        "utf8",
-      );
-    }));
-    await mkdir(join(skillsRoot, "broken-skill"), { recursive: true });
-    await writeFile(
-      join(skillsRoot, "broken-skill", "SKILL.md"),
-      [
-        "---",
-        "name: broken-skill",
-        "---",
-        "",
-        "# Broken Skill",
-        "",
-      ].join("\n"),
-      "utf8",
+    await Promise.all(
+      fillerSkills.map(async (name, index) => {
+        const skillDir = join(skillsRoot, name);
+        await mkdir(skillDir, { recursive: true });
+        await writeFile(
+          join(skillDir, "SKILL.md"),
+          [
+            "---",
+            `name: ${name}`,
+            `description: General helper ${index} for unrelated maintenance notes.`,
+            `trigger: unrelated helper ${index}`,
+            "---",
+            "",
+            `# ${name}`,
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      }),
     );
-    await mkdir(join(skillsRoot, "company-research-czech"), { recursive: true });
+    await mkdir(join(skillsRoot, "broken-skill"), { recursive: true });
+    await writeFile(join(skillsRoot, "broken-skill", "SKILL.md"), ["---", "name: broken-skill", "---", "", "# Broken Skill", ""].join("\n"), "utf8");
+    await mkdir(join(skillsRoot, "company-research-czech"), {
+      recursive: true,
+    });
     await writeFile(
       join(skillsRoot, "company-research-czech", "SKILL.md"),
       [
@@ -1220,7 +1224,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: `${url.pathname}${url.search}`,
           body,
@@ -1246,40 +1250,40 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "x-veslo-send-trace-id": "submit-many-skills-trace",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-many-skills",
-          origin: "session:normal",
-          source: "enter",
-          target: { directory: workspaceRoot, pendingClientSessionId: "pending-many-skills" },
-          draft: {
-            mode: "prompt",
-            text: "https://example.test use company search skill for this",
-            parts: [],
-          },
-          options: {
-            model: {
-              providerID: "openai",
-              modelID: "gpt-5.5",
-              modalities: { input: ["text"], output: ["text"] },
-            },
-            agent: "build",
-            variant: "xhigh",
-          },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "submit-many-skills-trace",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-many-skills",
+        origin: "session:normal",
+        source: "enter",
+        target: {
+          directory: workspaceRoot,
+          pendingClientSessionId: "pending-many-skills",
+        },
+        draft: {
+          mode: "prompt",
+          text: "https://example.test use company search skill for this",
+          parts: [],
+        },
+        options: {
+          model: {
+            providerID: "openai",
+            modelID: "gpt-5.5",
+            modalities: { input: ["text"], output: ["text"] },
+          },
+          agent: "build",
+          variant: "xhigh",
+        },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       status?: string;
       opencodeSessionId?: string;
       debugTrace?: Array<{ event: string }>;
@@ -1294,12 +1298,16 @@ describe("conversation routes", () => {
       agent: "build",
       model: { providerID: "openai", modelID: "gpt-5.5" },
       variant: "xhigh",
-      parts: [{ type: "text", text: "https://example.test use company search skill for this" }],
+      parts: [
+        {
+          type: "text",
+          text: "https://example.test use company search skill for this",
+        },
+      ],
     });
     expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
     expect(upstreamRequests[1]?.body?.command).toBeUndefined();
-    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit"))
-      .toBe(true);
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit")).toBe(true);
   });
 
   test("POST /workspace/:id/conversations/submit keeps ambiguous implicit skill prompts as prompt runs", async () => {
@@ -1340,7 +1348,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: `${url.pathname}${url.search}`,
           body,
@@ -1366,30 +1374,33 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-ambiguous-skills",
-          origin: "session:normal",
-          source: "enter",
-          target: { directory: workspaceRoot, pendingClientSessionId: "pending-ambiguous-skills" },
-          draft: {
-            mode: "prompt",
-            text: "Please use company research skill for this website",
-            parts: [],
-          },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-ambiguous-skills",
+        origin: "session:normal",
+        source: "enter",
+        target: {
+          directory: workspaceRoot,
+          pendingClientSessionId: "pending-ambiguous-skills",
+        },
+        draft: {
+          mode: "prompt",
+          text: "Please use company research skill for this website",
+          parts: [],
+        },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as { status?: string; opencodeSessionId?: string };
+    const payload = (await response.json()) as {
+      status?: string;
+      opencodeSessionId?: string;
+    };
     expect(payload.status).toBe("submitted");
     expect(payload.opencodeSessionId).toBe("sess-ambiguous-skills");
     expect(upstreamRequests.map((entry) => entry.path)).toEqual([
@@ -1397,7 +1408,12 @@ describe("conversation routes", () => {
       `/session/sess-ambiguous-skills/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
     ]);
     expect(upstreamRequests[1]?.body).toMatchObject({
-      parts: [{ type: "text", text: "Please use company research skill for this website" }],
+      parts: [
+        {
+          type: "text",
+          text: "Please use company research skill for this website",
+        },
+      ],
     });
     expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
     expect(upstreamRequests[1]?.body?.command).toBeUndefined();
@@ -1421,7 +1437,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: `${url.pathname}${url.search}`,
           body,
@@ -1447,30 +1463,33 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-no-skills",
-          origin: "session:normal",
-          source: "enter",
-          target: { directory: workspaceRoot, pendingClientSessionId: "pending-no-skills" },
-          draft: {
-            mode: "prompt",
-            text: "Please inspect this repository",
-            parts: [],
-          },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-no-skills",
+        origin: "session:normal",
+        source: "enter",
+        target: {
+          directory: workspaceRoot,
+          pendingClientSessionId: "pending-no-skills",
+        },
+        draft: {
+          mode: "prompt",
+          text: "Please inspect this repository",
+          parts: [],
+        },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as { status?: string; opencodeSessionId?: string };
+    const payload = (await response.json()) as {
+      status?: string;
+      opencodeSessionId?: string;
+    };
     expect(payload.status).toBe("submitted");
     expect(payload.opencodeSessionId).toBe("sess-no-skills");
     expect(upstreamRequests.map((entry) => entry.path)).toEqual([
@@ -1516,7 +1535,7 @@ describe("conversation routes", () => {
           return managedAiAccessBundleResponse("runtime-scoped-gateway-token");
         }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
-          const requestBody = await request.json().catch(() => null) as unknown;
+          const requestBody = (await request.json().catch(() => null)) as unknown;
           gatewayRequests.push({
             path: url.pathname,
             authorization: request.headers.get("authorization"),
@@ -1530,7 +1549,13 @@ describe("conversation routes", () => {
             object: "chat.completion",
             created: 1,
             model: "gpt-5.5",
-            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+            choices: [
+              {
+                index: 0,
+                finish_reason: "stop",
+                message: { role: "assistant", content: "ok" },
+              },
+            ],
           });
         }
         return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
@@ -1549,9 +1574,7 @@ describe("conversation routes", () => {
       fetch: async (request) => {
         const url = new URL(request.url);
         upstreamRequests.push(url.pathname);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.method === "POST" && url.pathname === "/session") {
           return Response.json({
             id: "sess-submit-gateway",
@@ -1563,23 +1586,20 @@ describe("conversation routes", () => {
         }
         if (request.method === "POST" && url.pathname === "/session/sess-submit-gateway/prompt_async") {
           try {
-            const providerResponse = await fetch(
-              `http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
-              {
-                method: "POST",
-                headers: {
-                  Authorization: "Bearer client-token",
-                  "Content-Type": "application/json",
-                  "x-veslo-gateway-token": "Bearer [redacted]",
-                  "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
-                  "x-veslo-workspace-id": "ws_1",
-                },
-                body: JSON.stringify({
-                  model: "gpt-5.5",
-                  messages: [{ role: "user", content: "Composer gateway" }],
-                }),
+            const providerResponse = await fetch(`http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                Authorization: "Bearer client-token",
+                "Content-Type": "application/json",
+                "x-veslo-gateway-token": "Bearer [redacted]",
+                "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+                "x-veslo-workspace-id": "ws_1",
               },
-            );
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Composer gateway" }],
+              }),
+            });
             providerFetchStatus = providerResponse.status;
           } catch (error) {
             providerFetchError = error instanceof Error ? error.message : String(error);
@@ -1605,7 +1625,7 @@ describe("conversation routes", () => {
       body: JSON.stringify({ scope: "collaborator", label: "composer" }),
     });
     expect(tokenResponse.status).toBe(201);
-    const issued = await tokenResponse.json() as { token: string };
+    const issued = (await tokenResponse.json()) as { token: string };
 
     const accessResponse = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
       headers: {
@@ -1615,34 +1635,34 @@ describe("conversation routes", () => {
     });
     expect(accessResponse.status).toBe(200);
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${issued.token}`,
-          "Content-Type": "application/json",
-          "x-veslo-send-trace-id": "submit-gateway-trace",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-gateway",
-          origin: "session:normal",
-          source: "enter",
-          target: { directory: workspaceRoot, pendingClientSessionId: "pending-submit-gateway" },
-          draft: {
-            mode: "prompt",
-            text: "Composer should call managed AI",
-            parts: [{ type: "text", text: "Composer should call managed AI" }],
-          },
-          options: {
-            expectAiGatewayStart: true,
-          },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${issued.token}`,
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "submit-gateway-trace",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-gateway",
+        origin: "session:normal",
+        source: "enter",
+        target: {
+          directory: workspaceRoot,
+          pendingClientSessionId: "pending-submit-gateway",
+        },
+        draft: {
+          mode: "prompt",
+          text: "Composer should call managed AI",
+          parts: [{ type: "text", text: "Composer should call managed AI" }],
+        },
+        options: {
+          expectAiGatewayStart: true,
+        },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       status?: string;
       opencodeSessionId?: string;
       debugTrace?: Array<{ event: string }>;
@@ -1651,10 +1671,7 @@ describe("conversation routes", () => {
     expect(payload.opencodeSessionId).toBe("sess-submit-gateway");
     expect(providerFetchStatus).toBe(200);
     expect(providerFetchError).toBe("");
-    expect(upstreamRequests).toEqual([
-      "/session",
-      "/session/sess-submit-gateway/prompt_async",
-    ]);
+    expect(upstreamRequests).toEqual(["/session", "/session/sess-submit-gateway/prompt_async"]);
     expect(gatewayRequests).toEqual([
       {
         path: "/api/me/ai-access",
@@ -1676,8 +1693,7 @@ describe("conversation routes", () => {
         },
       },
     ]);
-    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit"))
-      .toBe(true);
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit")).toBe(true);
   });
 
   test("POST /workspace/:id/conversations/submit returns materialized session when first run submit fails", async () => {
@@ -1724,7 +1740,10 @@ describe("conversation routes", () => {
           clientMessageId: "msg-submit-materialized-failed",
           origin: "session:normal",
           source: "enter",
-          target: { directory: workspaceRoot, pendingClientSessionId: "pending-submit-materialized-failed" },
+          target: {
+            directory: workspaceRoot,
+            pendingClientSessionId: "pending-submit-materialized-failed",
+          },
           draft: {
             mode: "prompt",
             text: "Create then fail",
@@ -1746,13 +1765,17 @@ describe("conversation routes", () => {
       console.log = originalConsoleLog;
     }
     expect(response.status).toBe(200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       status?: string;
       code?: string;
       conversationId?: string;
       opencodeSessionId?: string;
       pendingClientSessionId?: string | null;
-      materializedSession?: { id?: string; conversationId?: string; opencodeSessionId?: string };
+      materializedSession?: {
+        id?: string;
+        conversationId?: string;
+        opencodeSessionId?: string;
+      };
       draftDisposition?: string;
     };
     expect(payload.status).toBe("failed");
@@ -1790,17 +1813,13 @@ describe("conversation routes", () => {
 
     const retryResponse = await submit();
     expect(retryResponse.status).toBe(200);
-    const retryPayload = await retryResponse.json() as typeof payload;
+    const retryPayload = (await retryResponse.json()) as typeof payload;
     expect(retryPayload.status).toBe("failed");
     expect(retryPayload.draftDisposition).toBe("restore");
     expect(retryPayload.conversationId).toBe(payload.conversationId);
     expect(retryPayload.opencodeSessionId).toBe("sess-submit-created-failed");
     expect(retryPayload.pendingClientSessionId).toBe("pending-submit-materialized-failed");
-    expect(upstreamRequests).toEqual([
-      "/session",
-      "/session/sess-submit-created-failed/prompt_async",
-      "/session/sess-submit-created-failed/prompt_async",
-    ]);
+    expect(upstreamRequests).toEqual(["/session", "/session/sess-submit-created-failed/prompt_async", "/session/sess-submit-created-failed/prompt_async"]);
   });
 
   test("POST /workspace/:id/conversations/submit submits an existing conversation through run admission", async () => {
@@ -1817,7 +1836,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: `${url.pathname}${url.search}`,
           traceId: request.headers.get("x-veslo-send-trace-id"),
@@ -1844,45 +1863,49 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Existing submit",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Existing submit",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as {
+    const created = (await createResponse.json()) as {
       conversationId: string;
       opencodeSessionId: string;
     };
     expect(created.opencodeSessionId).toBe("sess-submit-existing");
-    await mkdir(join(workspaceRoot, "sessions", "sess-submit-existing"), { recursive: true });
+    await mkdir(join(workspaceRoot, "sessions", "sess-submit-existing"), {
+      recursive: true,
+    });
     await writeFile(join(workspaceRoot, "sessions", "sess-submit-existing", "brief.txt"), "brief");
 
     const submitBody = {
       clientMessageId: "msg-submit-existing-run",
       origin: "session:normal",
       source: "enter",
-      target: { conversationId: created.conversationId, directory: workspaceRoot },
+      target: {
+        conversationId: created.conversationId,
+        directory: workspaceRoot,
+      },
       draft: {
         mode: "prompt",
         text: "Submit existing run",
         parts: [{ type: "text", text: "Submit existing run" }],
-        attachments: [{
-          name: "brief.txt",
-          kind: "file",
-          mimeType: "text/plain",
-          dataUrl: "data:text/plain;base64,YnJpZWY=",
-          fileSessionPath: "sessions/sess-submit-existing/brief.txt",
-        }],
+        attachments: [
+          {
+            name: "brief.txt",
+            kind: "file",
+            mimeType: "text/plain",
+            dataUrl: "data:text/plain;base64,YnJpZWY=",
+            fileSessionPath: "sessions/sess-submit-existing/brief.txt",
+          },
+        ],
       },
       options: {
         model: {
@@ -1895,9 +1918,8 @@ describe("conversation routes", () => {
         variant: "xhigh",
       },
     };
-    const submit = () => fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
+    const submit = () =>
+      fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
         method: "POST",
         headers: {
           Authorization: "Bearer client-token",
@@ -1905,12 +1927,11 @@ describe("conversation routes", () => {
           "x-veslo-send-trace-id": "submit-existing-run-trace",
         },
         body: JSON.stringify(submitBody),
-      },
-    );
+      });
 
     const submitResponse = await submit();
     expect(submitResponse.status).toBe(200);
-    const payload = await submitResponse.json() as {
+    const payload = (await submitResponse.json()) as {
       status?: string;
       workspaceId?: string;
       conversationId?: string;
@@ -1927,20 +1948,22 @@ describe("conversation routes", () => {
     expect(payload.runId).toMatch(/^[a-z0-9_-]+$/i);
     expect(payload.clientMessageId).toBe("msg-submit-existing-run");
     expect(payload.draftDisposition).toBe("clear");
-    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit"))
-      .toBe(true);
-    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:submitted"))
-      .toBe(true);
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit")).toBe(true);
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:submitted")).toBe(true);
     expect(upstreamRequests).toHaveLength(2);
-    expect(upstreamRequests[1]?.path).toBe(
-      `/session/sess-submit-existing/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
-    );
+    expect(upstreamRequests[1]?.path).toBe(`/session/sess-submit-existing/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(upstreamRequests[1]?.traceId).toBe("submit-existing-run-trace");
     expect(upstreamRequests[1]?.body?.parts).toEqual([
-      { type: "text", text: "Submit existing run\nAttached workspace file: sessions/sess-submit-existing/brief.txt" },
+      {
+        type: "text",
+        text: "Submit existing run\nAttached workspace file: sessions/sess-submit-existing/brief.txt",
+      },
     ]);
     expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
-    expect(upstreamRequests[1]?.body?.model).toEqual({ providerID: "openai", modelID: "gpt-5.5" });
+    expect(upstreamRequests[1]?.body?.model).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.5",
+    });
     expect(upstreamRequests[1]?.body?.agent).toBe("build");
     expect(upstreamRequests[1]?.body?.variant).toBe("xhigh");
     expect(upstreamRequests[1]?.body?.directory).toBeUndefined();
@@ -1980,18 +2003,27 @@ describe("conversation routes", () => {
       },
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
-    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
-        body: JSON.stringify({ directory: workspaceRoot, title: "Historical conversation" }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Historical conversation",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+    const created = (await createResponse.json()) as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
     expect(created.opencodeSessionId).toBe("sess-historical-missing");
 
     const originalConsoleLog = console.log;
@@ -1999,41 +2031,45 @@ describe("conversation routes", () => {
     console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
     let submitResponse: Response;
     try {
-      submitResponse = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer client-token",
-            "Content-Type": "application/json",
-            "x-veslo-send-trace-id": "historical-session-missing-trace",
-          },
-          body: JSON.stringify({
-            clientMessageId: "msg-historical-session-missing",
-            origin: "session:normal",
-            source: "enter",
-            target: {
-              conversationId: created.conversationId,
-              opencodeSessionId: created.opencodeSessionId,
-              directory: workspaceRoot,
-            },
-            draft: { mode: "prompt", text: "Continue historical chat", parts: [{ type: "text", text: "Continue historical chat" }] },
-          }),
+      submitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "historical-session-missing-trace",
         },
-      );
+        body: JSON.stringify({
+          clientMessageId: "msg-historical-session-missing",
+          origin: "session:normal",
+          source: "enter",
+          target: {
+            conversationId: created.conversationId,
+            opencodeSessionId: created.opencodeSessionId,
+            directory: workspaceRoot,
+          },
+          draft: {
+            mode: "prompt",
+            text: "Continue historical chat",
+            parts: [{ type: "text", text: "Continue historical chat" }],
+          },
+        }),
+      });
     } finally {
       console.log = originalConsoleLog;
     }
 
     expect(submitResponse.status).toBe(200);
-    const payload = await submitResponse.json() as {
+    const payload = (await submitResponse.json()) as {
       status?: string;
       code?: string;
       conversationId?: string;
       opencodeSessionId?: string;
       draftDisposition?: string;
       materializedSession?: unknown;
-      debugTrace?: Array<{ upstreamCode?: string | null; upstreamStatus?: number | null }>;
+      debugTrace?: Array<{
+        upstreamCode?: string | null;
+        upstreamStatus?: number | null;
+      }>;
     };
     expect(payload.status).toBe("failed");
     expect(payload.code).toBe("opencode_request_failed");
@@ -2042,10 +2078,7 @@ describe("conversation routes", () => {
     expect(payload.draftDisposition).toBe("restore");
     expect(payload.materializedSession).toBeUndefined();
     expect(payload.debugTrace?.some((entry) => entry.upstreamCode === "opencode_request_failed")).toBe(true);
-    expect(upstreamRequests).toEqual([
-      "/session",
-      "/session/sess-historical-missing/prompt_async",
-    ]);
+    expect(upstreamRequests).toEqual(["/session", "/session/sess-historical-missing/prompt_async"]);
 
     const attemptEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
     const finalEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-final"));
@@ -2073,7 +2106,7 @@ describe("conversation routes", () => {
       fetch: async (request) => {
         const url = new URL(request.url);
         orchestratorRequests.push(`${request.method} ${url.pathname}`);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         if (request.method === "POST" && url.pathname === "/workspaces") {
           return Response.json({ ok: true, workspace: { id: "ws_1" } });
         }
@@ -2086,15 +2119,19 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-fallback-evidence/prompt_async") {
-          return boundEngineResponse(request, { ok: true }, {
-            slotId: "slot-fallback-evidence",
-            ownerId: "owner-fallback-evidence",
-            directoryInstanceEpoch: 3,
-            pid: 1234,
-            startedAt: 4567,
-            baseUrl: "http://127.0.0.1:9999",
-            configDigest: "config-fallback-evidence",
-          });
+          return boundEngineResponse(
+            request,
+            { ok: true },
+            {
+              slotId: "slot-fallback-evidence",
+              ownerId: "owner-fallback-evidence",
+              directoryInstanceEpoch: 3,
+              pid: 1234,
+              startedAt: 4567,
+              baseUrl: "http://127.0.0.1:9999",
+              configDigest: "config-fallback-evidence",
+            },
+          );
         }
         return Response.json({ error: "unexpected orchestrator route" }, { status: 404 });
       },
@@ -2103,58 +2140,67 @@ describe("conversation routes", () => {
     const server = startTestServer({
       workspaceRoot,
       upstreamPort: direct.port,
-      workspaces: [{
-        id: "ws_1",
-        name: "Workspace",
-        path: workspaceRoot,
-        baseUrl: `http://127.0.0.1:${direct.port}`,
-      }],
+      workspaces: [
+        {
+          id: "ws_1",
+          name: "Workspace",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${direct.port}`,
+        },
+      ],
       orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
-        body: JSON.stringify({ directory: workspaceRoot, title: "Fallback evidence" }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Fallback evidence",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+    const created = (await createResponse.json()) as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
 
     const originalConsoleLog = console.log;
     const traceLines: string[] = [];
     console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
     let submitResponse: Response;
     try {
-      submitResponse = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer client-token",
-            "Content-Type": "application/json",
-            "x-veslo-send-trace-id": "fallback-attempt-evidence-trace",
-          },
-          body: JSON.stringify({
-            clientMessageId: "msg-fallback-attempt-evidence",
-            origin: "session:normal",
-            target: {
-              conversationId: created.conversationId,
-              opencodeSessionId: created.opencodeSessionId,
-              directory: workspaceRoot,
-            },
-            draft: { mode: "prompt", text: "Use fallback", parts: [{ type: "text", text: "Use fallback" }] },
-          }),
+      submitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "fallback-attempt-evidence-trace",
         },
-      );
+        body: JSON.stringify({
+          clientMessageId: "msg-fallback-attempt-evidence",
+          origin: "session:normal",
+          target: {
+            conversationId: created.conversationId,
+            opencodeSessionId: created.opencodeSessionId,
+            directory: workspaceRoot,
+          },
+          draft: {
+            mode: "prompt",
+            text: "Use fallback",
+            parts: [{ type: "text", text: "Use fallback" }],
+          },
+        }),
+      });
     } finally {
       console.log = originalConsoleLog;
     }
 
     expect(submitResponse.status).toBe(200);
-    expect((await submitResponse.json() as { status?: string }).status).toBe("submitted");
+    expect(((await submitResponse.json()) as { status?: string }).status).toBe("submitted");
     expect(orchestratorRequests).toContain("POST /workspace/ws_1/opencode/session/sess-fallback-evidence/prompt_async");
     const attemptStarts = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-start"));
     const failures = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
@@ -2185,12 +2231,14 @@ describe("conversation routes", () => {
       const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.method === "POST" && requestUrl.pathname === "/session") {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({
-          id: "sess-transport-replay",
-          title: "Transport replay",
-          directory: workspaceRoot,
-          time: { created: 100, updated: 100 },
-        }));
+        response.end(
+          JSON.stringify({
+            id: "sess-transport-replay",
+            title: "Transport replay",
+            directory: workspaceRoot,
+            time: { created: 100, updated: 100 },
+          }),
+        );
         return;
       }
       if (request.method === "POST" && requestUrl.pathname === "/session/sess-transport-replay/prompt_async") {
@@ -2218,51 +2266,61 @@ describe("conversation routes", () => {
     runningServers.push({ stop: () => upstream.close() });
     const address = upstream.address();
     if (!address || typeof address === "string") throw new Error("test upstream did not bind a TCP port");
-    const server = startTestServer({ workspaceRoot, upstreamPort: address.port });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: address.port,
+    });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
-        body: JSON.stringify({ directory: workspaceRoot, title: "Transport replay" }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Transport replay",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+    const created = (await createResponse.json()) as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
 
     const originalConsoleLog = console.log;
     const traceLines: string[] = [];
     console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
     let submitResponse: Response;
     try {
-      submitResponse = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer client-token",
-            "Content-Type": "application/json",
-            "x-veslo-send-trace-id": "transport-replay-evidence-trace",
-          },
-          body: JSON.stringify({
-            clientMessageId: "msg-transport-replay-evidence",
-            origin: "session:normal",
-            target: {
-              conversationId: created.conversationId,
-              opencodeSessionId: created.opencodeSessionId,
-              directory: workspaceRoot,
-            },
-            draft: { mode: "prompt", text: "Replay exactly once", parts: [{ type: "text", text: "Replay exactly once" }] },
-          }),
+      submitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "transport-replay-evidence-trace",
         },
-      );
+        body: JSON.stringify({
+          clientMessageId: "msg-transport-replay-evidence",
+          origin: "session:normal",
+          target: {
+            conversationId: created.conversationId,
+            opencodeSessionId: created.opencodeSessionId,
+            directory: workspaceRoot,
+          },
+          draft: {
+            mode: "prompt",
+            text: "Replay exactly once",
+            parts: [{ type: "text", text: "Replay exactly once" }],
+          },
+        }),
+      });
     } finally {
       console.log = originalConsoleLog;
     }
 
     expect(submitResponse.status).toBe(200);
-    expect((await submitResponse.json() as { status?: string }).status).toBe("submitted");
+    expect(((await submitResponse.json()) as { status?: string }).status).toBe("submitted");
     expect(promptRequests).toBe(2);
     const attemptStarts = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-start"));
     const failures = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
@@ -2301,17 +2359,26 @@ describe("conversation routes", () => {
       },
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
-    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
-        body: JSON.stringify({ directory: workspaceRoot, title: "Timeout evidence" }),
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Timeout evidence",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+    const created = (await createResponse.json()) as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
 
     const nativeFetch = globalThis.fetch;
     const upstreamPrefix = `http://127.0.0.1:${upstream.port}/`;
@@ -2327,34 +2394,39 @@ describe("conversation routes", () => {
     console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
     let submitResponse: Response;
     try {
-      submitResponse = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer client-token",
-            "Content-Type": "application/json",
-            "x-veslo-send-trace-id": "timeout-evidence-trace",
-          },
-          body: JSON.stringify({
-            clientMessageId: "msg-timeout-evidence",
-            origin: "session:normal",
-            target: {
-              conversationId: created.conversationId,
-              opencodeSessionId: created.opencodeSessionId,
-              directory: workspaceRoot,
-            },
-            draft: { mode: "prompt", text: "Timeout once", parts: [{ type: "text", text: "Timeout once" }] },
-          }),
+      submitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "timeout-evidence-trace",
         },
-      );
+        body: JSON.stringify({
+          clientMessageId: "msg-timeout-evidence",
+          origin: "session:normal",
+          target: {
+            conversationId: created.conversationId,
+            opencodeSessionId: created.opencodeSessionId,
+            directory: workspaceRoot,
+          },
+          draft: {
+            mode: "prompt",
+            text: "Timeout once",
+            parts: [{ type: "text", text: "Timeout once" }],
+          },
+        }),
+      });
     } finally {
       globalThis.fetch = nativeFetch;
       console.log = originalConsoleLog;
     }
 
     expect(submitResponse.status).toBe(200);
-    const payload = await submitResponse.json() as { status?: string; code?: string; draftDisposition?: string };
+    const payload = (await submitResponse.json()) as {
+      status?: string;
+      code?: string;
+      draftDisposition?: string;
+    };
     expect(payload.status).toBe("failed");
     expect(payload.code).toBe("opencode_request_timeout");
     expect(payload.draftDisposition).toBe("restore");
@@ -2401,58 +2473,70 @@ describe("conversation routes", () => {
     const server = startTestServer({
       workspaceRoot,
       upstreamPort: orchestrator.port,
-      workspaces: [{
-        id: "ws_1",
-        name: "Workspace",
-        path: workspaceRoot,
-        baseUrl: `http://127.0.0.1:${orchestrator.port}/workspace/ws_1/opencode`,
-      }],
+      workspaces: [
+        {
+          id: "ws_1",
+          name: "Workspace",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${orchestrator.port}/workspace/ws_1/opencode`,
+        },
+      ],
       orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
-        body: JSON.stringify({ directory: workspaceRoot, title: "Admission refusal" }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Admission refusal",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+    const created = (await createResponse.json()) as {
+      conversationId: string;
+      opencodeSessionId: string;
+    };
 
     const originalConsoleLog = console.log;
     const traceLines: string[] = [];
     console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
     let submitResponse: Response;
     try {
-      submitResponse = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer client-token",
-            "Content-Type": "application/json",
-            "x-veslo-send-trace-id": "admission-refusal-evidence-trace",
-          },
-          body: JSON.stringify({
-            clientMessageId: "msg-admission-refusal-evidence",
-            origin: "session:normal",
-            target: {
-              conversationId: created.conversationId,
-              opencodeSessionId: created.opencodeSessionId,
-              directory: workspaceRoot,
-            },
-            draft: { mode: "prompt", text: "Refuse stale admission", parts: [{ type: "text", text: "Refuse stale admission" }] },
-          }),
+      submitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "admission-refusal-evidence-trace",
         },
-      );
+        body: JSON.stringify({
+          clientMessageId: "msg-admission-refusal-evidence",
+          origin: "session:normal",
+          target: {
+            conversationId: created.conversationId,
+            opencodeSessionId: created.opencodeSessionId,
+            directory: workspaceRoot,
+          },
+          draft: {
+            mode: "prompt",
+            text: "Refuse stale admission",
+            parts: [{ type: "text", text: "Refuse stale admission" }],
+          },
+        }),
+      });
     } finally {
       console.log = originalConsoleLog;
     }
 
     expect(submitResponse.status).toBe(200);
-    const payload = await submitResponse.json() as { status?: string; code?: string };
+    const payload = (await submitResponse.json()) as {
+      status?: string;
+      code?: string;
+    };
     expect(payload.status).toBe("failed");
     expect(payload.code).toBe("admission_binding_changed");
     const attemptStarts = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-start"));
@@ -2469,10 +2553,12 @@ describe("conversation routes", () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-legacy-import-"));
     tempDirs.push(workspaceRoot);
     const dbPath = join(workspaceRoot, "opencode.db");
-    seedLegacyOpenCodeDb(dbPath, workspaceRoot, [{
-      id: "sess-legacy-submit",
-      title: "Legacy Submit",
-    }]);
+    seedLegacyOpenCodeDb(dbPath, workspaceRoot, [
+      {
+        id: "sess-legacy-submit",
+        title: "Legacy Submit",
+      },
+    ]);
     setEnvVarForTest("VESLO_OPENCODE_DB_PATH", dbPath);
 
     const upstreamRequests: Array<{
@@ -2485,7 +2571,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: `${url.pathname}${url.search}`,
           traceId: request.headers.get("x-veslo-send-trace-id"),
@@ -2503,31 +2589,31 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const submitResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "x-veslo-send-trace-id": "submit-legacy-import-trace",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-legacy-import",
-          origin: "session:normal",
-          source: "enter",
-          target: { opencodeSessionId: "sess-legacy-submit", directory: workspaceRoot },
-          draft: {
-            mode: "prompt",
-            text: "Continue legacy session",
-            parts: [{ type: "text", text: "Continue legacy session" }],
-          },
-        }),
+    const submitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "submit-legacy-import-trace",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-legacy-import",
+        origin: "session:normal",
+        source: "enter",
+        target: {
+          opencodeSessionId: "sess-legacy-submit",
+          directory: workspaceRoot,
+        },
+        draft: {
+          mode: "prompt",
+          text: "Continue legacy session",
+          parts: [{ type: "text", text: "Continue legacy session" }],
+        },
+      }),
+    });
 
     expect(submitResponse.status).toBe(200);
-    const payload = await submitResponse.json() as {
+    const payload = (await submitResponse.json()) as {
       status?: string;
       workspaceId?: string;
       conversationId?: string;
@@ -2544,9 +2630,7 @@ describe("conversation routes", () => {
     expect(payload.clientMessageId).toBe("msg-submit-legacy-import");
     expect(payload.draftDisposition).toBe("clear");
     expect(upstreamRequests).toHaveLength(1);
-    expect(upstreamRequests[0]?.path).toBe(
-      `/session/sess-legacy-submit/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
-    );
+    expect(upstreamRequests[0]?.path).toBe(`/session/sess-legacy-submit/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(upstreamRequests[0]?.traceId).toBe("submit-legacy-import-trace");
     expectOpenCodeAdmissionMessageId(upstreamRequests[0]?.body?.messageID);
   });
@@ -2556,11 +2640,13 @@ describe("conversation routes", () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-transcript-legacy-import-"));
     tempDirs.push(workspaceRoot);
     const dbPath = join(workspaceRoot, "opencode.db");
-    seedLegacyOpenCodeDb(dbPath, workspaceRoot, [{
-      id: "sess-legacy-read",
-      title: "Legacy Read",
-      messageText: "legacy transcript",
-    }]);
+    seedLegacyOpenCodeDb(dbPath, workspaceRoot, [
+      {
+        id: "sess-legacy-read",
+        title: "Legacy Read",
+        messageText: "legacy transcript",
+      },
+    ]);
     setEnvVarForTest("VESLO_OPENCODE_DB_PATH", dbPath);
 
     let upstreamHits = 0;
@@ -2569,7 +2655,9 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async () => {
         upstreamHits += 1;
-        return new Response("passive transcript read must not hit upstream", { status: 500 });
+        return new Response("passive transcript read must not hit upstream", {
+          status: 500,
+        });
       },
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
@@ -2588,7 +2676,7 @@ describe("conversation routes", () => {
     );
 
     expect(transcriptResponse.status).toBe(200);
-    const payload = await transcriptResponse.json() as {
+    const payload = (await transcriptResponse.json()) as {
       sessionId?: string;
       conversationId?: string;
       opencodeSessionId?: string;
@@ -2619,7 +2707,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: `${url.pathname}${url.search}`,
           method: request.method,
@@ -2635,13 +2723,19 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "GET" && url.pathname === "/session/sess-submit-replace") {
-          return Response.json({ id: "sess-submit-replace", revert: { messageID: "msg_previous_revert" } });
+          return Response.json({
+            id: "sess-submit-replace",
+            revert: { messageID: "msg_previous_revert" },
+          });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-submit-replace/abort") {
           return Response.json({ ok: true });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-submit-replace/revert") {
-          return Response.json({ id: "sess-submit-replace", revert: { messageID: body?.messageID } });
+          return Response.json({
+            id: "sess-submit-replace",
+            revert: { messageID: body?.messageID },
+          });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-submit-replace/prompt_async") {
           return Response.json({ ok: true });
@@ -2655,54 +2749,51 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Replacement submit",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Replacement submit",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as {
+    const created = (await createResponse.json()) as {
       conversationId: string;
       opencodeSessionId: string;
     };
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "x-veslo-send-trace-id": "submit-replace-run-trace",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-replace-run",
-          origin: "session:replacement",
-          target: { conversationId: created.conversationId, directory: workspaceRoot },
-          draft: {
-            mode: "prompt",
-            text: "Edited replacement",
-            parts: [{ type: "text", text: "Edited replacement" }],
-          },
-          options: {
-            replaceMessageId: "msg_original",
-            model: { providerID: "openai", modelID: "gpt-5.5" },
-          },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "submit-replace-run-trace",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-replace-run",
+        origin: "session:replacement",
+        target: {
+          conversationId: created.conversationId,
+          directory: workspaceRoot,
+        },
+        draft: {
+          mode: "prompt",
+          text: "Edited replacement",
+          parts: [{ type: "text", text: "Edited replacement" }],
+        },
+        options: {
+          replaceMessageId: "msg_original",
+          model: { providerID: "openai", modelID: "gpt-5.5" },
+        },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       status?: string;
       conversationId?: string;
       opencodeSessionId?: string;
@@ -2728,14 +2819,22 @@ describe("conversation routes", () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-replace-restore-"));
     tempDirs.push(workspaceRoot);
-    const upstreamRequests: Array<{ path: string; method: string; body: Record<string, unknown> | null }> = [];
+    const upstreamRequests: Array<{
+      path: string;
+      method: string;
+      body: Record<string, unknown> | null;
+    }> = [];
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
-        upstreamRequests.push({ path: `${url.pathname}${url.search}`, method: request.method, body });
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+        upstreamRequests.push({
+          path: `${url.pathname}${url.search}`,
+          method: request.method,
+          body,
+        });
         if (request.method === "POST" && url.pathname === "/session") {
           return Response.json({
             id: "sess-submit-replace-restore",
@@ -2746,67 +2845,83 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "GET" && url.pathname === "/session/sess-submit-replace-restore") {
-          return Response.json({ id: "sess-submit-replace-restore", revert: null });
+          return Response.json({
+            id: "sess-submit-replace-restore",
+            revert: null,
+          });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-submit-replace-restore/abort") {
           return Response.json({ ok: true });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-submit-replace-restore/revert") {
-          return Response.json({ id: "sess-submit-replace-restore", revert: { messageID: body?.messageID } });
+          return Response.json({
+            id: "sess-submit-replace-restore",
+            revert: { messageID: body?.messageID },
+          });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-submit-replace-restore/prompt_async") {
           return Response.json({ error: "submit failed" }, { status: 500 });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-submit-replace-restore/unrevert") {
-          return Response.json({ id: "sess-submit-replace-restore", revert: null });
+          return Response.json({
+            id: "sess-submit-replace-restore",
+            revert: null,
+          });
         }
         return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
       },
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
-    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ directory: workspaceRoot, title: "Replacement restore" }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Replacement restore",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-replace-restore",
-          origin: "session:replacement",
-          target: { conversationId: created.conversationId, directory: workspaceRoot },
-          draft: {
-            mode: "prompt",
-            text: "Edited replacement failure",
-            parts: [{ type: "text", text: "Edited replacement failure" }],
-          },
-          options: {
-            replaceMessageId: "msg_original",
-            model: { providerID: "openai", modelID: "gpt-5.5" },
-          },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-replace-restore",
+        origin: "session:replacement",
+        target: {
+          conversationId: created.conversationId,
+          directory: workspaceRoot,
+        },
+        draft: {
+          mode: "prompt",
+          text: "Edited replacement failure",
+          parts: [{ type: "text", text: "Edited replacement failure" }],
+        },
+        options: {
+          replaceMessageId: "msg_original",
+          model: { providerID: "openai", modelID: "gpt-5.5" },
+        },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as { status?: string; code?: string; draftDisposition?: string };
+    const payload = (await response.json()) as {
+      status?: string;
+      code?: string;
+      draftDisposition?: string;
+    };
     expect(payload.status).toBe("failed");
     expect(payload.code).toBe("replacement_submit_failed_restore_succeeded");
     expect(payload.draftDisposition).toBe("restore");
@@ -2835,7 +2950,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: `${url.pathname}${url.search}`,
           traceId: request.headers.get("x-veslo-send-trace-id"),
@@ -2892,16 +3007,19 @@ describe("conversation routes", () => {
             stale: false,
           });
         }
-        if (
-          request.method === "GET" &&
-          /^\/workspace\/ws_1\/conversations\/[^/]+\/runs\/[^/]+$/.test(url.pathname)
-        ) {
+        if (request.method === "GET" && /^\/workspace\/ws_1\/conversations\/[^/]+\/runs\/[^/]+$/.test(url.pathname)) {
           return Response.json({ error: "run not found" }, { status: 404 });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
-          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
           registerRequests.push(typeof body?.runId === "string" ? body.runId : "");
-          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+          return Response.json({
+            ok: true,
+            ...body,
+            workspaceId: "ws_1",
+            status: "running",
+            stale: false,
+          });
         }
         return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
       },
@@ -2915,22 +3033,19 @@ describe("conversation routes", () => {
       orchestratorLifecycleToken: "lifecycle-token",
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Send now queued",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Send now queued",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as {
+    const created = (await createResponse.json()) as {
       conversationId: string;
       opencodeSessionId: string;
     };
@@ -2940,7 +3055,10 @@ describe("conversation routes", () => {
       clientMessageId: "msg-submit-send-now-queued",
       origin: "session:send-now",
       source: "send-now",
-      target: { conversationId: created.conversationId, directory: workspaceRoot },
+      target: {
+        conversationId: created.conversationId,
+        directory: workspaceRoot,
+      },
       draft: {
         mode: "prompt",
         text: "Send now queued",
@@ -2951,9 +3069,8 @@ describe("conversation routes", () => {
         model: { providerID: "openai", modelID: "gpt-5.5" },
       },
     };
-    const submit = () => fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
+    const submit = () =>
+      fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
         method: "POST",
         headers: {
           Authorization: "Bearer client-token",
@@ -2961,12 +3078,11 @@ describe("conversation routes", () => {
           "x-veslo-send-trace-id": "submit-send-now-queued-trace",
         },
         body: JSON.stringify(submitBody),
-      },
-    );
+      });
 
     const submitResponse = await submit();
     expect(submitResponse.status).toBe(202);
-    const payload = await submitResponse.json() as {
+    const payload = (await submitResponse.json()) as {
       status?: string;
       workspaceId?: string;
       conversationId?: string;
@@ -2991,27 +3107,24 @@ describe("conversation routes", () => {
     expect(engineSubmits).toEqual([]);
     expect(upstreamRequests).toHaveLength(1);
 
-    const serverQueueOnlyResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "x-veslo-send-trace-id": "submit-server-queue-only-trace",
-        },
-        body: JSON.stringify({
-          ...submitBody,
-          clientMessageId: "msg-submit-server-queue-only",
-          options: {
-            ...submitBody.options,
-            submitQueuePolicy: "server-queue-only",
-          },
-        }),
+    const serverQueueOnlyResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "submit-server-queue-only-trace",
       },
-    );
+      body: JSON.stringify({
+        ...submitBody,
+        clientMessageId: "msg-submit-server-queue-only",
+        options: {
+          ...submitBody.options,
+          submitQueuePolicy: "server-queue-only",
+        },
+      }),
+    });
     expect(serverQueueOnlyResponse.status).toBe(202);
-    const serverQueueOnlyPayload = await serverQueueOnlyResponse.json() as {
+    const serverQueueOnlyPayload = (await serverQueueOnlyResponse.json()) as {
       status?: string;
       queueItemId?: string;
       reservedRunId?: string;
@@ -3032,7 +3145,7 @@ describe("conversation routes", () => {
       },
     );
     expect(queueStatusResponse.status).toBe(200);
-    const queueStatusPayload = await queueStatusResponse.json() as {
+    const queueStatusPayload = (await queueStatusResponse.json()) as {
       status?: string;
       workspaceId?: string;
       conversationId?: string;
@@ -3060,7 +3173,7 @@ describe("conversation routes", () => {
       },
     );
     expect(queuedRunStatusResponse.status).toBe(200);
-    const queuedRunStatusPayload = await queuedRunStatusResponse.json() as Record<string, unknown>;
+    const queuedRunStatusPayload = (await queuedRunStatusResponse.json()) as Record<string, unknown>;
     expect(queuedRunStatusPayload).toMatchObject({
       ok: true,
       workspaceId: "ws_1",
@@ -3075,30 +3188,37 @@ describe("conversation routes", () => {
     });
 
     const listConversationId = "conv-queue-read";
-    const listStore = createConversationRunQueueStore({ dataDir: vesloDataDir, now: () => 2_000 });
-    const enqueueListItem = (clientMessageId: string) => listStore.enqueue({
-      workspaceId: "ws_1",
-      conversationId: listConversationId,
-      opencodeSessionId: "sess-queue-read",
-      directory: "/private/queue-directory",
-      reservedRunId: `run-${clientMessageId}`,
-      clientMessageId,
-      origin: "session:queue-drain",
-      kind: "prompt_async",
-      bodyJson: JSON.stringify({
+    const listStore = createConversationRunQueueStore({
+      dataDir: vesloDataDir,
+      now: () => 2_000,
+    });
+    const enqueueListItem = (clientMessageId: string) =>
+      listStore.enqueue({
+        workspaceId: "ws_1",
+        conversationId: listConversationId,
+        opencodeSessionId: "sess-queue-read",
+        directory: "/private/queue-directory",
+        reservedRunId: `run-${clientMessageId}`,
+        clientMessageId,
+        origin: "session:queue-drain",
         kind: "prompt_async",
-        text: "private queued prompt body",
-        runtimeAuthorizationActorTokenHash: "runtime-auth-secret",
-      }),
-    }).item;
+        bodyJson: JSON.stringify({
+          kind: "prompt_async",
+          text: "private queued prompt body",
+          runtimeAuthorizationActorTokenHash: "runtime-auth-secret",
+        }),
+      }).item;
     const listPending = enqueueListItem("list-pending");
     const listStarting = enqueueListItem("list-starting");
     const listFailed = enqueueListItem("list-failed");
     const listSubmitted = enqueueListItem("list-submitted");
-    listStore.markStarting(listStarting.queueItemId);
-    listStore.markStarting(listFailed.queueItemId);
+    listStore.claimStartingWithReservation(listStarting.queueItemId);
+    listStore.releaseWorkspaceRun("ws_1", listStarting.reservedRunId);
+    listStore.claimStartingWithReservation(listFailed.queueItemId);
+    listStore.releaseWorkspaceRun("ws_1", listFailed.reservedRunId);
     listStore.markFailed(listFailed.queueItemId, "Bearer queue-token authorization=raw-secret");
-    listStore.markStarting(listSubmitted.queueItemId);
+    listStore.claimStartingWithReservation(listSubmitted.queueItemId);
+    listStore.releaseWorkspaceRun("ws_1", listSubmitted.reservedRunId);
     listStore.markSubmitted(listSubmitted.queueItemId);
 
     const listBaseUrl = `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${listConversationId}/queue?status=pending&status=starting&status=failed`;
@@ -3106,7 +3226,7 @@ describe("conversation routes", () => {
       headers: { Authorization: "Bearer client-token" },
     });
     expect(fullListResponse.status).toBe(200);
-    const fullListPayload = await fullListResponse.json() as {
+    const fullListPayload = (await fullListResponse.json()) as {
       items?: Array<Record<string, unknown>>;
       nextCursor?: string | null;
     };
@@ -3127,15 +3247,7 @@ describe("conversation routes", () => {
       error: "Bearer [redacted] authorization=[redacted]",
     });
     for (const item of fullListPayload.items ?? []) {
-      for (const forbidden of [
-        "bodyJson",
-        "directory",
-        "requestHash",
-        "runtimeAuthorizationActorTokenHash",
-        "origin",
-        "activeRunId",
-        "attempts",
-      ]) {
+      for (const forbidden of ["bodyJson", "directory", "requestHash", "runtimeAuthorizationActorTokenHash", "origin", "activeRunId", "attempts"]) {
         expect(item).not.toHaveProperty(forbidden);
       }
       expect(JSON.stringify(item)).not.toContain("private queued prompt body");
@@ -3146,7 +3258,7 @@ describe("conversation routes", () => {
     const firstPageResponse = await fetch(`${listBaseUrl}&limit=2`, {
       headers: { Authorization: "Bearer client-token" },
     });
-    const firstPagePayload = await firstPageResponse.json() as {
+    const firstPagePayload = (await firstPageResponse.json()) as {
       items?: Array<Record<string, unknown>>;
       nextCursor?: string | null;
     };
@@ -3156,31 +3268,33 @@ describe("conversation routes", () => {
     const secondPageResponse = await fetch(`${listBaseUrl}&limit=2&cursor=${encodeURIComponent(firstPagePayload.nextCursor!)}`, {
       headers: { Authorization: "Bearer client-token" },
     });
-    const secondPagePayload = await secondPageResponse.json() as { items?: Array<Record<string, unknown>>; nextCursor?: string | null };
+    const secondPagePayload = (await secondPageResponse.json()) as {
+      items?: Array<Record<string, unknown>>;
+      nextCursor?: string | null;
+    };
     expect(secondPageResponse.status).toBe(200);
     expect(secondPagePayload.nextCursor).toBeNull();
-    expect([
-      ...(firstPagePayload.items ?? []).map((item) => item.queueItemId),
-      ...(secondPagePayload.items ?? []).map((item) => item.queueItemId),
-    ]).toEqual((fullListPayload.items ?? []).map((item) => item.queueItemId));
+    expect([...(firstPagePayload.items ?? []).map((item) => item.queueItemId), ...(secondPagePayload.items ?? []).map((item) => item.queueItemId)]).toEqual(
+      (fullListPayload.items ?? []).map((item) => item.queueItemId),
+    );
 
-    for (const invalidUrl of [
-      `${listBaseUrl}&status=submitted`,
-      `${listBaseUrl}&limit=101`,
-      `${listBaseUrl}&cursor=not-a-queue-cursor`,
-    ]) {
-      const invalidResponse = await fetch(invalidUrl, { headers: { Authorization: "Bearer client-token" } });
+    for (const invalidUrl of [`${listBaseUrl}&status=submitted`, `${listBaseUrl}&limit=101`, `${listBaseUrl}&cursor=not-a-queue-cursor`]) {
+      const invalidResponse = await fetch(invalidUrl, {
+        headers: { Authorization: "Bearer client-token" },
+      });
       expect(invalidResponse.status).toBe(400);
     }
-    const foreignConversationResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-queue-foreign/queue?limit=10`,
-      { headers: { Authorization: "Bearer client-token" } },
-    );
+    const foreignConversationResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-queue-foreign/queue?limit=10`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
     expect(foreignConversationResponse.status).toBe(200);
-    expect((await foreignConversationResponse.json() as { items?: unknown[] }).items).toEqual([]);
+    expect(((await foreignConversationResponse.json()) as { items?: unknown[] }).items).toEqual([]);
 
-    const queueStore = createConversationRunQueueStore({ dataDir: vesloDataDir });
-    queueStore.markStarting(payload.queueItemId!);
+    const queueStore = createConversationRunQueueStore({
+      dataDir: vesloDataDir,
+    });
+    queueStore.claimStartingWithReservation(payload.queueItemId!);
+    queueStore.releaseWorkspaceRun("ws_1", payload.reservedRunId!);
     queueStore.markFailed(payload.queueItemId!, "queued drain failed");
     const failedQueueStatusResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${created.conversationId}/queue/${payload.queueItemId}`,
@@ -3191,7 +3305,7 @@ describe("conversation routes", () => {
       },
     );
     expect(failedQueueStatusResponse.status).toBe(200);
-    const failedQueueStatusPayload = await failedQueueStatusResponse.json() as {
+    const failedQueueStatusPayload = (await failedQueueStatusResponse.json()) as {
       status?: string;
       error?: string | null;
     };
@@ -3235,7 +3349,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         upstreamRequests.push({
           path: `${url.pathname}${url.search}`,
           traceId: request.headers.get("x-veslo-send-trace-id"),
@@ -3262,54 +3376,51 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Compact submit",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Compact submit",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as {
+    const created = (await createResponse.json()) as {
       conversationId: string;
       opencodeSessionId: string;
     };
     expect(created.opencodeSessionId).toBe("sess-submit-compact");
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "x-veslo-send-trace-id": "submit-compact-run-trace",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-compact-run",
-          origin: "session:normal",
-          target: { conversationId: created.conversationId, directory: workspaceRoot },
-          draft: {
-            mode: "prompt",
-            text: "/compact",
-            parts: [{ type: "text", text: "/compact" }],
-          },
-          options: {
-            model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
-          },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "submit-compact-run-trace",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-compact-run",
+        origin: "session:normal",
+        target: {
+          conversationId: created.conversationId,
+          directory: workspaceRoot,
+        },
+        draft: {
+          mode: "prompt",
+          text: "/compact",
+          parts: [{ type: "text", text: "/compact" }],
+        },
+        options: {
+          model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+        },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       status?: string;
       conversationId?: string;
       opencodeSessionId?: string;
@@ -3320,9 +3431,7 @@ describe("conversation routes", () => {
     expect(payload.opencodeSessionId).toBe("sess-submit-compact");
     expect(payload.draftDisposition).toBe("clear");
     expect(upstreamRequests).toHaveLength(2);
-    expect(upstreamRequests[1]?.path).toBe(
-      `/session/sess-submit-compact/summarize?directory=${encodeURIComponent(workspaceRoot)}`,
-    );
+    expect(upstreamRequests[1]?.path).toBe(`/session/sess-submit-compact/summarize?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(upstreamRequests[1]?.traceId).toBe("submit-compact-run-trace");
     expect(upstreamRequests[1]?.body).toEqual({
       providerID: "anthropic",
@@ -3353,33 +3462,33 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-materialize-fail",
-          origin: "session:normal",
-          target: { directory: workspaceRoot },
-          draft: {
-            mode: "prompt",
-            text: "Create should fail",
-            parts: [{ type: "text", text: "Create should fail" }],
-          },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-materialize-fail",
+        origin: "session:normal",
+        target: { directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "Create should fail",
+          parts: [{ type: "text", text: "Create should fail" }],
+        },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       status?: string;
       code?: string;
       draftDisposition?: string;
-      debugTrace?: Array<{ upstreamCode?: string | null; upstreamStatus?: number | null }>;
+      debugTrace?: Array<{
+        upstreamCode?: string | null;
+        upstreamStatus?: number | null;
+      }>;
     };
     expect(payload.status).toBe("failed");
     expect(payload.code).toBe("conversation_create_failed");
@@ -3398,29 +3507,33 @@ describe("conversation routes", () => {
       upstreamPort: 9,
     });
     const url = `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`;
-    const submit = (text: string) => fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer client-token",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        clientMessageId: "msg-submit-conflict",
-        origin: "session:normal",
-        target: { directory: workspaceRoot },
-        draft: {
-          mode: "prompt",
-          text,
-          parts: [{ type: "text", text }],
+    const submit = (text: string) =>
+      fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
         },
-        options: { dryRun: true },
-      }),
-    });
+        body: JSON.stringify({
+          clientMessageId: "msg-submit-conflict",
+          origin: "session:normal",
+          target: { directory: workspaceRoot },
+          draft: {
+            mode: "prompt",
+            text,
+            parts: [{ type: "text", text }],
+          },
+          options: { dryRun: true },
+        }),
+      });
 
     expect((await submit("First")).status).toBe(200);
     const conflictResponse = await submit("Second");
     expect(conflictResponse.status).toBe(409);
-    const conflict = await conflictResponse.json() as { code?: string; message?: string };
+    const conflict = (await conflictResponse.json()) as {
+      code?: string;
+      message?: string;
+    };
     expect(conflict.code).toBe("idempotency_conflict");
   });
 
@@ -3443,22 +3556,23 @@ describe("conversation routes", () => {
         parts: [{ type: "text", text: "Same text" }],
       },
     };
-    const submit = (options?: Record<string, unknown>) => fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer client-token",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        ...baseBody,
-        ...(options ? { options } : {}),
-      }),
-    });
+    const submit = (options?: Record<string, unknown>) =>
+      fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...baseBody,
+          ...(options ? { options } : {}),
+        }),
+      });
 
     expect((await submit({ dryRun: true })).status).toBe(200);
     const conflictResponse = await submit();
     expect(conflictResponse.status).toBe(409);
-    const conflict = await conflictResponse.json() as { code?: string };
+    const conflict = (await conflictResponse.json()) as { code?: string };
     expect(conflict.code).toBe("idempotency_conflict");
   });
 
@@ -3479,39 +3593,38 @@ describe("conversation routes", () => {
     const server = startTestServer({
       workspaceRoot,
       upstreamPort: upstream.port,
-      workspaces: [{
-        id: "ws_remote",
-        name: "Remote",
-        path: workspaceRoot,
-        workspaceType: "remote",
-        baseUrl: `http://127.0.0.1:${upstream.port}`,
-      }],
+      workspaces: [
+        {
+          id: "ws_remote",
+          name: "Remote",
+          path: workspaceRoot,
+          workspaceType: "remote",
+          baseUrl: `http://127.0.0.1:${upstream.port}`,
+        },
+      ],
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/submit`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          clientMessageId: "msg-submit-remote",
-          origin: "session:normal",
-          target: { directory: workspaceRoot },
-          draft: {
-            mode: "prompt",
-            text: "Remote",
-            parts: [{ type: "text", text: "Remote" }],
-          },
-          options: { dryRun: true },
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        clientMessageId: "msg-submit-remote",
+        origin: "session:normal",
+        target: { directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "Remote",
+          parts: [{ type: "text", text: "Remote" }],
+        },
+        options: { dryRun: true },
+      }),
+    });
 
     expect(response.status).toBe(200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       status?: string;
       code?: string;
       draftDisposition?: string;
@@ -3523,10 +3636,9 @@ describe("conversation routes", () => {
     expect(payload.recoverable).toBe(true);
     expect(upstreamRequests).toEqual([]);
 
-    const queueReadResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/conv-remote/queue?limit=10`,
-      { headers: { Authorization: "Bearer client-token" } },
-    );
+    const queueReadResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/conv-remote/queue?limit=10`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
     expect(queueReadResponse.status).toBe(404);
   });
 
@@ -3539,41 +3651,39 @@ describe("conversation routes", () => {
       upstreamPort: 9,
     });
 
-    const importResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/import`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          sessions: [
-            {
-              id: "sess-live",
-              title: "Live",
-              parentID: null,
-              time: { created: 100, updated: 200 },
-            },
-          ],
-        }),
+    const importResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/import`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        sessions: [
+          {
+            id: "sess-live",
+            title: "Live",
+            parentID: null,
+            time: { created: 100, updated: 200 },
+          },
+        ],
+      }),
+    });
     expect(importResponse.status).toBe(200);
 
-    const conversationsResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations?directory=${encodeURIComponent(workspaceRoot)}`,
-      {
-        headers: {
-          Authorization: "Bearer client-token",
-        },
+    const conversationsResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations?directory=${encodeURIComponent(workspaceRoot)}`, {
+      headers: {
+        Authorization: "Bearer client-token",
       },
-    );
+    });
     expect(conversationsResponse.status).toBe(200);
-    const conversationsPayload = await conversationsResponse.json() as {
+    const conversationsPayload = (await conversationsResponse.json()) as {
       source: string;
-      items: Array<{ id: string; conversationId?: string; opencodeSessionId?: string }>;
+      items: Array<{
+        id: string;
+        conversationId?: string;
+        opencodeSessionId?: string;
+      }>;
     };
     expect(["sqlite", "unavailable"]).toContain(conversationsPayload.source);
     expect(conversationsPayload.items).toHaveLength(1);
@@ -3589,11 +3699,7 @@ describe("conversation routes", () => {
     await mkdir(join(workspaceRoot, ".opencode", "skills", "example"), {
       recursive: true,
     });
-    await writeFile(
-      join(workspaceRoot, ".opencode", "skills", "example", "SKILL.md"),
-      "---\nname: example\ndescription: Example\n---\n",
-      "utf8",
-    );
+    await writeFile(join(workspaceRoot, ".opencode", "skills", "example", "SKILL.md"), "---\nname: example\ndescription: Example\n---\n", "utf8");
     const servingCandidate = await prepareRuntimeSkillCandidate({
       id: "ws_orch",
       name: "Orchestrated",
@@ -3616,9 +3722,7 @@ describe("conversation routes", () => {
         if (request.method === "POST" && url.pathname === "/workspace/ws_orch/opencode/session") {
           receivedSkillBindings.push({
             revision: request.headers.get("x-veslo-skill-view-revision"),
-            authorizationRevision: request.headers.get(
-              "x-veslo-skill-authorization-revision",
-            ),
+            authorizationRevision: request.headers.get("x-veslo-skill-authorization-revision"),
           });
           return boundEngineResponse(request, {
             id: "sess-orch",
@@ -3647,20 +3751,17 @@ describe("conversation routes", () => {
       ],
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_orch/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Orchestrated",
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_orch/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Orchestrated",
+      }),
+    });
 
     expect(response.status).toBe(201);
     expect(upstreamPath).toBe("/workspace/ws_orch/opencode/session");
@@ -3670,7 +3771,10 @@ describe("conversation routes", () => {
       revision: null,
       authorizationRevision: null,
     });
-    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    const payload = (await response.json()) as {
+      id: string;
+      opencodeSessionId: string;
+    };
     expect(payload.id).toBe("sess-orch");
     expect(payload.opencodeSessionId).toBe("sess-orch");
   });
@@ -3726,25 +3830,25 @@ describe("conversation routes", () => {
       ],
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_orch_stale/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Orchestrated stale",
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_orch_stale/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Orchestrated stale",
+      }),
+    });
 
     expect(response.status).toBe(201);
     expect(staleBaseUrlHit).toBe(true);
     expect(orchestratorPath).toBe("/workspace/ws_orch_stale/opencode/session");
-    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    const payload = (await response.json()) as {
+      id: string;
+      opencodeSessionId: string;
+    };
     expect(payload.id).toBe("sess-orch-stale");
     expect(payload.opencodeSessionId).toBe("sess-orch-stale");
   });
@@ -3760,9 +3864,12 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async () => {
         staleBaseUrlHit = true;
-        return Response.json({
-          error: "Unable to connect. Is the computer able to access the url?",
-        }, { status: 500 });
+        return Response.json(
+          {
+            error: "Unable to connect. Is the computer able to access the url?",
+          },
+          { status: 500 },
+        );
       },
     });
     runningServers.push(staleUpstream as { stop?: (closeActiveConnections?: boolean) => void });
@@ -3802,25 +3909,25 @@ describe("conversation routes", () => {
       ],
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_orch_unable_connect/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Orchestrated unable connect",
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_orch_unable_connect/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Orchestrated unable connect",
+      }),
+    });
 
     expect(response.status).toBe(201);
     expect(staleBaseUrlHit).toBe(true);
     expect(orchestratorPath).toBe("/workspace/ws_orch_unable_connect/opencode/session");
-    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    const payload = (await response.json()) as {
+      id: string;
+      opencodeSessionId: string;
+    };
     expect(payload.id).toBe("sess-orch-unable-connect");
     expect(payload.opencodeSessionId).toBe("sess-orch-unable-connect");
   });
@@ -3880,32 +3987,36 @@ describe("conversation routes", () => {
       headers: { Authorization: "Bearer client-token" },
     });
     expect(listResponse.status).toBe(200);
-    const listPayload = await listResponse.json() as {
-      items: Array<{ id: string; baseUrl?: string; opencode?: { baseUrl?: string } }>;
+    const listPayload = (await listResponse.json()) as {
+      items: Array<{
+        id: string;
+        baseUrl?: string;
+        opencode?: { baseUrl?: string };
+      }>;
     };
     const listed = listPayload.items.find((item) => item.id === "ws_empty_mount");
     expect(listed?.baseUrl).toBe(`http://127.0.0.1:${orchestrator.port}/workspace/ws_empty_mount/opencode`);
     expect(listed?.opencode?.baseUrl).toBe(`http://127.0.0.1:${orchestrator.port}/workspace/ws_empty_mount/opencode`);
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_empty_mount/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Recovered empty mount",
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_empty_mount/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Recovered empty mount",
+      }),
+    });
 
     expect(response.status).toBe(201);
     expect(malformedBaseUrlHit).toBe(false);
     expect(orchestratorPath).toBe("/workspace/ws_empty_mount/opencode/session");
-    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    const payload = (await response.json()) as {
+      id: string;
+      opencodeSessionId: string;
+    };
     expect(payload.id).toBe("sess-empty-mount");
     expect(payload.opencodeSessionId).toBe("sess-empty-mount");
   });
@@ -3951,10 +4062,7 @@ describe("conversation routes", () => {
         if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
-        if (
-          request.method === "GET" &&
-          url.pathname.endsWith("/runs/active")
-        ) {
+        if (request.method === "GET" && url.pathname.endsWith("/runs/active")) {
           return Response.json({
             ok: true,
             workspaceId: "ws_1",
@@ -3964,10 +4072,7 @@ describe("conversation routes", () => {
             stale: false,
           });
         }
-        if (
-          request.method === "GET" &&
-          url.pathname.endsWith("/runs/latest")
-        ) {
+        if (request.method === "GET" && url.pathname.endsWith("/runs/latest")) {
           return Response.json({
             ok: true,
             workspaceId: "ws_1",
@@ -3982,10 +4087,16 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
-          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
           registerRequests.push(typeof body?.runId === "string" ? body.runId : "");
           lifecycleStatus = "running";
-          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+          return Response.json({
+            ok: true,
+            ...body,
+            workspaceId: "ws_1",
+            status: "running",
+            stale: false,
+          });
         }
         return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
       },
@@ -3999,42 +4110,36 @@ describe("conversation routes", () => {
       orchestratorLifecycleToken: "lifecycle-token",
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Queued",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Queued",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "X-Veslo-Send-Trace-Id": "send-queued",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          clientMessageId: "msg-queued",
-          parts: [{ type: "text", text: "Queue me" }],
-        }),
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "X-Veslo-Send-Trace-Id": "send-queued",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        clientMessageId: "msg-queued",
+        parts: [{ type: "text", text: "Queue me" }],
+      }),
+    });
     expect(runResponse.status).toBe(202);
-    const payload = await runResponse.json() as {
+    const payload = (await runResponse.json()) as {
       status?: string;
       queueItemId?: string;
       activeRunId?: string;
@@ -4051,10 +4156,10 @@ describe("conversation routes", () => {
     expect(orchestratorRequests.some((entry) => entry.endsWith("/runs/active"))).toBe(true);
 
     lifecycleStatus = "completed";
-    await waitForCondition(
-      () => engineSubmits.length > 0,
-      { timeoutMs: 3_000, message: "expected queued run to drain after active run completed" },
-    );
+    await waitForCondition(() => engineSubmits.length > 0, {
+      timeoutMs: 3_000,
+      message: "expected queued run to drain after active run completed",
+    });
     expect(registerRequests).toHaveLength(1);
     expect(engineSubmits).toEqual(["/session/sess-queued/prompt_async"]);
   });
@@ -4116,53 +4221,48 @@ describe("conversation routes", () => {
       ],
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_remote/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Remote",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_remote/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Remote",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "X-Veslo-Send-Trace-Id": "send-remote",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Remote run" }],
-        }),
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "X-Veslo-Send-Trace-Id": "send-remote",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Remote run" }],
+      }),
+    });
     expect(runResponse.status).toBe(200);
-    const payload = await runResponse.json() as {
+    const payload = (await runResponse.json()) as {
       status?: string;
       debugTrace?: Array<{ event: string; enabled?: boolean }>;
     };
     expect(payload.status).toBe("submitted");
-    expect(payload.debugTrace?.some((entry) =>
-      entry.event === "server:conversation-run:lifecycle-owner" && entry.enabled === false
-    )).toBe(true);
-    expect(payload.debugTrace?.some((entry) =>
-      entry.event === "server:conversation-run:lifecycle-active-peek" ||
-      entry.event === "server:conversation-run:lifecycle-register" ||
-      entry.event === "server:conversation-run:queued"
-    )).toBe(false);
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:lifecycle-owner" && entry.enabled === false)).toBe(true);
+    expect(
+      payload.debugTrace?.some(
+        (entry) =>
+          entry.event === "server:conversation-run:lifecycle-active-peek" ||
+          entry.event === "server:conversation-run:lifecycle-register" ||
+          entry.event === "server:conversation-run:queued",
+      ),
+    ).toBe(false);
     expect(lifecycleRequests).toEqual([]);
     expect(engineRequests).toEqual(["/session/sess-remote/prompt_async"]);
   });
@@ -4229,10 +4329,16 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
-          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
           registerRequests.push(typeof body?.runId === "string" ? body.runId : "");
           lifecycleStatus = "running";
-          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+          return Response.json({
+            ok: true,
+            ...body,
+            workspaceId: "ws_1",
+            status: "running",
+            stale: false,
+          });
         }
         return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
       },
@@ -4250,69 +4356,60 @@ describe("conversation routes", () => {
       "Content-Type": "application/json",
     };
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Transcript reconcile",
-        }),
-      },
-    );
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Transcript reconcile",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as {
+    const created = (await createResponse.json()) as {
       conversationId: string;
       opencodeSessionId: string;
     };
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          clientMessageId: "msg-transcript-queued",
-          parts: [{ type: "text", text: "Queue then drain" }],
-        }),
-      },
-    );
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        clientMessageId: "msg-transcript-queued",
+        parts: [{ type: "text", text: "Queue then drain" }],
+      }),
+    });
     expect(runResponse.status).toBe(202);
     expect(engineSubmits).toEqual([]);
 
     lifecycleStatus = "completed";
-    const appendResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${encodeURIComponent(created.opencodeSessionId)}/transcript`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          reason: "session.idle",
-          messages: [
-            {
-              id: "msg-user",
-              sessionID: created.opencodeSessionId,
-              role: "user",
-              time: { created: 1_000 },
-            },
-            {
-              id: "msg-assistant",
-              sessionID: created.opencodeSessionId,
-              role: "assistant",
-              time: { created: 2_000, completed: 3_000 },
-            },
-          ],
-          partsByMessageId: {
-            "msg-user": [],
-            "msg-assistant": [],
+    const appendResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${encodeURIComponent(created.opencodeSessionId)}/transcript`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        reason: "session.idle",
+        messages: [
+          {
+            id: "msg-user",
+            sessionID: created.opencodeSessionId,
+            role: "user",
+            time: { created: 1_000 },
           },
-        }),
-      },
-    );
+          {
+            id: "msg-assistant",
+            sessionID: created.opencodeSessionId,
+            role: "assistant",
+            time: { created: 2_000, completed: 3_000 },
+          },
+        ],
+        partsByMessageId: {
+          "msg-user": [],
+          "msg-assistant": [],
+        },
+      }),
+    });
     expect(appendResponse.status).toBe(410);
     await expect(appendResponse.json()).resolves.toMatchObject({
       code: "transcript_snapshot_write_retired",
@@ -4345,9 +4442,9 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-watcher-drain/prompt_async") {
-          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
           const parts = Array.isArray(body?.parts) ? body.parts : [];
-          const firstPart = parts[0] && typeof parts[0] === "object" ? parts[0] as { text?: unknown } : {};
+          const firstPart = parts[0] && typeof parts[0] === "object" ? (parts[0] as { text?: unknown }) : {};
           engineSubmits.push(String(firstPart.text ?? ""));
           return Response.json({ ok: true });
         }
@@ -4376,21 +4473,25 @@ describe("conversation routes", () => {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
-          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
           const runId = typeof body?.runId === "string" ? body.runId : "";
           const conversationId = typeof body?.conversationId === "string" ? body.conversationId : "";
           registerRequests.push(runId);
           latestRunId = runId;
-          const record = { workspaceId: "ws_1", conversationId, runId, status: "running" as const, stale: false as const };
+          const record = {
+            workspaceId: "ws_1",
+            conversationId,
+            runId,
+            status: "running" as const,
+            stale: false as const,
+          };
           records.set(runId, record);
           return Response.json({ ok: true, ...record });
         }
         const activeMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/active$/.exec(url.pathname);
         if (request.method === "GET" && activeMatch) {
           const conversationId = decodeURIComponent(activeMatch[1] ?? "");
-          const active = [...records.values()].find((record) =>
-            record.conversationId === conversationId && record.status === "running"
-          );
+          const active = [...records.values()].find((record) => record.conversationId === conversationId && record.status === "running");
           if (!active) return Response.json({ error: "run not found" }, { status: 404 });
           return Response.json({ ok: true, ...active });
         }
@@ -4424,40 +4525,37 @@ describe("conversation routes", () => {
     const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ directory: workspaceRoot, title: "Watcher drain" }),
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Watcher drain",
+      }),
     });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
 
-    const firstResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          clientMessageId: "first",
-          parts: [{ type: "text", text: "First" }],
-        }),
-      },
-    );
+    const firstResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        clientMessageId: "first",
+        parts: [{ type: "text", text: "First" }],
+      }),
+    });
     expect(firstResponse.status).toBe(200);
-    const firstPayload = await firstResponse.json() as { runId: string };
+    const firstPayload = (await firstResponse.json()) as { runId: string };
     expect(engineSubmits).toEqual(["First"]);
 
-    const secondResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Second" }],
-        }),
-      },
-    );
+    const secondResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Second" }],
+      }),
+    });
     expect(secondResponse.status).toBe(202);
     expect(engineSubmits).toEqual(["First"]);
 
@@ -4465,20 +4563,20 @@ describe("conversation routes", () => {
     expect(firstRecord).toBeDefined();
     if (firstRecord) firstRecord.status = "completed";
 
-    await waitForCondition(
-      () => engineSubmits.includes("Second"),
-      { timeoutMs: 1_000, message: "expected accepted-run watcher to wake queued run before poll interval" },
-    );
+    await waitForCondition(() => engineSubmits.includes("Second"), {
+      timeoutMs: 1_000,
+      message: "expected accepted-run watcher to wake queued run before poll interval",
+    });
     expect(registerRequests).toHaveLength(2);
     expect(runStatusRequests).toContain(firstPayload.runId);
     expect(engineSubmits).toEqual(["First", "Second"]);
     const secondRunId = registerRequests[1] ?? "";
     const secondRecord = records.get(secondRunId);
     if (secondRecord) secondRecord.status = "completed";
-    await waitForCondition(
-      () => runStatusRequests.includes(secondRunId),
-      { timeoutMs: 1_000, message: "expected second accepted-run watcher to observe terminal status" },
-    );
+    await waitForCondition(() => runStatusRequests.includes(secondRunId), {
+      timeoutMs: 1_000,
+      message: "expected second accepted-run watcher to observe terminal status",
+    });
   });
 
   test("accepted run lifecycle watcher keeps polling stale status until terminal", async () => {
@@ -4504,9 +4602,9 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "POST" && url.pathname === "/session/sess-watcher-stale/prompt_async") {
-          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
           const parts = Array.isArray(body?.parts) ? body.parts : [];
-          const firstPart = parts[0] && typeof parts[0] === "object" ? parts[0] as { text?: unknown } : {};
+          const firstPart = parts[0] && typeof parts[0] === "object" ? (parts[0] as { text?: unknown }) : {};
           engineSubmits.push(String(firstPart.text ?? ""));
           return Response.json({ ok: true });
         }
@@ -4535,21 +4633,24 @@ describe("conversation routes", () => {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
-          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
           const runId = typeof body?.runId === "string" ? body.runId : "";
           const conversationId = typeof body?.conversationId === "string" ? body.conversationId : "";
           registerRequests.push(runId);
           latestRunId = runId;
-          const record = { workspaceId: "ws_1", conversationId, runId, status: "running" as const };
+          const record = {
+            workspaceId: "ws_1",
+            conversationId,
+            runId,
+            status: "running" as const,
+          };
           records.set(runId, record);
           return Response.json({ ok: true, ...record, stale: false });
         }
         const activeMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/active$/.exec(url.pathname);
         if (request.method === "GET" && activeMatch) {
           const conversationId = decodeURIComponent(activeMatch[1] ?? "");
-          const active = [...records.values()].find((record) =>
-            record.conversationId === conversationId && record.status === "running"
-          );
+          const active = [...records.values()].find((record) => record.conversationId === conversationId && record.status === "running");
           if (!active) return Response.json({ error: "run not found" }, { status: 404 });
           return Response.json({ ok: true, ...active, stale: false });
         }
@@ -4562,7 +4663,12 @@ describe("conversation routes", () => {
           if (runId === registerRequests[0]) {
             firstRunStatusPolls += 1;
             if (firstRunStatusPolls <= 2) {
-              return Response.json({ ok: true, ...record, status: "running", stale: true });
+              return Response.json({
+                ok: true,
+                ...record,
+                status: "running",
+                stale: true,
+              });
             }
             record.status = "completed";
           }
@@ -4591,45 +4697,42 @@ describe("conversation routes", () => {
     const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ directory: workspaceRoot, title: "Watcher stale" }),
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Watcher stale",
+      }),
     });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
 
-    const firstResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "First" }],
-        }),
-      },
-    );
+    const firstResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "First" }],
+      }),
+    });
     expect(firstResponse.status).toBe(200);
-    const firstPayload = await firstResponse.json() as { runId: string };
+    const firstPayload = (await firstResponse.json()) as { runId: string };
     expect(engineSubmits).toEqual(["First"]);
 
-    const secondResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Second" }],
-        }),
-      },
-    );
+    const secondResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Second" }],
+      }),
+    });
     expect(secondResponse.status).toBe(202);
 
-    await waitForCondition(
-      () => engineSubmits.includes("Second"),
-      { timeoutMs: 1_000, message: "expected stale watcher retry to wake queued run after terminal status" },
-    );
+    await waitForCondition(() => engineSubmits.includes("Second"), {
+      timeoutMs: 1_000,
+      message: "expected stale watcher retry to wake queued run after terminal status",
+    });
     expect(runStatusRequests.filter((runId) => runId === firstPayload.runId).length).toBeGreaterThanOrEqual(3);
     expect(registerRequests).toHaveLength(2);
     expect(engineSubmits).toEqual(["First", "Second"]);
@@ -4682,9 +4785,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
@@ -4706,9 +4807,7 @@ describe("conversation routes", () => {
         const activeMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/active$/.exec(url.pathname);
         if (request.method === "GET" && activeMatch) {
           const conversationId = decodeURIComponent(activeMatch[1] ?? "");
-          const active = [...records.values()].find((record) =>
-            record.conversationId === conversationId && record.status === "running"
-          );
+          const active = [...records.values()].find((record) => record.conversationId === conversationId && record.status === "running");
           if (!active) return Response.json({ error: "run not found" }, { status: 404 });
           return Response.json({ ok: true, ...active });
         }
@@ -4756,46 +4855,43 @@ describe("conversation routes", () => {
     const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ directory: workspaceRoot, title: "Abort reconcile" }),
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Abort reconcile",
+      }),
     });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Abort me" }],
-        }),
-      },
-    );
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Abort me" }],
+      }),
+    });
     expect(runResponse.status).toBe(200);
-    const runPayload = await runResponse.json() as { runId: string };
+    const runPayload = (await runResponse.json()) as { runId: string };
     const record = records.get(runPayload.runId);
     expect(record).toBeDefined();
     if (record) record.status = "completed";
 
-    const abortResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/abort`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          runId: runPayload.runId,
-        }),
-      },
-    );
+    const abortResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/abort`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        runId: runPayload.runId,
+      }),
+    });
     expect(abortResponse.status).toBe(200);
 
-    await waitForCondition(
-      () => abortedBodies.length > 0 && records.get(runPayload.runId)?.status === "aborted",
-      { timeoutMs: 1_000, message: "expected abort reconcile to terminalize inactive run as aborted" },
-    );
+    await waitForCondition(() => abortedBodies.length > 0 && records.get(runPayload.runId)?.status === "aborted", {
+      timeoutMs: 1_000,
+      message: "expected abort reconcile to terminalize inactive run as aborted",
+    });
     expect(records.get(runPayload.runId)?.abortRequested).toBe(true);
     expect(String(abortedBodies[0]?.error ?? "")).toContain("user abort reconciled");
   });
@@ -4837,23 +4933,20 @@ describe("conversation routes", () => {
       ],
     });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_case/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Case",
-        }),
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_case/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Case",
+      }),
+    });
 
     expect(response.status).toBe(201);
-    const payload = await response.json() as { id: string };
+    const payload = (await response.json()) as { id: string };
     expect(payload.id).toBe("sess-case");
   });
 
@@ -4877,7 +4970,7 @@ describe("conversation routes", () => {
         if (request.method === "POST" && url.pathname === "/session") {
           upstreamHits += 1;
           receivedDirectoryHeaders.push(request.headers.get("x-opencode-directory") ?? "");
-          const receivedBody = await request.json() as Record<string, unknown>;
+          const receivedBody = (await request.json()) as Record<string, unknown>;
           receivedBodies.push(receivedBody);
           return boundEngineResponse(request, {
             id: "sess-created",
@@ -4891,7 +4984,7 @@ describe("conversation routes", () => {
           upstreamHits += 1;
           receivedRunPaths.push(`${url.pathname}${url.search}`);
           receivedRunDirectories.push(request.headers.get("x-opencode-directory") ?? "");
-          const receivedBody = await request.json() as Record<string, unknown>;
+          const receivedBody = (await request.json()) as Record<string, unknown>;
           receivedBodies.push(receivedBody);
           return Response.json({ ok: true });
         }
@@ -4906,21 +4999,21 @@ describe("conversation routes", () => {
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
 
-    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Created Conversation",
-        }),
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Created Conversation",
+      }),
+    });
 
     expect(response.status).toBe(201);
     expect(upstreamHits).toBe(1);
@@ -4928,7 +5021,7 @@ describe("conversation routes", () => {
     expect(receivedBodies[0]?.directory).toBe(workspaceRoot);
     expect(receivedBodies[0]?.title).toBe("Created Conversation");
 
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       id: string;
       workspaceId: string;
       conversationId: string;
@@ -4952,7 +5045,7 @@ describe("conversation routes", () => {
       },
     );
     expect(transcriptResponse.status).toBe(200);
-    const transcriptPayload = await transcriptResponse.json() as {
+    const transcriptPayload = (await transcriptResponse.json()) as {
       sessionId: string;
       conversationId?: string;
       opencodeSessionId?: string;
@@ -4961,34 +5054,31 @@ describe("conversation routes", () => {
     expect(transcriptPayload.conversationId).toBe(payload.conversationId);
     expect(transcriptPayload.opencodeSessionId).toBe("sess-created");
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          sessionID: "must-not-forward",
-          extra: "must-not-forward",
-          clientMessageId: "msg-client-1",
-          origin: "session:normal",
-          messageID: "msg-client-1",
-          model: { providerID: "openai", modelID: "gpt-5.5" },
-          agent: "build",
-          system: "system prompt",
-          tools: { read: false },
-          mode: "build",
-          variant: "xhigh",
-          parts: [{ type: "text", text: "Hello" }],
-        }),
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        sessionID: "must-not-forward",
+        extra: "must-not-forward",
+        clientMessageId: "msg-client-1",
+        origin: "session:normal",
+        messageID: "msg-client-1",
+        model: { providerID: "openai", modelID: "gpt-5.5" },
+        agent: "build",
+        system: "system prompt",
+        tools: { read: false },
+        mode: "build",
+        variant: "xhigh",
+        parts: [{ type: "text", text: "Hello" }],
+      }),
+    });
     expect(runResponse.status).toBe(200);
-    const runPayload = await runResponse.json() as {
+    const runPayload = (await runResponse.json()) as {
       ok: boolean;
       conversationId: string;
       opencodeSessionId: string;
@@ -5009,7 +5099,10 @@ describe("conversation routes", () => {
     expect(receivedRunDirectories[0]).toBe(workspaceRoot);
     expect(receivedBodies[1]?.parts).toEqual([{ type: "text", text: "Hello" }]);
     expectOpenCodeAdmissionMessageId(receivedBodies[1]?.messageID);
-    expect(receivedBodies[1]?.model).toEqual({ providerID: "openai", modelID: "gpt-5.5" });
+    expect(receivedBodies[1]?.model).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.5",
+    });
     expect(receivedBodies[1]?.agent).toBe("build");
     expect(receivedBodies[1]?.system).toBe("system prompt");
     expect(receivedBodies[1]?.tools).toEqual({ read: false });
@@ -5022,22 +5115,19 @@ describe("conversation routes", () => {
     expect(receivedBodies[1]?.clientMessageId).toBeUndefined();
     expect(receivedBodies[1]?.origin).toBeUndefined();
 
-    const abortResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          runId: runPayload.runId,
-        }),
+    const abortResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        runId: runPayload.runId,
+      }),
+    });
     expect(abortResponse.status).toBe(200);
-    const abortPayload = await abortResponse.json() as {
+    const abortPayload = (await abortResponse.json()) as {
       ok: boolean;
       conversationId: string;
       opencodeSessionId: string;
@@ -5053,11 +5143,11 @@ describe("conversation routes", () => {
     expect(abortPayload.kind).toBe("abort");
     expect(receivedAbortPaths[0]).toBe(`/session/sess-created/abort?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(receivedAbortDirectories[0]).toBe(workspaceRoot);
-    expect([
-      transcriptPayload.opencodeSessionId,
-      runPayload.opencodeSessionId,
-      abortPayload.opencodeSessionId,
-    ]).toEqual(["sess-created", "sess-created", "sess-created"]);
+    expect([transcriptPayload.opencodeSessionId, runPayload.opencodeSessionId, abortPayload.opencodeSessionId]).toEqual([
+      "sess-created",
+      "sess-created",
+      "sess-created",
+    ]);
 
     const missingRunIdAbortResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,
@@ -5123,21 +5213,21 @@ describe("conversation routes", () => {
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
 
-    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: join(tmpdir(), "veslo-outside"),
-          title: "Rejected",
-        }),
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: join(tmpdir(), "veslo-outside"),
+        title: "Rejected",
+      }),
+    });
 
     expect(response.status).toBe(403);
     expect(upstreamHits).toBe(0);
@@ -5157,7 +5247,7 @@ describe("conversation routes", () => {
         const url = new URL(request.url);
         upstreamHits += 1;
         if (request.method === "POST" && url.pathname === "/session") {
-          const receivedBody = await request.json() as Record<string, unknown>;
+          const receivedBody = (await request.json()) as Record<string, unknown>;
           return Response.json({
             id: "sess-created-a",
             title: receivedBody.title,
@@ -5180,22 +5270,19 @@ describe("conversation routes", () => {
       ],
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_a/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRootA,
-          title: "Workspace A Conversation",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_a/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRootA,
+        title: "Workspace A Conversation",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
     expect(created.conversationId).toMatch(/^conv-/);
     expect(upstreamHits).toBe(1);
 
@@ -5210,38 +5297,32 @@ describe("conversation routes", () => {
     expect(transcriptResponse.status).toBe(404);
     expect(upstreamHits).toBe(1);
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_b/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRootB,
-          parts: [{ type: "text", text: "Should not run" }],
-        }),
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_b/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRootB,
+        parts: [{ type: "text", text: "Should not run" }],
+      }),
+    });
     expect(runResponse.status).toBe(404);
     expect(upstreamHits).toBe(1);
 
-    const abortResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_b/conversations/${encodeURIComponent(created.conversationId)}/abort`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRootB,
-          runId: "run-from-workspace-a",
-        }),
+    const abortResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_b/conversations/${encodeURIComponent(created.conversationId)}/abort`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRootB,
+        runId: "run-from-workspace-a",
+      }),
+    });
     expect(abortResponse.status).toBe(404);
     expect(upstreamHits).toBe(1);
   });
@@ -5267,37 +5348,31 @@ describe("conversation routes", () => {
       upstreamPort: upstream.port,
     });
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent("sess-unbound")}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Should not run" }],
-        }),
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent("sess-unbound")}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Should not run" }],
+      }),
+    });
     expect(runResponse.status).toBe(404);
 
-    const abortResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent("sess-unbound")}/abort`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          runId: "run-unbound",
-        }),
+    const abortResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent("sess-unbound")}/abort`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        runId: "run-unbound",
+      }),
+    });
     expect(abortResponse.status).toBe(404);
     expect(upstreamHits).toBe(0);
   });
@@ -5335,9 +5410,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         engineRequests.push({
           method: request.method,
           pathname: url.pathname,
@@ -5376,9 +5449,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         orchestratorRequests.push({
           method: request.method,
           pathname: url.pathname,
@@ -5404,28 +5475,45 @@ describe("conversation routes", () => {
           }
           runIdFromRegister = typeof body?.runId === "string" ? body.runId : "";
           conversationIdFromRegister = typeof body?.conversationId === "string" ? body.conversationId : "";
-          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+          return Response.json({
+            ok: true,
+            ...body,
+            workspaceId: "ws_1",
+            status: "running",
+            stale: false,
+          });
         }
         if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/failed`) {
           events.push("orchestrator-mark-failed");
-          return Response.json({ ok: true, runId: runIdFromRegister, status: "failed" });
+          return Response.json({
+            ok: true,
+            runId: runIdFromRegister,
+            status: "failed",
+          });
         }
         if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/abort-requested`) {
           events.push("orchestrator-abort-requested");
-          return Response.json({ ok: true, runId: runIdFromRegister, abortRequested: true });
+          return Response.json({
+            ok: true,
+            runId: runIdFromRegister,
+            abortRequested: true,
+          });
         }
         if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/aborted`) {
           events.push("orchestrator-mark-aborted");
           lifecycleStatus = "aborted";
-          return Response.json({ ok: true, runId: runIdFromRegister, status: "aborted", abortRequested: true });
+          return Response.json({
+            ok: true,
+            runId: runIdFromRegister,
+            status: "aborted",
+            abortRequested: true,
+          });
         }
         if (
           request.method === "GET" &&
-          (
-            url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/latest` ||
+          (url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/latest` ||
             url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/active` ||
-            url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/${encodeURIComponent(runIdFromRegister)}`
-          )
+            url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/${encodeURIComponent(runIdFromRegister)}`)
         ) {
           events.push(url.pathname.endsWith("/runs/active") ? "orchestrator-active" : "orchestrator-status");
           if (url.pathname.endsWith("/runs/active") && !activeRunAvailable) {
@@ -5468,41 +5556,35 @@ describe("conversation routes", () => {
       orchestratorLifecycleToken: "lifecycle-token",
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Lifecycle Conversation",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Lifecycle Conversation",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "X-Veslo-Send-Trace-Id": "send-trace-abc",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Hello" }],
-        }),
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "X-Veslo-Send-Trace-Id": "send-trace-abc",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Hello" }],
+      }),
+    });
     expect(runResponse.status).toBe(200);
-    const runPayload = await runResponse.json() as {
+    const runPayload = (await runResponse.json()) as {
       runId: string;
       conversationId: string;
       debugTrace?: Array<{
@@ -5514,32 +5596,39 @@ describe("conversation routes", () => {
     };
     expect(runPayload.runId).toBe(runIdFromRegister);
     expect(runPayload.conversationId).toBe(created.conversationId);
-    expect(runPayload.debugTrace?.some((entry) =>
-      entry.source === "server" &&
-      entry.event === "server:conversation-run:resolve-target" &&
-      entry.traceId === "send-trace-abc" &&
-      typeof entry.durationMs === "number"
-    )).toBe(true);
-    expect(runPayload.debugTrace?.some((entry) =>
-      entry.source === "server" &&
-      entry.event === "server:conversation-run:lifecycle-register" &&
-      entry.traceId === "send-trace-abc" &&
-      typeof entry.durationMs === "number"
-    )).toBe(true);
-    expect(runPayload.debugTrace?.some((entry) =>
-      entry.source === "server" &&
-      entry.event === "server:conversation-run:opencode-submit" &&
-      entry.traceId === "send-trace-abc" &&
-      typeof entry.durationMs === "number"
-    )).toBe(true);
+    expect(
+      runPayload.debugTrace?.some(
+        (entry) =>
+          entry.source === "server" &&
+          entry.event === "server:conversation-run:resolve-target" &&
+          entry.traceId === "send-trace-abc" &&
+          typeof entry.durationMs === "number",
+      ),
+    ).toBe(true);
+    expect(
+      runPayload.debugTrace?.some(
+        (entry) =>
+          entry.source === "server" &&
+          entry.event === "server:conversation-run:lifecycle-register" &&
+          entry.traceId === "send-trace-abc" &&
+          typeof entry.durationMs === "number",
+      ),
+    ).toBe(true);
+    expect(
+      runPayload.debugTrace?.some(
+        (entry) =>
+          entry.source === "server" &&
+          entry.event === "server:conversation-run:opencode-submit" &&
+          entry.traceId === "send-trace-abc" &&
+          typeof entry.durationMs === "number",
+      ),
+    ).toBe(true);
     expect(events.indexOf("orchestrator-register")).toBeLessThan(events.indexOf("engine-submit"));
     const registerRequest = orchestratorRequests.find((entry) => entry.pathname === "/workspace/ws_1/runs/register");
     expect(registerRequest?.token).toBe("lifecycle-token");
     expect(registerRequest?.body?.kind).toBe("prompt");
     expect(registerRequest?.body?.opencodeSessionId).toBe("sess-created");
-    const submitRequest = engineRequests.find((entry) =>
-      entry.pathname === "/workspace/ws_1/opencode/session/sess-created/prompt_async"
-    );
+    const submitRequest = engineRequests.find((entry) => entry.pathname === "/workspace/ws_1/opencode/session/sess-created/prompt_async");
     expect(submitRequest).toBeDefined();
     expect(submitRequest?.conversationRunId).toBe(runIdFromRegister);
 
@@ -5548,7 +5637,7 @@ describe("conversation routes", () => {
       { headers: { Authorization: "Bearer client-token" } },
     );
     expect(deliveryResponse.status).toBe(200);
-    const deliveryPayload = await deliveryResponse.json() as {
+    const deliveryPayload = (await deliveryResponse.json()) as {
       status: string;
       snapshot: {
         traceId: string | null;
@@ -5570,7 +5659,7 @@ describe("conversation routes", () => {
       { headers: { Authorization: "Bearer client-token" } },
     );
     expect(statusResponse.status).toBe(200);
-    const statusPayload = await statusResponse.json() as {
+    const statusPayload = (await statusResponse.json()) as {
       runId: string;
       status: string;
       stale: boolean;
@@ -5596,7 +5685,7 @@ describe("conversation routes", () => {
       { headers: { Authorization: "Bearer client-token" } },
     );
     expect(failedStatusResponse.status).toBe(200);
-    const failedStatusPayload = await failedStatusResponse.json() as Record<string, unknown>;
+    const failedStatusPayload = (await failedStatusResponse.json()) as Record<string, unknown>;
     expect(failedStatusPayload).toMatchObject({
       runId: runIdFromRegister,
       status: "failed",
@@ -5613,14 +5702,17 @@ describe("conversation routes", () => {
       authorization: "json-authorization-secret",
       access_token: "json-token-secret",
       directory: workspaceRoot,
-      body: { prompt: "private prompt", parts: [{ type: "text", text: "private body" }] },
+      body: {
+        prompt: "private prompt",
+        parts: [{ type: "text", text: "private body" }],
+      },
       detail: "actionable failure detail",
     });
     const structuredFailureResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
       { headers: { Authorization: "Bearer client-token" } },
     );
-    const structuredFailurePayload = await structuredFailureResponse.json() as { error?: string | null };
+    const structuredFailurePayload = (await structuredFailureResponse.json()) as { error?: string | null };
     expect(structuredFailureResponse.status).toBe(200);
     expect(structuredFailurePayload.error).toContain("actionable failure detail");
     expect(structuredFailurePayload.error).not.toContain("json-authorization-secret");
@@ -5645,77 +5737,70 @@ describe("conversation routes", () => {
       },
     );
     expect(activeAbortResponse.status).toBe(200);
-    const activeAbortPayload = await activeAbortResponse.json() as { runId: string };
+    const activeAbortPayload = (await activeAbortResponse.json()) as {
+      runId: string;
+    };
     expect(activeAbortPayload.runId).toBe(runIdFromRegister);
     expect(events).toContain("orchestrator-active");
     activeRunAvailable = false;
 
     const statusEventsBeforeAbort = events.filter((event) => event === "orchestrator-status").length;
-    const abortResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/abort`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          runId: runPayload.runId,
-        }),
+    const abortResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/abort`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        runId: runPayload.runId,
+      }),
+    });
     expect(abortResponse.status).toBe(200);
     expect(events.indexOf("orchestrator-abort-requested")).toBeLessThan(events.indexOf("engine-abort"));
     expect(events.indexOf("engine-abort")).toBeLessThan(events.indexOf("orchestrator-mark-aborted"));
-    await waitForCondition(
-      () => events.filter((event) => event === "orchestrator-status").length > statusEventsBeforeAbort,
-      { timeoutMs: 1_000, message: "expected abort reconciliation to observe exact terminal runtime readiness" },
-    );
+    await waitForCondition(() => events.filter((event) => event === "orchestrator-status").length > statusEventsBeforeAbort, {
+      timeoutMs: 1_000,
+      message: "expected abort reconciliation to observe exact terminal runtime readiness",
+    });
 
     submitShouldFail = true;
-    const failedRunResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Fail" }],
-        }),
+    const failedRunResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Fail" }],
+      }),
+    });
     expect(failedRunResponse.status).toBe(502);
     expect(events.indexOf("engine-submit-failed")).toBeLessThan(events.indexOf("orchestrator-mark-failed"));
     const statusEventsBeforeFailedRunRelease = events.filter((event) => event === "orchestrator-status").length;
-    await waitForCondition(
-      () => events.filter((event) => event === "orchestrator-status").length > statusEventsBeforeFailedRunRelease,
-      { timeoutMs: 1_000, message: "expected failed run to release only after terminal runtime readiness" },
-    );
+    await waitForCondition(() => events.filter((event) => event === "orchestrator-status").length > statusEventsBeforeFailedRunRelease, {
+      timeoutMs: 1_000,
+      message: "expected failed run to release only after terminal runtime readiness",
+    });
 
     registerShouldConflict = true;
     const engineRequestsBeforeConflict = engineRequests.length;
-    const conflictResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Conflict" }],
-        }),
+    const conflictResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Conflict" }],
+      }),
+    });
     expect(conflictResponse.status).toBe(202);
-    const conflictPayload = await conflictResponse.json() as {
+    const conflictPayload = (await conflictResponse.json()) as {
       status?: string;
       activeRunId?: string | null;
       queueItemId?: string;
@@ -5758,7 +5843,7 @@ describe("conversation routes", () => {
           return managedAiAccessBundleResponse();
         }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
-          const requestBody = await request.json().catch(() => null) as unknown;
+          const requestBody = (await request.json().catch(() => null)) as unknown;
           providerRequests.push({
             authorization: request.headers.get("authorization"),
             sessionId: request.headers.get("x-veslo-session-id"),
@@ -5771,7 +5856,13 @@ describe("conversation routes", () => {
             object: "chat.completion",
             created: 1,
             model: "gpt-5.5",
-            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+            choices: [
+              {
+                index: 0,
+                finish_reason: "stop",
+                message: { role: "assistant", content: "ok" },
+              },
+            ],
           });
         }
         return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
@@ -5785,9 +5876,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
           return boundEngineResponse(request, {
             id: "sess-watch",
@@ -5806,7 +5895,10 @@ describe("conversation routes", () => {
               "x-veslo-gateway-token": "gateway-access-token",
               "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
             },
-            body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Sessionless" }] }),
+            body: JSON.stringify({
+              model: "gpt-5.5",
+              messages: [{ role: "user", content: "Sessionless" }],
+            }),
           }).catch((error) => {
             providerFetchError = error instanceof Error ? error.message : String(error);
           });
@@ -5826,9 +5918,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
@@ -5836,7 +5926,13 @@ describe("conversation routes", () => {
           runIdFromRegister = typeof body?.runId === "string" ? body.runId : "";
           conversationIdFromRegister = typeof body?.conversationId === "string" ? body.conversationId : "";
           lifecycleStatus = "running";
-          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: lifecycleStatus, stale: false });
+          return Response.json({
+            ok: true,
+            ...body,
+            workspaceId: "ws_1",
+            status: lifecycleStatus,
+            stale: false,
+          });
         }
         if (
           request.method === "GET" &&
@@ -5848,7 +5944,11 @@ describe("conversation routes", () => {
         if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/failed`) {
           failedRequests.push(body);
           lifecycleStatus = "failed";
-          return Response.json({ ok: true, runId: runIdFromRegister, status: lifecycleStatus });
+          return Response.json({
+            ok: true,
+            runId: runIdFromRegister,
+            status: lifecycleStatus,
+          });
         }
         if (
           request.method === "GET" &&
@@ -5883,49 +5983,43 @@ describe("conversation routes", () => {
       orchestratorLifecycleToken: "lifecycle-token",
     });
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Gateway Watch",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Gateway Watch",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
     serverPort = server.port;
     await primeAiGatewayRuntimeAuthorization(server);
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Hello" }],
-          expectAiGatewayStart: true,
-        }),
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Hello" }],
+        expectAiGatewayStart: true,
+      }),
+    });
     expect(runResponse.status).toBe(200);
-    const runPayload = await runResponse.json() as { status?: string };
+    const runPayload = (await runResponse.json()) as { status?: string };
     expect(runPayload.status).toBe("submitted");
 
-    await waitForCondition(
-      () => providerRequests.length > 0 || Boolean(providerFetchError),
-      { timeoutMs: 1_000, message: "expected sessionless provider request to be proxied" },
-    );
+    await waitForCondition(() => providerRequests.length > 0 || Boolean(providerFetchError), {
+      timeoutMs: 1_000,
+      message: "expected sessionless provider request to be proxied",
+    });
     expect(providerFetchError).toBe("");
     expect(providerRequests).toEqual([
       {
@@ -5953,7 +6047,11 @@ describe("conversation routes", () => {
 
     let sessionIndex = 0;
     let serverPort = 0;
-    const registeredRuns: Array<{ runId: string; conversationId: string; sessionId: string }> = [];
+    const registeredRuns: Array<{
+      runId: string;
+      conversationId: string;
+      sessionId: string;
+    }> = [];
     const failedRequests: Array<Record<string, unknown> | null> = [];
     const providerRequests: Array<{
       authorization: string | null;
@@ -5971,7 +6069,7 @@ describe("conversation routes", () => {
           return managedAiAccessBundleResponse();
         }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
-          const requestBody = await request.json().catch(() => null) as unknown;
+          const requestBody = (await request.json().catch(() => null)) as unknown;
           providerRequests.push({
             authorization: request.headers.get("authorization"),
             sessionId: request.headers.get("x-veslo-session-id"),
@@ -5983,7 +6081,13 @@ describe("conversation routes", () => {
             object: "chat.completion",
             created: 1,
             model: "gpt-5.5",
-            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+            choices: [
+              {
+                index: 0,
+                finish_reason: "stop",
+                message: { role: "assistant", content: "ok" },
+              },
+            ],
           });
         }
         return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
@@ -5997,9 +6101,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
           sessionIndex += 1;
           return boundEngineResponse(request, {
@@ -6026,9 +6128,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
@@ -6038,12 +6138,22 @@ describe("conversation routes", () => {
             conversationId: typeof body?.conversationId === "string" ? body.conversationId : "",
             sessionId: typeof body?.opencodeSessionId === "string" ? body.opencodeSessionId : "",
           });
-          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+          return Response.json({
+            ok: true,
+            ...body,
+            workspaceId: "ws_1",
+            status: "running",
+            stale: false,
+          });
         }
         const failedMatch = url.pathname.match(/^\/workspace\/ws_1\/runs\/([^/]+)\/failed$/);
         if (request.method === "POST" && failedMatch) {
           failedRequests.push(body);
-          return Response.json({ ok: true, runId: decodeURIComponent(failedMatch[1] ?? ""), status: "failed" });
+          return Response.json({
+            ok: true,
+            runId: decodeURIComponent(failedMatch[1] ?? ""),
+            status: "failed",
+          });
         }
         const activeMatch = url.pathname.match(/^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/([^/]+)$/);
         if (request.method === "GET" && activeMatch) {
@@ -6094,39 +6204,39 @@ describe("conversation routes", () => {
         body: JSON.stringify({ directory: workspaceRoot, title }),
       });
       expect(response.status).toBe(201);
-      return await response.json() as { conversationId: string };
+      return (await response.json()) as { conversationId: string };
     };
 
     const firstConversation = await createConversation("Ambiguous One");
     const secondConversation = await createConversation("Ambiguous Two");
 
     const startRun = async (conversationId: string, text: string) => {
-      const response = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(conversationId)}/runs`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer client-token",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            kind: "prompt_async",
-            directory: workspaceRoot,
-            parts: [{ type: "text", text }],
-            expectAiGatewayStart: true,
-          }),
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(conversationId)}/runs`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
         },
-      );
-      return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null };
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          parts: [{ type: "text", text }],
+          expectAiGatewayStart: true,
+        }),
+      });
+      return {
+        status: response.status,
+        body: (await response.json().catch(() => null)) as Record<string, unknown> | null,
+      };
     };
 
     const firstRunPromise = startRun(firstConversation.conversationId, "First");
     const secondRunPromise = startRun(secondConversation.conversationId, "Second");
 
-    await waitForCondition(
-      () => registeredRuns.length === 2,
-      { timeoutMs: 1_000, message: "expected both same-workspace runs to register" },
-    );
+    await waitForCondition(() => registeredRuns.length === 2, {
+      timeoutMs: 1_000,
+      message: "expected both same-workspace runs to register",
+    });
 
     const providerResponse = await fetch(`http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
       method: "POST",
@@ -6137,7 +6247,10 @@ describe("conversation routes", () => {
         "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
         "x-veslo-workspace-id": "ws_1",
       },
-      body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Ambiguous" }] }),
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        messages: [{ role: "user", content: "Ambiguous" }],
+      }),
     });
     expect(providerResponse.status).toBe(400);
     expect(await providerResponse.json()).toMatchObject({
@@ -6154,10 +6267,10 @@ describe("conversation routes", () => {
     // The placeholder was intentionally rejected as ambiguous, so neither
     // accepted run can observe a provider request. Both must terminalize
     // rather than retaining a durable reservation indefinitely.
-    await waitForCondition(
-      () => failedRequests.length === 2,
-      { timeoutMs: 1_000, message: "expected both ambiguous placeholder runs to terminalize" },
-    );
+    await waitForCondition(() => failedRequests.length === 2, {
+      timeoutMs: 1_000,
+      message: "expected both ambiguous placeholder runs to terminalize",
+    });
   });
 
   test("managed prompt provider-start watchdog matches placeholder session ids by workspace header", async () => {
@@ -6191,7 +6304,7 @@ describe("conversation routes", () => {
           return managedAiAccessBundleResponse();
         }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
-          const requestBody = await request.json().catch(() => null) as unknown;
+          const requestBody = (await request.json().catch(() => null)) as unknown;
           providerRequests.push({
             authorization: request.headers.get("authorization"),
             sessionId: request.headers.get("x-veslo-session-id"),
@@ -6205,7 +6318,13 @@ describe("conversation routes", () => {
             object: "chat.completion",
             created: 1,
             model: "gpt-5.5",
-            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+            choices: [
+              {
+                index: 0,
+                finish_reason: "stop",
+                message: { role: "assistant", content: "ok" },
+              },
+            ],
           });
         }
         return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
@@ -6219,9 +6338,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
           return boundEngineResponse(request, {
             id: "sess-placeholder-watch",
@@ -6231,10 +6348,7 @@ describe("conversation routes", () => {
             time: { created: 111, updated: 222 },
           });
         }
-        if (
-          request.method === "POST" &&
-          url.pathname === "/workspace/ws_1/opencode/session/sess-placeholder-watch/prompt_async"
-        ) {
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-placeholder-watch/prompt_async") {
           void fetch(`http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
             method: "POST",
             headers: {
@@ -6245,7 +6359,10 @@ describe("conversation routes", () => {
               "x-veslo-workspace-id": "ws_1",
               "x-veslo-send-trace-id": request.headers.get("x-veslo-send-trace-id") ?? "missing-trace",
             },
-            body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Hello" }] }),
+            body: JSON.stringify({
+              model: "gpt-5.5",
+              messages: [{ role: "user", content: "Hello" }],
+            }),
           }).catch((error) => {
             providerFetchError = error instanceof Error ? error.message : String(error);
           });
@@ -6265,9 +6382,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
@@ -6275,7 +6390,13 @@ describe("conversation routes", () => {
           runIdFromRegister = typeof body?.runId === "string" ? body.runId : "";
           conversationIdFromRegister = typeof body?.conversationId === "string" ? body.conversationId : "";
           lifecycleStatus = "running";
-          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: lifecycleStatus, stale: false });
+          return Response.json({
+            ok: true,
+            ...body,
+            workspaceId: "ws_1",
+            status: lifecycleStatus,
+            stale: false,
+          });
         }
         if (
           request.method === "GET" &&
@@ -6287,7 +6408,11 @@ describe("conversation routes", () => {
         if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/failed`) {
           failedRequests.push(body);
           lifecycleStatus = "failed";
-          return Response.json({ ok: true, runId: runIdFromRegister, status: lifecycleStatus });
+          return Response.json({
+            ok: true,
+            runId: runIdFromRegister,
+            status: lifecycleStatus,
+          });
         }
         if (
           request.method === "GET" &&
@@ -6324,45 +6449,39 @@ describe("conversation routes", () => {
     serverPort = server.port;
     await primeAiGatewayRuntimeAuthorization(server);
 
-    const createResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-          "X-Veslo-Send-Trace-Id": "send-workflow-test",
-        },
-        body: JSON.stringify({
-          directory: workspaceRoot,
-          title: "Gateway Workspace Watch",
-        }),
+    const createResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "X-Veslo-Send-Trace-Id": "send-workflow-test",
       },
-    );
+      body: JSON.stringify({
+        directory: workspaceRoot,
+        title: "Gateway Workspace Watch",
+      }),
+    });
     expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { conversationId: string };
+    const created = (await createResponse.json()) as { conversationId: string };
 
-    const runResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer client-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          kind: "prompt_async",
-          directory: workspaceRoot,
-          parts: [{ type: "text", text: "Hello" }],
-          expectAiGatewayStart: true,
-        }),
+    const runResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        kind: "prompt_async",
+        directory: workspaceRoot,
+        parts: [{ type: "text", text: "Hello" }],
+        expectAiGatewayStart: true,
+      }),
+    });
     expect(runResponse.status).toBe(200);
-    await waitForCondition(
-      () => providerRequests.length > 0 || Boolean(providerFetchError),
-      { timeoutMs: 1_000, message: "expected provider request to reach the managed gateway proxy" },
-    );
+    await waitForCondition(() => providerRequests.length > 0 || Boolean(providerFetchError), {
+      timeoutMs: 1_000,
+      message: "expected provider request to reach the managed gateway proxy",
+    });
     expect(providerFetchError).toBe("");
     expect(providerRequests).toEqual([
       {
@@ -6391,7 +6510,10 @@ describe("conversation routes", () => {
     let serverPort = 0;
     let providerFetchError = "";
     let stalePromptSubmitted = false;
-    const failedRequests: Array<{ workspaceId: string; body: Record<string, unknown> | null }> = [];
+    const failedRequests: Array<{
+      workspaceId: string;
+      body: Record<string, unknown> | null;
+    }> = [];
     const providerRequests: Array<{
       authorization: string | null;
       sessionId: string | null;
@@ -6408,7 +6530,7 @@ describe("conversation routes", () => {
           return managedAiAccessBundleResponse();
         }
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
-          const requestBody = await request.json().catch(() => null) as unknown;
+          const requestBody = (await request.json().catch(() => null)) as unknown;
           providerRequests.push({
             authorization: request.headers.get("authorization"),
             sessionId: request.headers.get("x-veslo-session-id"),
@@ -6420,7 +6542,13 @@ describe("conversation routes", () => {
             object: "chat.completion",
             created: 1,
             model: "gpt-5.5",
-            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+            choices: [
+              {
+                index: 0,
+                finish_reason: "stop",
+                message: { role: "assistant", content: "ok" },
+              },
+            ],
           });
         }
         return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
@@ -6434,9 +6562,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.method === "POST" && url.pathname === "/workspace/ws_target/opencode/session") {
           return boundEngineResponse(request, {
             id: "sess-target",
@@ -6471,7 +6597,10 @@ describe("conversation routes", () => {
               "x-session-id": "sess-target",
               "x-veslo-send-trace-id": request.headers.get("x-veslo-send-trace-id") ?? "missing-trace",
             },
-            body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Hello" }] }),
+            body: JSON.stringify({
+              model: "gpt-5.5",
+              messages: [{ role: "user", content: "Hello" }],
+            }),
           }).catch((error) => {
             providerFetchError = error instanceof Error ? error.message : String(error);
           });
@@ -6491,9 +6620,7 @@ describe("conversation routes", () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        const body = request.method === "POST"
-          ? await request.json().catch(() => null) as Record<string, unknown> | null
-          : null;
+        const body = request.method === "POST" ? ((await request.json().catch(() => null)) as Record<string, unknown> | null) : null;
         if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
@@ -6507,7 +6634,13 @@ describe("conversation routes", () => {
             status: "running",
           };
           runsByWorkspace.set(workspaceId, state);
-          return Response.json({ ok: true, ...body, workspaceId, status: state.status, stale: false });
+          return Response.json({
+            ok: true,
+            ...body,
+            workspaceId,
+            status: state.status,
+            stale: false,
+          });
         }
 
         const failedMatch = url.pathname.match(/^\/workspace\/([^/]+)\/runs\/([^/]+)\/failed$/);
@@ -6569,19 +6702,16 @@ describe("conversation routes", () => {
     await primeAiGatewayRuntimeAuthorization(server);
 
     const createConversation = async (workspaceId: string, directory: string, title: string) => {
-      const response = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/${workspaceId}/conversations`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: "Bearer client-token",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ directory, title }),
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/${workspaceId}/conversations`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({ directory, title }),
+      });
       expect(response.status).toBe(201);
-      return await response.json() as { conversationId: string };
+      return (await response.json()) as { conversationId: string };
     };
 
     const staleConversation = await createConversation("ws_stale", workspaceRootStale, "Stale Workspace");
@@ -6602,12 +6732,15 @@ describe("conversation routes", () => {
           expectAiGatewayStart: true,
         }),
       },
-    ).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }));
+    ).then(async (response) => ({
+      status: response.status,
+      body: await response.json().catch(() => null),
+    }));
 
-    await waitForCondition(
-      () => runsByWorkspace.has("ws_stale") && stalePromptSubmitted,
-      { timeoutMs: 1_000, message: "expected stale workspace run to be registered and waiting" },
-    );
+    await waitForCondition(() => runsByWorkspace.has("ws_stale") && stalePromptSubmitted, {
+      timeoutMs: 1_000,
+      message: "expected stale workspace run to be registered and waiting",
+    });
 
     const targetRunResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_target/conversations/${encodeURIComponent(targetConversation.conversationId)}/runs`,
@@ -6627,10 +6760,10 @@ describe("conversation routes", () => {
     );
     expect(targetRunResponse.status).toBe(200);
 
-    await waitForCondition(
-      () => providerRequests.length > 0 || Boolean(providerFetchError),
-      { timeoutMs: 1_000, message: "expected target provider request to reach the managed gateway proxy" },
-    );
+    await waitForCondition(() => providerRequests.length > 0 || Boolean(providerFetchError), {
+      timeoutMs: 1_000,
+      message: "expected target provider request to reach the managed gateway proxy",
+    });
     expect(providerFetchError).toBe("");
     expect(providerRequests).toEqual([
       {
@@ -6669,23 +6802,23 @@ describe("conversation routes", () => {
       "Content-Type": "application/json",
     };
 
-    const productionServer = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
-    const unavailable = await fetch(
-      `http://127.0.0.1:${productionServer.port}/e2e/fail-next-lifecycle-mark-failed`,
-      { method: "POST", headers },
-    );
+    const productionServer = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const unavailable = await fetch(`http://127.0.0.1:${productionServer.port}/e2e/fail-next-lifecycle-mark-failed`, { method: "POST", headers });
     expect(unavailable.status).toBe(404);
 
     setEnvVarForTest("VESLO_E2E_FAULT_INJECTION", "1");
-    const e2eServer = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
-    const armed = await fetch(
-      `http://127.0.0.1:${e2eServer.port}/e2e/fail-next-lifecycle-mark-failed`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ count: 99 }),
-      },
-    );
+    const e2eServer = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+    });
+    const armed = await fetch(`http://127.0.0.1:${e2eServer.port}/e2e/fail-next-lifecycle-mark-failed`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ count: 99 }),
+    });
     expect(armed.status).toBe(200);
     await expect(armed.json()).resolves.toEqual({ ok: true, remaining: 10 });
   });

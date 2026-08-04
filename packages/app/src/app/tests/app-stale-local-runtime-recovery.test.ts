@@ -2,19 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const sendWorkflowSource = readFileSync(
-  new URL("../pages/session-send-workflow.ts", import.meta.url),
-  "utf8",
-);
+const sendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
-
-function conversationRunCompatibilityBridgePrepareSource(): string {
-  const bridgeStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", bridgeStart);
-  const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
-  return sendWorkflowSource.slice(prepareStart, submitStart);
-}
 
 function ensureLocalRuntimeReachableForSendResultSource(): string {
   const start = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSendResult(");
@@ -22,18 +11,6 @@ function ensureLocalRuntimeReachableForSendResultSource(): string {
   assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSendResult source should be present");
   return readinessSource.slice(start, end);
 }
-
-test("sendPrompt recovers a stale local runtime before reading the client", () => {
-  const prepareSource = conversationRunCompatibilityBridgePrepareSource();
-  const recoveryCheckIndex = prepareSource.indexOf("deps.prepareSendRuntimeForSend(");
-  const routedClientIndex = prepareSource.indexOf("const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);");
-  assert.ok(recoveryCheckIndex >= 0, "compatibility bridge should prepare send runtime readiness");
-  assert.ok(routedClientIndex >= 0, "compatibility bridge should capture the routed client after recovery");
-  assert.ok(
-    recoveryCheckIndex < routedClientIndex,
-    "compatibility bridge should verify and recover the local runtime before capturing the routed client used for prompt calls",
-  );
-});
 
 test("local runtime send health uses the routed active workspace client", () => {
   const recoverySource = ensureLocalRuntimeReachableForSendResultSource();

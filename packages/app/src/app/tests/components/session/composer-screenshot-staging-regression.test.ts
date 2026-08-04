@@ -2,118 +2,29 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const appViewPropsSource = readFileSync(
-  new URL("../../../app-view-props.ts", import.meta.url),
-  "utf8",
-);
-const composerSource = readFileSync(
-  new URL("../../../components/session/composer.tsx", import.meta.url),
-  "utf8",
-);
-const sessionPageSource = readFileSync(
-  new URL("../../../pages/session.tsx", import.meta.url),
-  "utf8",
-);
-const sessionSendWorkflowSource = readFileSync(
-  new URL("../../../pages/session-send-workflow.ts", import.meta.url),
-  "utf8",
-);
-const stagingSource = readFileSync(
-  new URL("../../../pages/session-attachment-staging.ts", import.meta.url),
-  "utf8",
-);
-
-function conversationRunCompatibilityBridgeSource(): string {
-  const start = sessionSendWorkflowSource.indexOf(
-    "export function createConversationRunCompatibilityBridge(",
-  );
-  const end = sessionSendWorkflowSource.indexOf(
-    "export function createSessionSendWorkflow",
-    start,
-  );
-  assert.notEqual(
-    start,
-    -1,
-    "conversation run compatibility bridge source should exist",
-  );
-  assert.notEqual(
-    end,
-    -1,
-    "conversation run compatibility bridge block should end before createSessionSendWorkflow",
-  );
-  return sessionSendWorkflowSource.slice(start, end);
-}
-
-test("staging failure blocks send with an explicit error and no draft clear", () => {
-  const bridgeSource = conversationRunCompatibilityBridgeSource();
-  const stagingStart = bridgeSource.indexOf('"sendPrompt:stage-attachments"');
-  const stagingEnd = bridgeSource.indexOf(
-    "const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();",
-  );
-  assert.notEqual(stagingStart, -1, "staging call should exist in send flow");
-  assert.notEqual(
-    stagingEnd,
-    -1,
-    "send flow should continue after staging call",
-  );
-  const stagingWindow = bridgeSource.slice(stagingStart, stagingEnd);
-
-  assert.match(
-    stagingWindow,
-    /deps\.stageAttachmentsIntoSessionDirectory\(\s*resolvedDraft,\s*materializedSessionID,\s*input\.sendPreflight,?\s*\)[\s\S]*let routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(routedDraft\.error\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{[\s\S]*deps\.setError\([\s\S]*error instanceof Error \? error\.message : deps\.safeStringify\(error\),?[\s\S]*\);[\s\S]*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;/s,
-    "send flow should hard-fail when attachment staging or routing fails",
-  );
-
-  assert.doesNotMatch(
-    stagingWindow,
-    /setPrompt\(""\)|setAttachments\(\[\]\)/,
-    "staging failure should not clear the composer before aborting",
-  );
-});
+const appViewPropsSource = readFileSync(new URL("../../../app-view-props.ts", import.meta.url), "utf8");
+const composerSource = readFileSync(new URL("../../../components/session/composer.tsx", import.meta.url), "utf8");
+const sessionPageSource = readFileSync(new URL("../../../pages/session.tsx", import.meta.url), "utf8");
+const sessionSendWorkflowSource = readFileSync(new URL("../../../pages/session-send-workflow.ts", import.meta.url), "utf8");
+const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 
 test("send flow snapshots pending draft context before materializing a real session", () => {
-  const sendStart = sessionSendWorkflowSource.indexOf(
-    "async function sendPrompt",
-  );
-  const sessionTarget = sessionSendWorkflowSource.indexOf(
-    "const explicitTargetSessionId = deps.isPendingSessionInstanceKey(",
-    sendStart,
-  );
-  const pendingSnapshot = sessionSendWorkflowSource.indexOf(
-    "const pendingDraftSendState = (() => {",
-    sessionTarget,
-  );
-  const pendingKey = sessionSendWorkflowSource.indexOf(
-    'const pendingDraftKey = (deps.activePendingDraftKey() ?? "").trim();',
-    pendingSnapshot,
-  );
-  const sessionCreate = sessionSendWorkflowSource.indexOf(
-    "createSessionAndOpen(initialSessionTitle",
-    pendingSnapshot,
-  );
+  const sendStart = sessionSendWorkflowSource.indexOf("async function sendPrompt");
+  const sessionTarget = sessionSendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(", sendStart);
+  const pendingSnapshot = sessionSendWorkflowSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
+  const pendingKey = sessionSendWorkflowSource.indexOf('const pendingDraftKey = (deps.activePendingDraftKey() ?? "").trim();', pendingSnapshot);
+  const sessionCreate = sessionSendWorkflowSource.indexOf("createSessionAndOpen(initialSessionTitle", pendingSnapshot);
 
   assert.notEqual(sendStart, -1, "sendPrompt should exist");
-  assert.ok(
-    sessionTarget > sendStart,
-    "send flow should resolve the target session before pending draft snapshot",
-  );
+  assert.ok(sessionTarget > sendStart, "send flow should resolve the target session before pending draft snapshot");
   assert.match(
     sessionSendWorkflowSource.slice(sessionTarget, pendingSnapshot),
     /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
     "send flow should preserve the explicit target session before pending draft snapshot",
   );
-  assert.ok(
-    pendingSnapshot > sessionTarget,
-    "send flow should snapshot pending draft identity",
-  );
-  assert.ok(
-    pendingKey > pendingSnapshot,
-    "pending draft snapshot should capture active pending draft key",
-  );
-  assert.ok(
-    sessionCreate > pendingSnapshot,
-    "pending draft snapshot should happen before creating the real session",
-  );
+  assert.ok(pendingSnapshot > sessionTarget, "send flow should snapshot pending draft identity");
+  assert.ok(pendingKey > pendingSnapshot, "pending draft snapshot should capture active pending draft key");
+  assert.ok(sessionCreate > pendingSnapshot, "pending draft snapshot should happen before creating the real session");
 });
 
 test("composer keeps dropped files as attachment chips", () => {
@@ -123,11 +34,7 @@ test("composer keeps dropped files as attachment chips", () => {
     "composer should keep dropped files as attachment chips",
   );
 
-  assert.doesNotMatch(
-    composerSource,
-    /insertUnsupportedFileLinks\(/,
-    "composer should not auto-insert file links for dropped files",
-  );
+  assert.doesNotMatch(composerSource, /insertUnsupportedFileLinks\(/, "composer should not auto-insert file links for dropped files");
 });
 
 test("composer exposes send result so the parent can handle failed handoff state", () => {
@@ -175,11 +82,7 @@ test("composer clears transferred drafts through the revision-owned handoff", ()
     "counter-based local sending and active trace state should be released after the handoff promise settles",
   );
 
-  assert.doesNotMatch(
-    composerSource,
-    /restoreSubmittedDraft\(submittedDraft\)/,
-    "failed handoff should not restore the submitted draft into the composer",
-  );
+  assert.doesNotMatch(composerSource, /restoreSubmittedDraft\(submittedDraft\)/, "failed handoff should not restore the submitted draft into the composer");
 });
 
 test("session page enables attachments only when Veslo server is connected", () => {
@@ -195,33 +98,5 @@ test("session props do not borrow devtools workspace fallbacks for attachment ga
     appViewPropsSource,
     /const sessionProps = \{[\s\S]*?get vesloServerWorkspaceId\(\) \{[\s\S]*?return vesloServerWorkspaceId\(\);/s,
     "session view should use the real Veslo workspace signal, not a devtools-only fallback that can point at the wrong workspace",
-  );
-});
-
-test("send flow blocks screenshot analysis on non-vision models instead of relying on a hidden read fallback", () => {
-  const bridgeSource = conversationRunCompatibilityBridgeSource();
-
-  assert.match(
-    bridgeSource,
-    /let routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
-    "send flow should route staged attachments using the selected model capabilities",
-  );
-
-  assert.match(
-    bridgeSource,
-    /if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(routedDraft\.error\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\}/s,
-    "non-vision screenshot sends should fail with a visible error before the prompt runs",
-  );
-
-  assert.doesNotMatch(
-    bridgeSource,
-    /stagedPaths\.join\("\\n"\)/,
-    "staged screenshot filenames should not be appended directly into prompt text",
-  );
-
-  assert.match(
-    stagingSource,
-    /for \(const attachment of draft\.attachments\) \{\s*if \(attachment\.kind !== "image" && !attachment\.mimeType\.toLowerCase\(\)\.startsWith\("image\/"\)\) continue;\s*parts\.push\(\{\s*type: "file",\s*url: attachment\.dataUrl,\s*filename: attachment\.name,\s*mime: attachment\.mimeType,/s,
-    "prompt building should keep image attachments inline without leaking non-image bytes",
   );
 });

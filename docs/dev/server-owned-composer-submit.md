@@ -88,12 +88,14 @@ post-baseline user candidate: explicit compatible client metadata wins, then
 the bounded text/mode/file fingerprint fallback applies. Ambiguous candidates
 remain visible rather than being guessed.
 
-The old direct run helper remains in the app service for explicit compatibility
-surfaces and tests where the submit adapter is unavailable. It is not the
-normal wired input-submit path. The app composition root does not create or
-inject the legacy conversation-run fallback into `createSessionSendWorkflow`;
-compatibility tests may still construct that fallback explicitly.
-Edit-message replacement is server-owned through the replacement mutation
-workflow; replacement failure surfacing is tracked and closed by
-`docs/plans/2026-07-07-server-owned-composer-send-workflow-deep-audit-followups.md`.
+The app input-submit path is server-owned only. `createSessionSendWorkflow`
+does not construct or accept a direct-run compatibility bridge. If the Veslo
+server submit adapter is unavailable, the workflow fails closed before it can
+create or run an OpenCode session. Attachment staging remains a bounded app
+adapter, while conversation materialization, model and command resolution,
+queue admission, and run lifecycle ownership stay behind the server submit
+boundary.
+Edit-message replacement uses the same server-owned submit boundary and fails
+closed when its submit adapter or scoped target is unavailable. It does not
+fall back to app-side revert, runtime preparation, or a direct OpenCode send.
 Full queue UI API migration remains a separate follow-up.

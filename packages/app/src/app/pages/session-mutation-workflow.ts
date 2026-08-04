@@ -20,19 +20,12 @@ import {
 import {
   validateConversationSubmitRequest,
   validateConversationSubmitTerminalResult,
-  validateSendRuntimePreparationResult,
   type SendBoundaryValidationMode,
 } from "../lib/send-boundary-validation";
-import {
-  type ComposerDraftStateCommands,
-} from "./session-composer-drafts";
+import { type ComposerDraftStateCommands } from "./session-composer-drafts";
 import { resolveComposerStorageKey } from "../lib/pending-session-drafts";
 import { withoutSessionStatus as defaultWithoutSessionStatus } from "../lib/scoped-session-status";
-import {
-  isVisibleTextPart,
-  normalizeDirectoryPath,
-  normalizeTodoItems as defaultNormalizeTodoItems,
-} from "../utils";
+import { isVisibleTextPart, normalizeDirectoryPath, normalizeTodoItems as defaultNormalizeTodoItems } from "../utils";
 import type {
   VesloConversationSubmitRequest,
   VesloConversationSubmitResult,
@@ -113,17 +106,10 @@ export type SessionMutationWorkflowDeps = {
   createSendPreflightContext: (sendTraceId?: string | null) => SendPreflightContextLike;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
   sendBoundaryValidationMode?: () => SendBoundaryValidationMode;
-  sendTraceStep: (
-    event: string,
-    run: () => Promise<boolean>,
-    payload?: Record<string, unknown>,
-  ) => Promise<boolean>;
+  sendTraceStep: (event: string, run: () => Promise<boolean>, payload?: Record<string, unknown>) => Promise<boolean>;
   resolveSendTargetWorkspaceScope: (sessionId?: string | null) => SendTargetWorkspaceScope | null;
-  prepareSendRuntimeForSend: (event: string, preflight: SendPreflightContextLike) => Promise<{ ok: boolean }>;
   resolveRuntimeSandboxStateForTarget: (target: SendTargetWorkspaceScope | null) => unknown | null;
   routedClientForSendTarget: (target: SendTargetWorkspaceScope | null) => SessionMutationClient | null;
-  engineReady: () => boolean;
-  client: () => unknown;
   reportError: (error: unknown, context: string) => void;
   selectedSessionModel: () => ModelRef;
   developerMode: () => boolean;
@@ -135,12 +121,7 @@ export type SessionMutationWorkflowDeps = {
     startedAt: number,
     payload?: Record<string, unknown>,
   ) => void;
-  recordPerfLog: (
-    enabled: boolean,
-    scope: string,
-    event: string,
-    payload?: Record<string, unknown>,
-  ) => void;
+  recordPerfLog: (enabled: boolean, scope: string, event: string, payload?: Record<string, unknown>) => void;
   perfNow: () => number;
   sessionDirectoryOverrideById: () => Record<string, string | undefined>;
   workspaceProjectDir: () => string;
@@ -206,9 +187,7 @@ function sendBoundaryValidationOptions(
   };
 }
 
-function sessionSubmitResultFromReplacementSubmit(
-  result: TerminalReplacementSubmitResult,
-): SessionSubmitResult {
+function sessionSubmitResultFromReplacementSubmit(result: TerminalReplacementSubmitResult): SessionSubmitResult {
   if (result.status === "submitted") {
     return sessionSubmitSubmittedResult({
       workspaceId: result.workspaceId,
@@ -313,16 +292,19 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     const text = deps.lastPromptSent().trim();
     if (!text) return;
     const modelOverride = deps.lastPromptSentModelOverride?.() ?? null;
-    void deps.sendPrompt({
-      mode: "prompt",
-      text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    }, {
-      clientMessageId: deps.createClientMessageId(),
-      origin: "app:retry-last-prompt",
-      ...(modelOverride ? { modelOverride } : {}),
-    });
+    void deps.sendPrompt(
+      {
+        mode: "prompt",
+        text,
+        parts: [{ type: "text", text }],
+        attachments: [],
+      },
+      {
+        clientMessageId: deps.createClientMessageId(),
+        origin: "app:retry-last-prompt",
+        ...(modelOverride ? { modelOverride } : {}),
+      },
+    );
   }
 
   async function submitCurrentSessionCompaction(sessionIdOverride?: string) {
@@ -356,9 +338,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       const workspaceType = deps.workspaces().find((workspace) => workspace.id === workspaceId)?.workspaceType ?? null;
       const submitConversation = deps.submitConversationFromVesloWriteApi;
       const submitDirectory =
-        sendTargetWorkspace?.directory?.trim() ||
-        sendTargetWorkspace?.workspaceRoot?.trim() ||
-        "";
+        sendTargetWorkspace?.directory?.trim() || sendTargetWorkspace?.workspaceRoot?.trim() || "";
       if (!submitConversation || !workspaceId || workspaceType !== "local" || !submitDirectory) {
         deps.recordSendTrace("compactSession:server-submit-unavailable", {
           sessionID,
@@ -406,42 +386,43 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
           submitQueuePolicy: "normal",
         },
       };
-      const submitRequestValidation = validateConversationSubmitRequest(submitRequest, sendBoundaryValidationOptions(deps, {
-        event: "compactSession:server-submit-request:validation-failed",
-        traceId: preflight.traceId,
-        context: {
-          phase: "compact-server-submit",
-          sessionID,
-          workspaceId,
-          directory: submitDirectory,
-          clientMessageId,
-        },
-      }));
+      const submitRequestValidation = validateConversationSubmitRequest(
+        submitRequest,
+        sendBoundaryValidationOptions(deps, {
+          event: "compactSession:server-submit-request:validation-failed",
+          traceId: preflight.traceId,
+          context: {
+            phase: "compact-server-submit",
+            sessionID,
+            workspaceId,
+            directory: submitDirectory,
+            clientMessageId,
+          },
+        }),
+      );
       if (!submitRequestValidation.ok) {
         throw new Error(submitRequestValidation.message);
       }
-      let result = await submitConversation(
-        workspaceId,
-        submitDirectory,
-        submitRequestValidation.value,
-        preflight,
-      );
+      let result = await submitConversation(workspaceId, submitDirectory, submitRequestValidation.value, preflight);
       if (
         result?.status === "submitted" ||
         result?.status === "queued" ||
         result?.status === "blocked" ||
         result?.status === "failed"
       ) {
-        const resultValidation = validateConversationSubmitTerminalResult(result, sendBoundaryValidationOptions(deps, {
-          event: "compactSession:server-submit-result:validation-failed",
-          traceId: preflight.traceId,
-          context: {
-            phase: "compact-server-submit",
-            sessionID,
-            workspaceId,
-            clientMessageId,
-          },
-        }));
+        const resultValidation = validateConversationSubmitTerminalResult(
+          result,
+          sendBoundaryValidationOptions(deps, {
+            event: "compactSession:server-submit-result:validation-failed",
+            traceId: preflight.traceId,
+            context: {
+              phase: "compact-server-submit",
+              sessionID,
+              workspaceId,
+              clientMessageId,
+            },
+          }),
+        );
         if (!resultValidation.ok) {
           throw new Error(resultValidation.message);
         }
@@ -534,8 +515,6 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       messageID,
       clientMessageId: sendCorrelation.clientMessageId,
       origin: sendCorrelation.origin,
-      engineReady: deps.engineReady(),
-      hasClient: Boolean(deps.client()),
     });
     const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
     if (
@@ -545,7 +524,10 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
         { traceId: sendTraceId, sessionID },
       ))
     ) {
-      deps.recordSendTrace("replaceUserMessage:blocked-scoped-workspace", { traceId: sendTraceId, sessionID });
+      deps.recordSendTrace("replaceUserMessage:blocked-scoped-workspace", {
+        traceId: sendTraceId,
+        sessionID,
+      });
       return sessionSubmitBlockedResult({
         code: "workspace_scope_unavailable",
         message: "The selected session workspace is not ready for replacement.",
@@ -555,10 +537,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     const submitConversation = deps.submitConversationFromVesloWriteApi;
     const scope = deps.resolveSelectedSessionBrowseScope(sessionID);
     const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
-    const submitDirectory =
-      sendTargetWorkspace?.directory?.trim() ||
-      sendTargetWorkspace?.workspaceRoot?.trim() ||
-      "";
+    const submitDirectory = sendTargetWorkspace?.directory?.trim() || sendTargetWorkspace?.workspaceRoot?.trim() || "";
     if (submitConversation && workspaceId && submitDirectory) {
       replacePreflight.targetWorkspace = {
         workspaceId,
@@ -593,18 +572,21 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
           submitQueuePolicy: "normal",
         },
       };
-      const submitRequestValidation = validateConversationSubmitRequest(submitRequest, sendBoundaryValidationOptions(deps, {
-        event: "replaceUserMessage:server-submit-request:validation-failed",
-        traceId: sendTraceId,
-        context: {
-          phase: "replace-server-submit",
-          sessionID,
-          workspaceId,
-          replaceMessageId: messageID,
-          clientMessageId: sendCorrelation.clientMessageId,
-          origin: sendCorrelation.origin,
-        },
-      }));
+      const submitRequestValidation = validateConversationSubmitRequest(
+        submitRequest,
+        sendBoundaryValidationOptions(deps, {
+          event: "replaceUserMessage:server-submit-request:validation-failed",
+          traceId: sendTraceId,
+          context: {
+            phase: "replace-server-submit",
+            sessionID,
+            workspaceId,
+            replaceMessageId: messageID,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+          },
+        }),
+      );
       if (!submitRequestValidation.ok) {
         return sessionSubmitFailedResult({
           code: "replacement_submit_invalid_request",
@@ -623,18 +605,21 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
         result?.status === "blocked" ||
         result?.status === "failed"
       ) {
-        const resultValidation = validateConversationSubmitTerminalResult(result, sendBoundaryValidationOptions(deps, {
-          event: "replaceUserMessage:server-submit-result:validation-failed",
-          traceId: sendTraceId,
-          context: {
-            phase: "replace-server-submit",
-            sessionID,
-            workspaceId,
-            replaceMessageId: messageID,
-            clientMessageId: sendCorrelation.clientMessageId,
-            origin: sendCorrelation.origin,
-          },
-        }));
+        const resultValidation = validateConversationSubmitTerminalResult(
+          result,
+          sendBoundaryValidationOptions(deps, {
+            event: "replaceUserMessage:server-submit-result:validation-failed",
+            traceId: sendTraceId,
+            context: {
+              phase: "replace-server-submit",
+              sessionID,
+              workspaceId,
+              replaceMessageId: messageID,
+              clientMessageId: sendCorrelation.clientMessageId,
+              origin: sendCorrelation.origin,
+            },
+          }),
+        );
         if (!resultValidation.ok) {
           return sessionSubmitFailedResult({
             code: "replacement_submit_invalid_result",
@@ -657,9 +642,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
         return sessionSubmitResultFromReplacementSubmit(result);
       }
       deps.recordSendTrace(
-        result
-          ? `replaceUserMessage:server-submit-${result.status}`
-          : "replaceUserMessage:server-submit-unavailable",
+        result ? `replaceUserMessage:server-submit-${result.status}` : "replaceUserMessage:server-submit-unavailable",
         {
           traceId: sendTraceId,
           sessionID,
@@ -684,70 +667,10 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       hasSubmitConversation: Boolean(submitConversation),
       hasDirectory: Boolean(submitDirectory),
     });
-    const replaceRuntimePreparation = await deps.prepareSendRuntimeForSend("replaceUserMessage", replacePreflight);
-    const replaceRuntimePreparationValidation = validateSendRuntimePreparationResult(
-      replaceRuntimePreparation,
-      sendBoundaryValidationOptions(deps, {
-        event: "replaceUserMessage:runtime-preflight:validation-failed",
-        traceId: sendTraceId,
-        context: {
-          phase: "replace-runtime-preflight",
-          sessionID,
-          workspaceId: workspaceId || null,
-          clientMessageId: sendCorrelation.clientMessageId,
-          origin: sendCorrelation.origin,
-        },
-      }),
-    );
-    if (!replaceRuntimePreparationValidation.ok) {
-      return sessionSubmitBlockedResult({
-        code: "replacement_runtime_invalid_contract",
-        message: replaceRuntimePreparationValidation.message,
-      });
-    }
-    if (!replaceRuntimePreparation.ok) {
-      return sessionSubmitBlockedResult({
-        code: "replacement_runtime_unavailable",
-        message: "The runtime is not ready for replacement.",
-      });
-    }
-    replacePreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
-    const c = deps.routedClientForSendTarget(sendTargetWorkspace);
-    if (!c) {
-      deps.recordSendTrace("replaceUserMessage:blocked-no-client", {
-        traceId: sendTraceId,
-        sessionID,
-        workspaceId: (sendTargetWorkspace as { workspaceId?: string | null } | null)?.workspaceId ?? null,
-      });
-      return sessionSubmitBlockedResult({
-        code: "replacement_no_client",
-        message: "No runtime client is available for replacement.",
-      });
-    }
-
-    await abortSessionSafe(c, sessionID);
-
-    const previousRevertMessageID = deps.selectedSession()?.revert?.messageID ?? null;
-    const next = await revertSession(c, sessionID, messageID);
-    deps.upsertLocalSession(next);
-
-    const accepted = await deps.sendPrompt(draft, {
-      targetSessionId: sessionID,
-      sendTraceId: options.sendTraceId,
-      clientMessageId: sendCorrelation.clientMessageId,
-      origin: sendCorrelation.origin,
+    return sessionSubmitFailedResult({
+      code: "replacement_submit_unavailable",
+      message: "Server-owned replacement submit is unavailable for this session.",
     });
-    if (!accepted.accepted) {
-      try {
-        const restored = previousRevertMessageID
-          ? await revertSession(c, sessionID, previousRevertMessageID)
-          : await unrevertSession(c, sessionID);
-        deps.upsertLocalSession(restored);
-      } catch (error) {
-        deps.reportError(error, "session.replaceUserMessage.restore");
-      }
-    }
-    return accepted;
   }
 
   async function undoLastUserMessage() {
@@ -855,18 +778,16 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     }
 
     await deps.renameSession(sessionID, trimmed, targetWorkspaceId);
-    await deps.refreshSidebarWorkspaceSessions(targetWorkspaceId)
-      .catch(e => deps.reportError(e, "sidebar.refreshSessions"));
+    await deps
+      .refreshSidebarWorkspaceSessions(targetWorkspaceId)
+      .catch((e) => deps.reportError(e, "sidebar.refreshSessions"));
   }
 
   async function deleteSessionById(sessionID: string, workspaceID?: string) {
     const trimmed = sessionID.trim();
     if (!trimmed) return;
     const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(trimmed);
-    const workspaceId =
-      (workspaceID ?? "").trim() ||
-      sendTargetWorkspace?.workspaceId?.trim() ||
-      "";
+    const workspaceId = (workspaceID ?? "").trim() || sendTargetWorkspace?.workspaceId?.trim() || "";
     if (!workspaceId) {
       throw new Error("Session workspace is unavailable for deletion.");
     }
@@ -875,17 +796,16 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       throw new Error("Target workspace is not connected to a server");
     }
 
-    const workspace = workspaceId
-      ? deps.workspaces().find((item) => item.id === workspaceId)
-      : null;
+    const workspace = workspaceId ? deps.workspaces().find((item) => item.id === workspaceId) : null;
     const workspaceRoot = workspace
       ? workspace.workspaceType === "local"
-        ? workspace.path?.trim() ?? ""
-        : workspace.directory?.trim() ?? ""
+        ? (workspace.path?.trim() ?? "")
+        : (workspace.directory?.trim() ?? "")
       : deps.workspaceRootForId(workspaceId, "").trim();
-    const targetWorkspaceRoot = sendTargetWorkspace?.workspaceId?.trim() === workspaceId
-      ? sendTargetWorkspace.directory?.trim() || sendTargetWorkspace.workspaceRoot?.trim() || ""
-      : "";
+    const targetWorkspaceRoot =
+      sendTargetWorkspace?.workspaceId?.trim() === workspaceId
+        ? sendTargetWorkspace.directory?.trim() || sendTargetWorkspace.workspaceRoot?.trim() || ""
+        : "";
 
     const overrideDir = deps.sessionDirectoryOverride()[trimmed] ?? "";
     const root = normalizeDirectoryPath(overrideDir) || targetWorkspaceRoot || workspaceRoot;
@@ -926,29 +846,28 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
   }
 
-  async function listCommands(
-    scope: SessionMutationCommandListScope = {},
-  ): Promise<SessionMutationCommand[]> {
+  async function listCommands(scope: SessionMutationCommandListScope = {}): Promise<SessionMutationCommand[]> {
     const scopedWorkspaceId = scope.workspaceId?.trim() ?? "";
     const c = scopedWorkspaceId ? deps.routedClient(scopedWorkspaceId) : deps.routedClient();
     if (!c) return [];
     const scopedDirectory = scope.directory?.trim() ?? "";
     const directory =
       scopedDirectory ||
-      (scopedWorkspaceId
-        ? deps.workspaceRootForId(scopedWorkspaceId, null)
-        : deps.activeWorkspaceRoot().trim()) ||
+      (scopedWorkspaceId ? deps.workspaceRootForId(scopedWorkspaceId, null) : deps.activeWorkspaceRoot().trim()) ||
       undefined;
-    const list = await listCommandsTyped(c, directory) as SessionMutationCommand[];
+    const list = (await listCommandsTyped(c, directory)) as SessionMutationCommand[];
     if (list.some((entry) => entry.name === "compact")) {
       return list;
     }
-    return [{
-      id: "builtin:compact",
-      name: "compact",
-      description: deps.compactCommandDescription(),
-      source: "command",
-    }, ...list];
+    return [
+      {
+        id: "builtin:compact",
+        name: "compact",
+        description: deps.compactCommandDescription(),
+        source: "command",
+      },
+      ...list,
+    ];
   }
 
   async function saveSessionExport(sessionID: string) {

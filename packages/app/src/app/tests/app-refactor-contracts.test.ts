@@ -5,35 +5,15 @@ import test from "node:test";
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const appRouteSyncSource = readFileSync(new URL("../context/app-route-sync.ts", import.meta.url), "utf8");
 const appDeepLinkWorkflowSource = readFileSync(new URL("../context/app-deep-link-workflow.ts", import.meta.url), "utf8");
-const appStartupHydrationSource = readFileSync(
-  new URL("../context/app-startup-hydration.ts", import.meta.url),
-  "utf8",
-);
-const conversationServiceSource = readFileSync(
-  new URL("../context/conversation-service.ts", import.meta.url),
-  "utf8",
-);
-const queueDrainControllerSource = readFileSync(
-  new URL("../context/session-queue-drain-controller.ts", import.meta.url),
-  "utf8",
-);
+const appStartupHydrationSource = readFileSync(new URL("../context/app-startup-hydration.ts", import.meta.url), "utf8");
+const conversationServiceSource = readFileSync(new URL("../context/conversation-service.ts", import.meta.url), "utf8");
+const queueDrainControllerSource = readFileSync(new URL("../context/session-queue-drain-controller.ts", import.meta.url), "utf8");
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
-const sessionCreationWorkflowSource = readFileSync(
-  new URL("../pages/session-creation-workflow.ts", import.meta.url),
-  "utf8",
-);
+const sessionCreationWorkflowSource = readFileSync(new URL("../pages/session-creation-workflow.ts", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../pages/session.tsx", import.meta.url), "utf8");
-const sessionSendWorkflowSource = readFileSync(
-  new URL("../pages/session-send-workflow.ts", import.meta.url),
-  "utf8",
-);
+const sessionSendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
 
-function sectionBetween(
-  startNeedle: string,
-  endNeedle: string,
-  label: string,
-  haystack: string = source,
-): string {
+function sectionBetween(startNeedle: string, endNeedle: string, label: string, haystack: string = source): string {
   const start = haystack.indexOf(startNeedle);
   assert.ok(start >= 0, `${label} start should be present`);
   const end = haystack.indexOf(endNeedle, start);
@@ -88,13 +68,13 @@ test("startup server and bundle links hydrate settings before stripping consumed
   assertInOrder(startupLinkEffect, "startup link cleanup", [
     "const cleanedConnect = stripVesloConnectInviteFromUrl(windowTarget.location.href);",
     "const cleaned = stripVesloBundleInviteFromUrl(cleanedConnect);",
-    "windowTarget.history.replaceState(windowTarget.history.state ?? null, \"\", cleaned);",
+    'windowTarget.history.replaceState(windowTarget.history.state ?? null, "", cleaned);',
   ]);
 });
 
 test("desktop deep-link fan-in dedupes URLs and stops after the first matching handler consumes one", () => {
   const desktopDeepLinkStartup = sectionBetween(
-    "const { getCurrent, onOpenUrl } = await import(\"@tauri-apps/plugin-deep-link\");",
+    'const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");',
     "function runWebDeepLinkStartup",
     "desktop deep-link startup",
     appStartupHydrationSource,
@@ -120,7 +100,7 @@ test("desktop deep-link fan-in dedupes URLs and stops after the first matching h
     "deps.consumeDesktopDeepLinkUrls(await getCurrent());",
     "const unlisten = await onOpenUrl((urls) => {",
     "deps.consumeDesktopDeepLinkUrls(urls);",
-    "const unlistenSingleInstance = await listen<string[]>(\"deep-link://new-url\", (event) => {",
+    'const unlistenSingleInstance = await listen<string[]>("deep-link://new-url", (event) => {',
     "deps.consumeDesktopDeepLinkUrls(event.payload);",
     "return () => {",
     "unlisten();",
@@ -144,7 +124,7 @@ test("web startup consumes all URL deep-link formats but strips only non-auth qu
 
   assertInOrder(webDeepLinkStartup, "web deep-link startup", [
     "deps.consumeWebDeepLinkUrl(currentUrl, (cleanedUrl) => {",
-    "window.history.replaceState({}, \"\", cleanedUrl);",
+    'window.history.replaceState({}, "", cleanedUrl);',
   ]);
   assertInOrder(webDeepLinkWorkflow, "web deep-link workflow", [
     "deps.queueAuthCompleteDeepLink(currentUrl);",
@@ -174,11 +154,7 @@ test("desktop hash routing owns dashboard aliases and cleans up its hashchange l
     /import \{ createAppRouteSync \} from "\.\/context\/app-route-sync";/,
     "app.tsx should delegate route/hash shell behavior to the app route sync context",
   );
-  assert.match(
-    source,
-    /appRouteSync\.startHashRouteSync\(\);/,
-    "app.tsx should install desktop hash routing through the route sync module",
-  );
+  assert.match(source, /appRouteSync\.startHashRouteSync\(\);/, "app.tsx should install desktop hash routing through the route sync module");
   assert.match(
     appRouteSyncSource,
     /import \{[\s\S]*resolveDashboardRouteTab,[\s\S]*\} from "\.\.\/controllers\/app-startup-controller";/s,
@@ -202,8 +178,8 @@ test("desktop hash routing owns dashboard aliases and cleans up its hashchange l
   assertInOrder(hashRouting, "desktop hash routing listener lifecycle", [
     "let onHashChange: AppRouteHashChangeListener | null = null;",
     "onHashChange = createAppRouteHashChangeListener(() => mountedWindowTarget, syncExternalHashRoute);",
-    "mountedWindowTarget.addEventListener(\"hashchange\", onHashChange);",
-    "mountedWindowTarget.removeEventListener(\"hashchange\", onHashChange);",
+    'mountedWindowTarget.addEventListener("hashchange", onHashChange);',
+    'mountedWindowTarget.removeEventListener("hashchange", onHashChange);',
     "onHashChange = null;",
   ]);
 });
@@ -223,57 +199,6 @@ test("session first-send entrypoint is exposed through the session flow facade",
     source,
     /const sendPrompt = sessionSendWorkflow\.sendPrompt;/,
     "App should not expose sendPrompt directly from the page-level send workflow",
-  );
-});
-
-test("session flow owners keep UI progress state behind narrow app adapters", () => {
-  const sendOptions = sectionBetween(
-    "export type SessionSendWorkflowOptions = {",
-    "export type SessionSendWorkflow = {",
-    "send workflow options",
-    sessionSendWorkflowSource,
-  );
-  const createOptions = sectionBetween(
-    "export type SessionCreationWorkflowOptions = {",
-    "export type SessionCreationWorkflow = {",
-    "create workflow options",
-    sessionCreationWorkflowSource,
-  );
-
-  assert.match(
-    source,
-    /const sessionFlowProgressPresenter = createSessionFlowProgressPresenter\(\{[\s\S]*setBusy,[\s\S]*setBusyLabel,[\s\S]*setBusyStartedAt,[\s\S]*setCreatingSession,[\s\S]*\}\);/s,
-    "app.tsx should adapt UI busy signals through the session flow progress presenter",
-  );
-  const sendWorkflowStart = source.indexOf("const sessionSendWorkflow = createSessionSendWorkflow({");
-  const sendWorkflowEnd = source.indexOf("\n  });", sendWorkflowStart);
-  assert.notEqual(sendWorkflowStart, -1, "app.tsx should wire createSessionSendWorkflow");
-  assert.ok(sendWorkflowEnd > sendWorkflowStart, "send workflow dependency object should be bounded");
-  const sendWorkflowDeps = source.slice(sendWorkflowStart, sendWorkflowEnd);
-  assert.match(
-    sendWorkflowDeps,
-    /emitFlowProgress: \(event\) => sessionFlowProgressPresenter\.emit\(event\),[\s\S]*submitConversationFromVesloWriteApi,/s,
-    "send workflow should receive progress adapters and the server-owned submit adapter",
-  );
-  assert.doesNotMatch(
-    sendWorkflowDeps,
-    /\bconversationRunCompatibilityBridge\b|\bprepareSendRuntimeForSend\b/,
-    "normal send workflow wiring must not receive conversation run compatibility bridge or frontend runtime preparation",
-  );
-  assert.match(
-    source,
-    /createSessionCreationWorkflow\(\{[\s\S]*emitFlowProgress: \(event\) => sessionFlowProgressPresenter\.emit\(event\),[\s\S]*applyCreatedSessionState,[\s\S]*applyCreatedSessionTransition,[\s\S]*\}\);/s,
-    "create workflow should return typed results and let app adapters apply UI state and navigation",
-  );
-  assert.doesNotMatch(
-    `${sendOptions}\n${createOptions}`,
-    /\bsetBusy(?:Label|StartedAt)?\b/,
-    "send/create workflow dependency contracts must not receive direct busy setters",
-  );
-  assert.doesNotMatch(
-    readinessSource,
-    /\bsetBusy(?:Label|StartedAt)?\b|\bbusyLabel\b|\bbusyStartedAt\b/,
-    "runtime readiness service must not own UI busy labels or direct busy setters",
   );
 });
 
@@ -298,11 +223,7 @@ test("session queue controller and live-read boundaries stay behind extracted ow
     /createEffect\(\s*on\(\s*options\.sessionStatusById,[\s\S]*options\.handleSessionStatusMapChanged\(statuses, previousStatuses\);/s,
     "queue drain controller should own status-map continuation effects",
   );
-  assert.doesNotMatch(
-    sessionSource,
-    /createEffect\([\s\S]{0,400}drainNextQueuedDraft\(/,
-    "SessionView effects must not directly drive queue drains",
-  );
+  assert.doesNotMatch(sessionSource, /createEffect\([\s\S]{0,400}drainNextQueuedDraft\(/, "SessionView effects must not directly drive queue drains");
   assert.match(
     source,
     /const liveTranscriptReadPolicy\s*=\s*createLiveTranscriptReadPolicy\(\{[\s\S]*\}\);[\s\S]*const isLiveTranscriptReadAllowedForWorkspace\s*=\s*liveTranscriptReadPolicy\.isAllowedForWorkspace;[\s\S]*emitLiveTranscriptPolicyEvent:\s*\(event\)\s*=>\s*liveTranscriptReadPolicy\.emit\(event\),/s,
@@ -321,9 +242,7 @@ test("passive conversation reads require explicit side-effect intent", () => {
   assert.ok(resolveHelperStart >= 0 && returnExportsStart > resolveHelperStart, "passive read helper source should be present");
 
   const helperSource = conversationServiceSource.slice(resolveHelperStart, returnExportsStart);
-  const callSites = conversationServiceSource
-    .slice(returnExportsStart)
-    .match(/resolvePassiveConversationReadClient\(([^)]*)\)/g) ?? [];
+  const callSites = conversationServiceSource.slice(returnExportsStart).match(/resolvePassiveConversationReadClient\(([^)]*)\)/g) ?? [];
 
   assert.match(
     conversationServiceSource,
@@ -363,12 +282,12 @@ test("baseUrl cache is read and written only for the web runtime", () => {
 
   const baseUrlPersistence = sectionBetween(
     "// In Tauri desktop the orchestrator port rotates on every `pnpm dev`",
-    "\"veslo.clientDirectory\",",
+    '"veslo.clientDirectory",',
     "baseUrl persistence effect",
     appStartupHydrationSource,
   );
   assertInOrder(baseUrlPersistence, "baseUrl persistence effect", [
     "if (deps.isTauriRuntime()) return;",
-    "window.localStorage.setItem(\"veslo.baseUrl\", deps.baseUrl());",
+    'window.localStorage.setItem("veslo.baseUrl", deps.baseUrl());',
   ]);
 });

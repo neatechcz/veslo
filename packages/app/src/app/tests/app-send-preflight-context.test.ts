@@ -3,22 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
-const sendWorkflowSource = readFileSync(
-  new URL("../pages/session-send-workflow.ts", import.meta.url),
-  "utf8",
-);
-const createWorkflowSource = readFileSync(
-  new URL("../pages/session-creation-workflow.ts", import.meta.url),
-  "utf8",
-);
-const runtimeReadinessSource = readFileSync(
-  new URL("../context/send-runtime-readiness.ts", import.meta.url),
-  "utf8",
-);
-const managedRuntimeConfigSource = readFileSync(
-  new URL("../context/managed-ai-runtime-config.ts", import.meta.url),
-  "utf8",
-);
+const sendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
+const createWorkflowSource = readFileSync(new URL("../pages/session-creation-workflow.ts", import.meta.url), "utf8");
+const runtimeReadinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
+const managedRuntimeConfigSource = readFileSync(new URL("../context/managed-ai-runtime-config.ts", import.meta.url), "utf8");
 
 function sendPromptSource(): string {
   const start = sendWorkflowSource.indexOf("async function sendPrompt(");
@@ -27,65 +15,12 @@ function sendPromptSource(): string {
   return sendWorkflowSource.slice(start, end);
 }
 
-function conversationRunCompatibilityBridgePrepareSource(): string {
-  const bridgeStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", bridgeStart);
-  const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
-  return sendWorkflowSource.slice(prepareStart, submitStart);
-}
-
 function createSessionAndOpenSource(): string {
   const start = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const end = createWorkflowSource.indexOf("return {", start);
   assert.ok(start >= 0 && end > start, "runCreateSessionFlow source should be present");
   return createWorkflowSource.slice(start, end);
 }
-
-test("sendPrompt carries a preflight context into first-session creation", () => {
-  const source = sendPromptSource();
-  const bridgePrepareSource = conversationRunCompatibilityBridgePrepareSource();
-
-  assert.match(
-    source,
-    /const sendPreflight = deps\.createSendPreflightContext\(options\.sendTraceId\);/,
-    "sendPrompt should create one preflight context for the whole send flow",
-  );
-  assert.match(
-    bridgePrepareSource,
-    /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\(\s*"sendPrompt",\s*input\.sendPreflight,?\s*\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
-    "compatibility bridge prepare should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
-  );
-  const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
-  const prepareEnd = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", prepareStart);
-  assert.ok(prepareStart >= 0 && prepareEnd > prepareStart, "prepareSendRuntimeForSend source should be present");
-  const readinessPrepareSource = runtimeReadinessSource.slice(prepareStart, prepareEnd);
-  assert.ok(
-    readinessPrepareSource.indexOf("${reason}:ensure-local-runtime-reachable") <
-      readinessPrepareSource.indexOf("${reason}:ensure-managed-ai-bootstrap-ready"),
-    "send readiness owner should refresh runtime state before validating managed AI routing",
-  );
-  assert.doesNotMatch(
-    source,
-    /sendPreflight\.runtimeHealthOk = true;/,
-    "sendPrompt should not treat a completed workspace engine ensure as a health probe",
-  );
-  assert.doesNotMatch(
-    source,
-    /sendPreflight\.(enginePrepared|managedAiReady) = true;/,
-    "sendPrompt should not manually mark readiness flags owned by the readiness service",
-  );
-  assert.doesNotMatch(
-    source,
-    /managedAiRuntimeAlreadyPrepared: true,/,
-    "sendPrompt should not pass a parallel managed-AI readiness flag beside the prepared preflight",
-  );
-  assert.match(
-    source,
-    /deps\.createSessionAndOpen\(initialSessionTitle, \{[\s\S]*preflight: sendPreflight,[\s\S]*\}\)/,
-    "sendPrompt should pass the same preflight context into createSessionAndOpen",
-  );
-});
 
 test("createSessionAndOpen skips duplicate preflight gates when sendPrompt already passed them", () => {
   const createSource = createSessionAndOpenSource();
@@ -121,8 +56,7 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
     "createSessionAndOpen should preserve the duplicate-runtime skip branch",
   );
   assert.ok(
-    createSource.indexOf("const runtimeHealthPreflightDecision") <
-      createSource.indexOf("const managedAiPreflightDecision"),
+    createSource.indexOf("const runtimeHealthPreflightDecision") < createSource.indexOf("const managedAiPreflightDecision"),
     "createSessionAndOpen should prepare runtime before managed AI routing",
   );
 });
@@ -179,11 +113,7 @@ test("managed AI send config preflight retries only local transient transport fa
     /isLoopbackVesloServerConnectionUrl\(retryBaseUrl\)[\s\S]*!\(error instanceof VesloServerError\)[\s\S]*isLocalVesloTransportError\(error\)[\s\S]*vesloServerRecentlyReachable\(\)/,
     "send config retry should be limited to local transport/socket failures after recent server reachability",
   );
-  assert.doesNotMatch(
-    retrySource,
-    /isLoopbackUrl\(/,
-    "send config retry should use the Veslo server connection URL guard instead of a generic loopback check",
-  );
+  assert.doesNotMatch(retrySource, /isLoopbackUrl\(/, "send config retry should use the Veslo server connection URL guard instead of a generic loopback check");
 
   const configCheckStart = managedRuntimeConfigSource.indexOf("const hasUsableManagedAiRuntimeConfigForSend = async");
   const configCheckEnd = managedRuntimeConfigSource.indexOf("const ensureManagedAiRuntimeAuthorizationForSend = async", configCheckStart);
@@ -196,4 +126,3 @@ test("managed AI send config preflight retries only local transient transport fa
     "send config preflight should use the narrow retry wrapper instead of a bare getConfig call",
   );
 });
-

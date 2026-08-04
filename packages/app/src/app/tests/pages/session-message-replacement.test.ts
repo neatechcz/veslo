@@ -3,10 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
-const conversationFlowSource = readFileSync(
-  new URL("../../pages/session-conversation-flow.ts", import.meta.url),
-  "utf8",
-);
+const conversationFlowSource = readFileSync(new URL("../../pages/session-conversation-flow.ts", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
 const mutationWorkflowSource = readFileSync(new URL("../../pages/session-mutation-workflow.ts", import.meta.url), "utf8");
@@ -68,7 +65,7 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
   );
 });
 
-test("replacement send path reverts to the original message before sending the edited draft", () => {
+test("replacement send path submits the edited draft through one server-owned boundary", () => {
   assert.match(
     sendWorkflowSource,
     /async function sendPrompt\(\s*draft: ComposerDraft,\s*options: SessionSendWorkflowSendOptions,[\s\S]*\): Promise<SessionSubmitResult> \{/,
@@ -78,13 +75,6 @@ test("replacement send path reverts to the original message before sending the e
     sendWorkflowSource.slice(sendWorkflowSource.indexOf("async function sendPrompt("), sendWorkflowSource.indexOf("async function abortSession")),
     /replaceMessageId\?:/,
     "app send API should keep replacement message routing out of the normal prompt send options",
-  );
-  const promptAsyncCall = sendWorkflowSource.match(/await runConversationOrFail\(\{\s*kind: "prompt_async",[\s\S]*?\n\s*\}\);/)?.[0] ?? "";
-  assert.ok(promptAsyncCall, "conversation prompt send branch should have a clear request object");
-  assert.doesNotMatch(
-    promptAsyncCall,
-    /\bmessageID\b/,
-    "normal conversation prompt sends should keep OpenCode message id allocation unchanged",
   );
   assert.match(
     sessionSource,
@@ -97,10 +87,10 @@ test("replacement send path reverts to the original message before sending the e
     "sendPromptImmediate should route replacement sends through replaceUserMessageAsync",
   );
   const serverReplacementStart = mutationWorkflowSource.indexOf("const submitConversation = deps.submitConversationFromVesloWriteApi;");
-  const legacyReplacementStart = mutationWorkflowSource.indexOf("const replaceRuntimePreparation = await deps.prepareSendRuntimeForSend", serverReplacementStart);
-  assert.ok(serverReplacementStart >= 0, "mutation workflow should attempt server-owned replacement submit first");
-  assert.ok(legacyReplacementStart > serverReplacementStart, "legacy replacement fallback should remain after the server branch");
-  const serverReplacementBranch = mutationWorkflowSource.slice(serverReplacementStart, legacyReplacementStart);
+  const replacementEnd = mutationWorkflowSource.indexOf("async function undoLastUserMessage", serverReplacementStart);
+  assert.ok(serverReplacementStart >= 0, "mutation workflow should own server replacement submit");
+  assert.ok(replacementEnd > serverReplacementStart, "replacement workflow should have a bounded implementation");
+  const serverReplacementBranch = mutationWorkflowSource.slice(serverReplacementStart, replacementEnd);
   assert.match(
     serverReplacementBranch,
     /const submitRequest: VesloConversationSubmitRequest = \{[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*origin: sendCorrelation\.origin,[\s\S]*draft: conversationSubmitDraftFromComposerDraft\(draft\),[\s\S]*options: \{[\s\S]*replaceMessageId: messageID,[\s\S]*submitQueuePolicy: "normal",[\s\S]*\}[\s\S]*\};[\s\S]*let result = await submitConversation\(\s*workspaceId,\s*submitDirectory,\s*submitRequestValidation\.value,\s*replacePreflight,\s*\);/,
@@ -109,12 +99,12 @@ test("replacement send path reverts to the original message before sending the e
   assert.doesNotMatch(
     serverReplacementBranch,
     /revertSession|unrevertSession|deps\.sendPrompt|prepareSendRuntimeForSend/,
-    "server-owned replacement branch should not perform app-side revert/send/runtime-prep choreography",
+    "replacement workflow should not perform app-side revert/send/runtime-prep choreography",
   );
   assert.match(
-    mutationWorkflowSource,
-    /if \(!accepted\.accepted\) \{[\s\S]*previousRevertMessageID\s*\? await revertSession\(c, sessionID, previousRevertMessageID\)\s*: await unrevertSession\(c, sessionID\)/,
-    "legacy replacement fallback should still restore the prior revert boundary if the edited send is rejected",
+    serverReplacementBranch,
+    /code: "replacement_submit_unavailable",[\s\S]*Server-owned replacement submit is unavailable/,
+    "replacement workflow should fail closed when its server submit boundary is unavailable",
   );
   assert.match(
     appSource,

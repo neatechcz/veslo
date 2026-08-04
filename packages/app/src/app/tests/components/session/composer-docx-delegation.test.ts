@@ -6,24 +6,10 @@ const composerSource = readFileSync(new URL("../../../components/session/compose
 const appSource = readFileSync(new URL("../../../app.tsx", import.meta.url), "utf8");
 const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("../../../pages/session-send-workflow.ts", import.meta.url), "utf8");
-const appShellEnvironmentSource = readFileSync(
-  new URL("../../../context/app-shell-environment.ts", import.meta.url),
-  "utf8",
-);
-
-function conversationRunCompatibilityBridgeSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.ok(start >= 0 && end > start, "conversation run compatibility bridge source should be present");
-  return sendWorkflowSource.slice(start, end);
-}
+const appShellEnvironmentSource = readFileSync(new URL("../../../context/app-shell-environment.ts", import.meta.url), "utf8");
 
 test("composer keeps dropped files as attachment chips and does not inject path text on drop", () => {
-  assert.doesNotMatch(
-    composerSource,
-    /insertPlainTextAtCursorOrEnd\(/,
-    "composer should not inject staged paths into editor text",
-  );
+  assert.doesNotMatch(composerSource, /insertPlainTextAtCursorOrEnd\(/, "composer should not inject staged paths into editor text");
 
   assert.match(
     composerSource,
@@ -45,23 +31,11 @@ test("all attachment staging happens in session-directory send pipeline, not in 
     "app send pipeline should stage attachments into the active session directory",
   );
 
-  assert.match(
-    stagingSource,
-    /const attachmentsToStage = draft\.attachments;/,
-    "staging should process every composer attachment",
-  );
+  assert.match(stagingSource, /const attachmentsToStage = draft\.attachments;/, "staging should process every composer attachment");
 
-  assert.doesNotMatch(
-    appSource,
-    /uploadInbox\(/,
-    "composer send flow should not stage attachments through inbox uploads",
-  );
+  assert.doesNotMatch(appSource, /uploadInbox\(/, "composer send flow should not stage attachments through inbox uploads");
 
-  assert.match(
-    stagingSource,
-    /ready\.client\.createFileSession\(ready\.workspaceId, \{[\s\S]*write: true,/,
-    "staging should open a writable file session",
-  );
+  assert.match(stagingSource, /ready\.client\.createFileSession\(ready\.workspaceId, \{[\s\S]*write: true,/, "staging should open a writable file session");
 
   assert.match(
     stagingSource,
@@ -81,11 +55,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
     "staging should probe for filename collisions in the session directory",
   );
 
-  assert.match(
-    stagingSource,
-    /await ready\.client\.writeFileBatch\([^,]+, \[/,
-    "staging should write attachments into the session directory",
-  );
+  assert.match(stagingSource, /await ready\.client\.writeFileBatch\([^,]+, \[/, "staging should write attachments into the session directory");
 
   assert.match(
     stagingSource,
@@ -94,30 +64,16 @@ test("all attachment staging happens in session-directory send pipeline, not in 
   );
 
   assert.match(
-    conversationRunCompatibilityBridgeSource(),
-    /let routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
-    "send pipeline should route staged attachments only after it knows the selected model capabilities",
+    sendWorkflowSource,
+    /deps\.stageServerSubmitAttachments\(\s*resolvedDraft,\s*existingSessionId,\s*sendPreflight,?\s*\)/,
+    "send pipeline should stage attachment refs for the selected session before server submit",
   );
 
-  assert.match(
-    conversationRunCompatibilityBridgeSource(),
-    /deps\.stageAttachmentsIntoSessionDirectory\(\s*resolvedDraft,\s*materializedSessionID,\s*input\.sendPreflight,?\s*\)/,
-    "send pipeline should stage attachments after session selection and before provider calls",
-  );
-
-  assert.doesNotMatch(
-    conversationRunCompatibilityBridgeSource(),
-    /stagedPaths\.join\("\\n"\)/,
-    "staging should not append attachment filenames directly into prompt text",
-  );
+  assert.doesNotMatch(sendWorkflowSource, /stagedPaths\.join\("\\n"\)/, "staging should not append attachment filenames directly into prompt text");
 });
 
 test("app installs a global file-drop navigation guard for the webview", () => {
-  assert.match(
-    appSource,
-    /createAppShellEnvironment\(\{[\s\S]*isTauriRuntime,[\s\S]*\}\);/,
-    "app should compose the shell environment module",
-  );
+  assert.match(appSource, /createAppShellEnvironment\(\{[\s\S]*isTauriRuntime,[\s\S]*\}\);/, "app should compose the shell environment module");
 
   assert.match(
     appShellEnvironmentSource,

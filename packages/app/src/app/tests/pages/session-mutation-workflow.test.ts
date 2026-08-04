@@ -5,10 +5,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerDraft, ComposerPart, MessageWithParts } from "../../types.js";
 import { createSessionMutationWorkflow } from "../../pages/session-mutation-workflow.js";
-import {
-  sessionSubmitAcceptedResult,
-  type SessionSubmitResult,
-} from "../../lib/session-send-contract.js";
+import { sessionSubmitAcceptedResult, type SessionSubmitResult } from "../../lib/session-send-contract.js";
 
 function userMessage(id: string, text: string): MessageWithParts {
   return {
@@ -48,12 +45,7 @@ const replacementDraft: ComposerDraft = {
   attachments: [],
 };
 
-function terminalReplacementResult(
-  status: "blocked" | "failed",
-  code: string,
-  message: string,
-  draftDisposition: "restore" | "keep" | "mark-failed",
-) {
+function terminalReplacementResult(status: "blocked" | "failed", code: string, message: string, draftDisposition: "restore" | "keep" | "mark-failed") {
   return {
     status,
     code,
@@ -140,11 +132,8 @@ function createHarness(overrides: Record<string, unknown> = {}) {
       workspaceRoot: "/repo",
       directory: "/repo",
     }),
-    prepareSendRuntimeForSend: async () => ({ ok: true }),
     resolveRuntimeSandboxStateForTarget: () => null,
     routedClientForSendTarget: () => ({}),
-    engineReady: () => true,
-    client: () => ({}),
     reportError: (...args: unknown[]) => {
       calls.push({ name: "reportError", args });
     },
@@ -189,7 +178,10 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     sessions: () => sessions,
     composerDraftCommands: {
       deleteDraft: (storageKey: string) => {
-        calls.push({ name: "composerDraftCommands.deleteDraft", args: [storageKey] });
+        calls.push({
+          name: "composerDraftCommands.deleteDraft",
+          args: [storageKey],
+        });
       },
     },
     removeSessionFromWorkspaceSidebar: (...args: unknown[]) => {
@@ -284,7 +276,10 @@ test("session mutation workflow redo unreverts at the end of the revert chain an
   });
   await harness.workflow.redoLastUserMessage();
 
-  assert.equal(harness.calls.some((call) => call.name === "unrevertSession"), true);
+  assert.equal(
+    harness.calls.some((call) => call.name === "unrevertSession"),
+    true,
+  );
   assert.equal(harness.prompt, "");
 });
 
@@ -381,7 +376,10 @@ test("session mutation workflow delete clears selected state and removes sidebar
 
   assert.equal(harness.selectedSessionId, null);
   assert.deepEqual(harness.sessions, []);
-  assert.equal(harness.calls.some((call) => call.name === "removeSessionFromWorkspaceSidebar"), true);
+  assert.equal(
+    harness.calls.some((call) => call.name === "removeSessionFromWorkspaceSidebar"),
+    true,
+  );
   assert.equal(harness.statusById.ses_1, undefined);
 });
 
@@ -399,10 +397,7 @@ test("session mutation workflow renames through the canonical session workspace"
   await harness.workflow.renameSessionTitle("ses_1", "Renamed");
 
   assert.deepEqual(harness.calls.find((call) => call.name === "renameSession")?.args, ["ses_1", "Renamed", "ws_1"]);
-  assert.deepEqual(
-    harness.calls.find((call) => call.name === "refreshSidebarWorkspaceSessions")?.args,
-    ["ws_1"],
-  );
+  assert.deepEqual(harness.calls.find((call) => call.name === "refreshSidebarWorkspaceSessions")?.args, ["ws_1"]);
 });
 
 test("session mutation workflow deletes through the canonical session workspace and directory", async () => {
@@ -420,14 +415,13 @@ test("session mutation workflow deletes through the canonical session workspace 
   await harness.workflow.deleteSessionById("ses_1");
 
   assert.deepEqual(harness.calls.find((call) => call.name === "routedClient")?.args, ["ws_1"]);
-  assert.deepEqual(harness.calls.find((call) => call.name === "session.delete")?.args, [{
-    sessionID: "ses_1",
-    directory: "/repo/owned",
-  }]);
-  assert.deepEqual(
-    harness.calls.find((call) => call.name === "clearWorkspaceLastSessionIfSelected")?.args,
-    ["ws_1", "ses_1"],
-  );
+  assert.deepEqual(harness.calls.find((call) => call.name === "session.delete")?.args, [
+    {
+      sessionID: "ses_1",
+      directory: "/repo/owned",
+    },
+  ]);
+  assert.deepEqual(harness.calls.find((call) => call.name === "clearWorkspaceLastSessionIfSelected")?.args, ["ws_1", "ses_1"]);
 });
 
 test("session mutation workflow refuses rename and delete without an authoritative session workspace", async () => {
@@ -437,19 +431,13 @@ test("session mutation workflow refuses rename and delete without an authoritati
     resolveSelectedSessionBrowseScope: () => null,
   });
 
-  await assert.rejects(
-    () => harness.workflow.renameSessionTitle("ses_1", "Renamed"),
-    /workspace is unavailable for rename/,
+  await assert.rejects(() => harness.workflow.renameSessionTitle("ses_1", "Renamed"), /workspace is unavailable for rename/);
+  await assert.rejects(() => harness.workflow.deleteSessionById("ses_1"), /workspace is unavailable for deletion/);
+  await assert.rejects(() => harness.workflow.saveSessionExport("ses_1"), /workspace is unavailable for export/);
+  assert.equal(
+    harness.calls.some((call) => call.name === "routedClient"),
+    false,
   );
-  await assert.rejects(
-    () => harness.workflow.deleteSessionById("ses_1"),
-    /workspace is unavailable for deletion/,
-  );
-  await assert.rejects(
-    () => harness.workflow.saveSessionExport("ses_1"),
-    /workspace is unavailable for export/,
-  );
-  assert.equal(harness.calls.some((call) => call.name === "routedClient"), false);
 });
 
 test("session mutation workflow exports through the canonical session workspace", async () => {
@@ -479,12 +467,23 @@ test("session mutation workflow exports through the canonical session workspace"
 
   assert.equal(fileName, "session-export.json");
   assert.deepEqual(clientTargets, [target]);
-  assert.equal(harness.calls.some((call) => call.name === "routedClient"), false);
-  assert.equal(harness.calls.some((call) => call.name === "downloadSessionExport"), true);
+  assert.equal(
+    harness.calls.some((call) => call.name === "routedClient"),
+    false,
+  );
+  assert.equal(
+    harness.calls.some((call) => call.name === "downloadSessionExport"),
+    true,
+  );
 });
 
 test("session mutation workflow compact submits through server submit when local scope is available", async () => {
-  const submitCalls: Array<{ workspaceId: string; directory: string; input: Record<string, unknown>; traceId?: string | null }> = [];
+  const submitCalls: Array<{
+    workspaceId: string;
+    directory: string;
+    input: Record<string, unknown>;
+    traceId?: string | null;
+  }> = [];
   const harness = createHarness({
     resolveSelectedSessionBrowseScope: () => ({
       workspaceId: "ws_1",
@@ -499,7 +498,12 @@ test("session mutation workflow compact submits through server submit when local
       input: Record<string, unknown>,
       preflight?: { traceId?: string | null },
     ) => {
-      submitCalls.push({ workspaceId, directory, input, traceId: preflight?.traceId });
+      submitCalls.push({
+        workspaceId,
+        directory,
+        input,
+        traceId: preflight?.traceId,
+      });
       return {
         status: "submitted",
         workspaceId,
@@ -515,11 +519,20 @@ test("session mutation workflow compact submits through server submit when local
 
   assert.equal(harness.selectedSessionId, "ses_1");
   assert.equal(submitCalls.length, 1);
-  assert.deepEqual(submitCalls.map(({ workspaceId, directory, traceId }) => ({ workspaceId, directory, traceId })), [{
-    workspaceId: "ws_1",
-    directory: "/repo",
-    traceId: "trace_1",
-  }]);
+  assert.deepEqual(
+    submitCalls.map(({ workspaceId, directory, traceId }) => ({
+      workspaceId,
+      directory,
+      traceId,
+    })),
+    [
+      {
+        workspaceId: "ws_1",
+        directory: "/repo",
+        traceId: "trace_1",
+      },
+    ],
+  );
   assert.deepEqual(harness.calls.find((call) => call.name === "ensureWorkspace")?.args[2], {
     workspaceId: "ws_1",
     workspaceRoot: "/repo",
@@ -551,21 +564,20 @@ test("session mutation workflow compact submits through server submit when local
 
 test("session mutation workflow compact fails explicitly when server submit is unavailable", async () => {
   const harness = createHarness();
-  await assert.rejects(
-    () => harness.workflow.submitCurrentSessionCompaction("ses_1"),
-    /Server-owned compact is unavailable/,
-  );
+  await assert.rejects(() => harness.workflow.submitCurrentSessionCompaction("ses_1"), /Server-owned compact is unavailable/);
 
   assert.equal(harness.selectedSessionId, "ses_1");
   assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "compactSession:server-submit-unavailable"));
 });
 
 test("session mutation workflow replaces a user message through server-owned submit", async () => {
-  const submitCalls: Array<{ workspaceId: string; directory: string; input: Record<string, unknown>; traceId?: string | null }> = [];
+  const submitCalls: Array<{
+    workspaceId: string;
+    directory: string;
+    input: Record<string, unknown>;
+    traceId?: string | null;
+  }> = [];
   const harness = createHarness({
-    prepareSendRuntimeForSend: async () => {
-      throw new Error("legacy runtime prep should not run for server-owned replacement");
-    },
     revertSession: async () => {
       throw new Error("legacy app revert should not run for server-owned replacement");
     },
@@ -585,7 +597,12 @@ test("session mutation workflow replaces a user message through server-owned sub
       input: Record<string, unknown>,
       preflight?: { traceId?: string | null },
     ) => {
-      submitCalls.push({ workspaceId, directory, input, traceId: preflight?.traceId });
+      submitCalls.push({
+        workspaceId,
+        directory,
+        input,
+        traceId: preflight?.traceId,
+      });
       return {
         status: "submitted",
         workspaceId,
@@ -607,11 +624,20 @@ test("session mutation workflow replaces a user message through server-owned sub
   assert.equal(accepted.status, "submitted");
   assert.equal(accepted.runId, "run_replace");
   assert.equal(submitCalls.length, 1);
-  assert.deepEqual(submitCalls.map(({ workspaceId, directory, traceId }) => ({ workspaceId, directory, traceId })), [{
-    workspaceId: "ws_1",
-    directory: "/repo",
-    traceId: "trace_1",
-  }]);
+  assert.deepEqual(
+    submitCalls.map(({ workspaceId, directory, traceId }) => ({
+      workspaceId,
+      directory,
+      traceId,
+    })),
+    [
+      {
+        workspaceId: "ws_1",
+        directory: "/repo",
+        traceId: "trace_1",
+      },
+    ],
+  );
   assert.deepEqual(harness.calls.find((call) => call.name === "ensureWorkspace")?.args[2], {
     workspaceId: "ws_1",
     workspaceRoot: "/repo",
@@ -641,8 +667,14 @@ test("session mutation workflow replaces a user message through server-owned sub
     },
   });
   assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:server-submit-success"));
-  assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
-  assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
+  assert.equal(
+    harness.calls.some((call) => call.name === "revertSession"),
+    false,
+  );
+  assert.equal(
+    harness.calls.some((call) => call.name === "sendPrompt"),
+    false,
+  );
 });
 
 test("session mutation workflow returns typed replacement server blocked and failed states", async () => {
@@ -668,9 +700,6 @@ test("session mutation workflow returns typed replacement server blocked and fai
 
   for (const item of cases) {
     const harness = createHarness({
-      prepareSendRuntimeForSend: async () => {
-        throw new Error("legacy runtime prep should not run for typed server replacement result");
-      },
       revertSession: async () => {
         throw new Error("legacy app revert should not run for typed server replacement result");
       },
@@ -684,8 +713,7 @@ test("session mutation workflow returns typed replacement server blocked and fai
         conversationId: "conv_1",
         opencodeSessionId: "open_1",
       }),
-      submitConversationFromVesloWriteApi: async () =>
-        terminalReplacementResult(item.status, item.code, item.message, item.draftDisposition),
+      submitConversationFromVesloWriteApi: async () => terminalReplacementResult(item.status, item.code, item.message, item.draftDisposition),
     });
 
     const result: SessionSubmitResult = await harness.workflow.replaceUserMessage("msg_1", replacementDraft, {
@@ -699,19 +727,20 @@ test("session mutation workflow returns typed replacement server blocked and fai
     assert.equal(result.message, item.message);
     assert.equal(result.draftDisposition, item.draftDisposition);
     assert.equal(result.conversationId, "conv_1");
-    assert.ok(
-      harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === `replaceUserMessage:server-submit-${item.status}`),
+    assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === `replaceUserMessage:server-submit-${item.status}`));
+    assert.equal(
+      harness.calls.some((call) => call.name === "revertSession"),
+      false,
     );
-    assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
-    assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
+    assert.equal(
+      harness.calls.some((call) => call.name === "sendPrompt"),
+      false,
+    );
   }
 });
 
 test("session mutation workflow strict validation blocks malformed replacement server result", async () => {
   const harness = createHarness({
-    prepareSendRuntimeForSend: async () => {
-      throw new Error("legacy runtime prep should not run for malformed server result");
-    },
     revertSession: async () => {
       throw new Error("legacy app revert should not run for malformed server result");
     },
@@ -745,20 +774,26 @@ test("session mutation workflow strict validation blocks malformed replacement s
   assert.equal(result.status, "failed");
   assert.equal(result.code, "replacement_submit_invalid_result");
   assert.match(result.message ?? "", /conversation-submit-terminal-result/);
-  assert.ok(
-    harness.calls.some((call) =>
-      call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:server-submit-result:validation-failed"
-    ),
+  assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:server-submit-result:validation-failed"));
+  assert.equal(
+    harness.calls.some((call) => call.name === "revertSession"),
+    false,
   );
-  assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
-  assert.equal(harness.calls.some((call) => call.name === "sendPrompt"), false);
+  assert.equal(
+    harness.calls.some((call) => call.name === "sendPrompt"),
+    false,
+  );
 });
 
-test("session mutation workflow strict validation blocks malformed legacy replacement runtime preflight", async () => {
+test("session mutation workflow fails closed when replacement server submit is unavailable", async () => {
   const harness = createHarness({
-    sendBoundaryValidationMode: () => "strict",
     submitConversationFromVesloWriteApi: undefined,
-    prepareSendRuntimeForSend: async () => ({ ok: true }),
+    revertSession: async () => {
+      throw new Error("app-side replacement revert must not run");
+    },
+    sendPrompt: async () => {
+      throw new Error("direct replacement send must not run");
+    },
   });
 
   const result = await harness.workflow.replaceUserMessage("msg_1", replacementDraft, {
@@ -767,15 +802,17 @@ test("session mutation workflow strict validation blocks malformed legacy replac
   });
 
   assert.equal(result.accepted, false);
-  assert.equal(result.status, "blocked");
-  assert.equal(result.code, "replacement_runtime_invalid_contract");
-  assert.match(result.message ?? "", /send-runtime-preparation-result/);
-  assert.ok(
-    harness.calls.some((call) =>
-      call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:runtime-preflight:validation-failed"
-    ),
+  assert.equal(result.status, "failed");
+  assert.equal(result.code, "replacement_submit_unavailable");
+  assert.ok(harness.calls.some((call) => call.name === "recordSendTrace" && call.args[0] === "replaceUserMessage:server-submit-unavailable"));
+  assert.equal(
+    harness.calls.some((call) => call.name === "revertSession"),
+    false,
   );
-  assert.equal(harness.calls.some((call) => call.name === "revertSession"), false);
+  assert.equal(
+    harness.calls.some((call) => call.name === "sendPrompt"),
+    false,
+  );
 });
 
 test("session mutation workflow lists the built-in compact command when backend commands omit it", async () => {

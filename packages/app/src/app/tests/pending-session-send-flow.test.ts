@@ -2,28 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const sendWorkflowSource = readFileSync(
-  new URL("../pages/session-send-workflow.ts", import.meta.url),
-  "utf8",
-);
-const createWorkflowSource = readFileSync(
-  new URL("../pages/session-creation-workflow.ts", import.meta.url),
-  "utf8",
-);
+const sendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
+const createWorkflowSource = readFileSync(new URL("../pages/session-creation-workflow.ts", import.meta.url), "utf8");
 
 function sendPromptSource(): string {
   const start = sendWorkflowSource.indexOf("async function sendPrompt(");
   const end = sendWorkflowSource.indexOf("async function abortSession", start);
   assert.notEqual(start, -1, "sendPrompt should exist");
   assert.notEqual(end, -1, "sendPrompt block should end before abortSession");
-  return sendWorkflowSource.slice(start, end);
-}
-
-function conversationRunCompatibilityBridgeSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.notEqual(start, -1, "conversation run compatibility bridge should exist");
-  assert.notEqual(end, -1, "conversation run compatibility bridge block should end before createSessionSendWorkflow");
   return sendWorkflowSource.slice(start, end);
 }
 
@@ -50,26 +36,6 @@ test("pending draft sends snapshot selected target metadata and fall back to the
   );
 });
 
-test("successful pending draft sends consume the pending draft only after the prompt handoff succeeds", () => {
-  const source = sendPromptSource();
-  const bridgeSource = conversationRunCompatibilityBridgeSource();
-  assert.match(
-    source,
-    /const consumePendingDraftAfterAcceptedSend = async \(\s*clearDisplayedPendingDraftState: boolean,?\s*\) => \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*deps\.composerDraftCommands\.deleteDraft\(pendingDraftStorageKey\);[\s\S]*\};/s,
-    "pending drafts should be deleted and cleared through the accepted-send cleanup helper",
-  );
-  assert.match(
-    bridgeSource,
-    /await runConversationOrFail\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\}\);\s*\}\s*await input\.consumePendingDraftAfterAcceptedSend\(\s*input\.sendTargetStillDisplayed\(\),?\s*\);[\s\S]*deps\.finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*deps\.recordSendTrace\("sendPrompt:success"[\s\S]*return true;/s,
-    "compatibility bridge should consume pending drafts only after the prompt handoff succeeds",
-  );
-  assert.match(
-    source,
-    /deps\.recordSendTrace\("sendPrompt:server-submit-first-success"[\s\S]*deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*reason: "sendPrompt:success",[\s\S]*await consumePendingDraftAfterAcceptedSend\(true\);[\s\S]*return sessionSubmitResultFromConversationSubmit\(\s*serverFirstSubmitResult,?\s*\);/s,
-    "first-session server submit success should consume pending drafts after the typed success result",
-  );
-});
-
 test("first submitted runs are admitted before selection and are not admitted twice after it", () => {
   const source = sendPromptSource();
   const createSessionSource = createSessionAndOpenSource();
@@ -91,27 +57,15 @@ test("first submitted runs are admitted before selection and are not admitted tw
   );
 });
 
-test("failed sends do not consume pending draft state", () => {
-  const source = conversationRunCompatibilityBridgeSource();
-  const catchStart = source.indexOf("    } catch (e) {");
-  const catchEnd = source.indexOf("    } finally {", catchStart);
-  assert.notEqual(catchStart, -1, "send failure path should exist");
-  assert.notEqual(catchEnd, -1, "send failure path should end before finally");
-  const catchWindow = source.slice(catchStart, catchEnd);
+test("failed first server submit leaves the pending draft unconsumed", () => {
+  const source = sendPromptSource();
+  const failedResultBranch = source.indexOf('serverFirstSubmitResult.status === "failed" ||');
+  const failedResultReturn = source.indexOf("return sessionSubmitResultFromConversationSubmit(", failedResultBranch);
+  const consumePendingDraft = source.indexOf("await consumePendingDraftAfterAcceptedSend(true);", failedResultBranch);
 
-  assert.doesNotMatch(
-    catchWindow,
-    /pendingSessionDraftsDelete\(|clearActivePendingDraftState\(|composerDraftCommands\.deleteDraft\(/,
-    "failed sends must leave the pending draft intact",
-  );
-});
-
-test("failed pending draft sends restore the pending draft route instead of leaving the empty real session selected", () => {
-  assert.match(
-    sendPromptSource(),
-    /if \(pendingDraftSendState\) \{\s*deps\.setActivePendingDraftKey\(pendingDraftSendState\.key\);\s*deps\.setActivePendingDraftMeta\(pendingDraftSendState\.meta\);\s*deps\.setView\("session"\);\s*\}/s,
-    "pending-draft send failures should return the UI to the pending draft route",
-  );
+  assert.ok(failedResultBranch >= 0, "first server submit failure branch should exist");
+  assert.ok(failedResultReturn > failedResultBranch, "failure should return a typed submit result");
+  assert.ok(consumePendingDraft > failedResultReturn, "pending draft cleanup must happen only after an accepted first server submit");
 });
 
 test("pending draft cleanup failures are handled separately from prompt handoff success", () => {
@@ -119,37 +73,6 @@ test("pending draft cleanup failures are handled separately from prompt handoff 
     sendPromptSource(),
     /if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{\s*try \{[\s\S]*const deleted =\s*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*if \(!deleted\) \{[\s\S]*deps\.markPendingDraftConsumed\(pendingDraftId\);[\s\S]*console\.warn\([\s\S]*\} else \{[\s\S]*deps\.clearConsumedPendingDraftId\(pendingDraftId\);[\s\S]*\}[\s\S]*\} catch \(error\) \{[\s\S]*deps\.markPendingDraftConsumed\(pendingDraftId\);[\s\S]*deps\.reportError\(error, "pendingDrafts\.consume"\);[\s\S]*\}\s*\}/s,
     "pending-draft cleanup should report delete errors without converting a successful prompt handoff into a send failure",
-  );
-});
-
-test("slash command sends preassign the message id used for optimistic display", () => {
-  const source = conversationRunCompatibilityBridgeSource();
-  const commandBranchStart = source.indexOf("        commandMessageIDToClear = input.sendCorrelation.clientMessageId;");
-  const commandBranchEnd = source.indexOf("        commandMessageIDToClear = null;", commandBranchStart);
-  assert.notEqual(commandBranchStart, -1, "compatibility bridge should have a slash command branch");
-  assert.notEqual(commandBranchEnd, -1, "slash command branch should end before promptAsync branch");
-
-  const commandBranch = source.slice(commandBranchStart, commandBranchEnd);
-  assert.match(commandBranch, /commandMessageIDToClear = input\.sendCorrelation\.clientMessageId;/);
-  assert.match(
-    commandBranch,
-    /deps\.sessionStoreSetCommandDisplay\(\s*commandMessageID,\s*command\.name,\s*command\.arguments,?\s*\);/,
-  );
-  assert.match(commandBranch, /messageID:\s*commandMessageID/);
-});
-
-test("failed slash command sends clear the preassigned command display alias", () => {
-  const source = conversationRunCompatibilityBridgeSource();
-  const catchStart = source.indexOf("    } catch (e) {");
-  const catchEnd = source.indexOf("    } finally {", catchStart);
-  assert.notEqual(catchStart, -1, "send failure path should exist");
-  assert.notEqual(catchEnd, -1, "send failure path should end before finally");
-  const catchWindow = source.slice(catchStart, catchEnd);
-
-  assert.match(
-    catchWindow,
-    /deps\.sessionStoreClearCommandDisplay\(/,
-    "failed slash-command sends should clear optimistic command display aliases",
   );
 });
 

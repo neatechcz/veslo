@@ -1,15 +1,8 @@
 import { z } from "zod";
 
-import type { SendRuntimePreparationResult } from "../context/send-runtime-readiness";
-import type {
-  VesloConversationSubmitRequest,
-  VesloConversationSubmitResult,
-} from "./veslo-server";
+import type { VesloConversationSubmitRequest, VesloConversationSubmitResult } from "./veslo-server";
 
-export type ConversationSubmitTerminalResult = Extract<
-  VesloConversationSubmitResult,
-  { status: "submitted" | "queued" | "blocked" | "failed" }
->;
+export type ConversationSubmitTerminalResult = Extract<VesloConversationSubmitResult, { status: "submitted" | "queued" | "blocked" | "failed" }>;
 
 export type SendBoundaryValidationIssue = {
   code: string;
@@ -25,9 +18,7 @@ export type SendBoundaryValidationFailure = {
   issues: SendBoundaryValidationIssue[];
 };
 
-export type SendBoundaryValidationResult<T> =
-  | { ok: true; value: T }
-  | SendBoundaryValidationFailure;
+export type SendBoundaryValidationResult<T> = { ok: true; value: T } | SendBoundaryValidationFailure;
 
 export type SendBoundaryValidationMode = "off" | "report" | "strict";
 
@@ -70,10 +61,12 @@ const nullableStringSchema = z.string().nullable().optional();
 const nonEmptyStringSchema = z.string().min(1);
 const promptModeSchema = z.enum(["prompt", "shell"]);
 
-const debugTraceEntrySchema = z.object({
-  event: z.string().optional(),
-  source: z.string().optional(),
-}).catchall(z.unknown());
+const debugTraceEntrySchema = z
+  .object({
+    event: z.string().optional(),
+    source: z.string().optional(),
+  })
+  .catchall(z.unknown());
 
 const conversationSubmitAttachmentSchema = z.object({
   name: z.string(),
@@ -89,69 +82,14 @@ const conversationSubmitDraftSchema = z.object({
   text: z.string(),
   resolvedText: nullableStringSchema,
   parts: z.array(z.unknown()),
-  command: z.object({
-    name: nonEmptyStringSchema,
-    arguments: z.string(),
-  }).nullable().optional(),
+  command: z
+    .object({
+      name: nonEmptyStringSchema,
+      arguments: z.string(),
+    })
+    .nullable()
+    .optional(),
   attachments: z.array(conversationSubmitAttachmentSchema).optional(),
-});
-
-const composerAttachmentSchema = z.object({
-  id: z.string().optional(),
-  name: nonEmptyStringSchema,
-  mimeType: z.string(),
-  size: z.number().nonnegative().optional(),
-  kind: z.enum(["image", "file"]),
-  dataUrl: z.string().optional(),
-}).passthrough();
-
-const composerDraftSchema = z.object({
-  mode: promptModeSchema,
-  text: z.string(),
-  resolvedText: nullableStringSchema,
-  parts: z.array(z.unknown()),
-  command: z.object({
-    name: nonEmptyStringSchema,
-    arguments: z.string(),
-  }).nullable().optional(),
-  attachments: z.array(composerAttachmentSchema),
-}).passthrough();
-
-const sendTargetWorkspaceSchema = z.object({
-  workspaceId: nonEmptyStringSchema,
-  workspaceRoot: z.string(),
-  directory: z.string(),
-}).passthrough();
-
-const sendPreflightContextSummarySchema = z.object({
-  traceId: nonEmptyStringSchema,
-  targetWorkspace: sendTargetWorkspaceSchema.nullable().optional(),
-}).passthrough();
-
-const conversationRunBridgePrepareInputSchema = z.object({
-  traceId: nonEmptyStringSchema,
-  targetWorkspaceId: nonEmptyStringSchema,
-  sendPreflight: sendPreflightContextSummarySchema,
-  sendTargetWorkspace: sendTargetWorkspaceSchema.nullable().optional(),
-});
-
-const sendCorrelationSchema = z.object({
-  clientMessageId: nonEmptyStringSchema,
-  origin: nonEmptyStringSchema,
-  source: nullableStringSchema,
-}).passthrough();
-
-const conversationRunBridgeSubmitInputSchema = z.object({
-  traceId: nonEmptyStringSchema,
-  sessionID: nonEmptyStringSchema,
-  targetWorkspaceId: nonEmptyStringSchema,
-  commandName: nullableStringSchema,
-  compactCommand: z.boolean(),
-  hasExplicitDraft: z.boolean(),
-  draft: composerDraftSchema,
-  sendCorrelation: sendCorrelationSchema,
-  sendPreflight: sendPreflightContextSummarySchema,
-  sendTargetWorkspace: sendTargetWorkspaceSchema.nullable().optional(),
 });
 
 const stagedSessionAttachmentSchema = z.object({
@@ -162,33 +100,31 @@ const stagedSessionAttachmentSchema = z.object({
   absolutePath: nonEmptyStringSchema,
 });
 
-const routedComposerDraftResultSchema = z.object({
-  draft: composerDraftSchema,
-  system: z.string().optional(),
-  error: z.string().optional(),
-});
-
-const conversationSubmitOptionsSchema = z.object({
-  sendNow: z.boolean().optional(),
-  replaceMessageId: nullableStringSchema,
-  submitQueuePolicy: z.enum(["normal", "send-now", "server-queue-only"]).optional(),
-  model: z.unknown().optional(),
-  agent: nullableStringSchema,
-  variant: nullableStringSchema,
-  expectAiGatewayStart: z.boolean().optional(),
-  dryRun: z.boolean().optional(),
-}).optional();
+const conversationSubmitOptionsSchema = z
+  .object({
+    sendNow: z.boolean().optional(),
+    replaceMessageId: nullableStringSchema,
+    submitQueuePolicy: z.enum(["normal", "send-now", "server-queue-only"]).optional(),
+    model: z.unknown().optional(),
+    agent: nullableStringSchema,
+    variant: nullableStringSchema,
+    expectAiGatewayStart: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
+  })
+  .optional();
 
 const conversationSubmitRequestSchema = z.object({
   clientMessageId: nonEmptyStringSchema,
   origin: nonEmptyStringSchema,
   source: nullableStringSchema,
-  target: z.object({
-    conversationId: nullableStringSchema,
-    opencodeSessionId: nullableStringSchema,
-    directory: nullableStringSchema,
-    pendingClientSessionId: nullableStringSchema,
-  }).optional(),
+  target: z
+    .object({
+      conversationId: nullableStringSchema,
+      opencodeSessionId: nullableStringSchema,
+      directory: nullableStringSchema,
+      pendingClientSessionId: nullableStringSchema,
+    })
+    .optional(),
   draft: conversationSubmitDraftSchema,
   options: conversationSubmitOptionsSchema,
 });
@@ -266,24 +202,6 @@ const conversationSubmitTerminalResultSchema = z.discriminatedUnion("status", [
   failedResultSchema,
 ]);
 
-const sendRuntimePreparationResultSchema = z.object({
-  ok: z.boolean(),
-  runtimeReady: z.boolean(),
-  managedAiReady: z.boolean(),
-  workspaceId: z.string().nullable(),
-  activeWorkspace: z.boolean(),
-  recoveryAttempted: z.boolean(),
-  reason: z.enum([
-    "runtime-health-skipped",
-    "runtime-health-skip",
-    "runtime-health-ok",
-    "runtime-recovery-ok",
-    "runtime-recovery-not-started",
-    "runtime-recovery-error",
-    "managed-ai-bootstrap-blocked",
-  ]),
-});
-
 function issuePath(path: PropertyKey[]): string {
   return path.length ? path.map(String).join(".") : "<root>";
 }
@@ -324,9 +242,7 @@ function summarizeArray(value: unknown[]): Record<string, unknown> {
   return {
     valueType: "array",
     length: value.length,
-    itemTypes: value
-      .slice(0, 8)
-      .map((item) => item === null ? "null" : Array.isArray(item) ? "array" : typeof item),
+    itemTypes: value.slice(0, 8).map((item) => (item === null ? "null" : Array.isArray(item) ? "array" : typeof item)),
   };
 }
 
@@ -350,25 +266,13 @@ function textFromClassifierInput(input: SendBoundaryFailureClassifierInput): str
   const debugTraceText = Array.isArray(input.debugTrace)
     ? input.debugTrace.map((entry) => `${String(entry.event ?? "")} ${String(entry.code ?? "")}`).join(" ")
     : "";
-  return [
-    input.phase,
-    input.event,
-    input.schema,
-    input.status,
-    input.code,
-    input.message,
-    input.context?.phase,
-    input.context?.event,
-    debugTraceText,
-  ]
+  return [input.phase, input.event, input.schema, input.status, input.code, input.message, input.context?.phase, input.context?.event, debugTraceText]
     .filter((value) => typeof value === "string" && value.trim())
     .join(" ")
     .toLowerCase();
 }
 
-export function classifySendBoundaryFailurePhase(
-  input: SendBoundaryFailureClassifierInput,
-): SendBoundaryFailurePhase {
+export function classifySendBoundaryFailurePhase(input: SendBoundaryFailureClassifierInput): SendBoundaryFailurePhase {
   const text = textFromClassifierInput(input);
   if (!text) return "unknown";
   if (
@@ -379,19 +283,10 @@ export function classifySendBoundaryFailurePhase(
   ) {
     return "managed-ai-auth-prime";
   }
-  if (
-    text.includes("runtime-preflight") ||
-    text.includes("send-runtime-preparation") ||
-    text.includes("runtime preparation")
-  ) {
+  if (text.includes("runtime-preflight") || text.includes("send-runtime-preparation") || text.includes("runtime preparation")) {
     return "app-runtime-preflight";
   }
-  if (
-    text.includes("run_submit") ||
-    text.includes("run-submit") ||
-    text.includes("prompt_async") ||
-    text.includes("command-run")
-  ) {
+  if (text.includes("run_submit") || text.includes("run-submit") || text.includes("prompt_async") || text.includes("command-run")) {
     return "server-run-submit";
   }
   if (
@@ -418,27 +313,22 @@ export function classifySendBoundaryFailurePhase(
   return "unknown";
 }
 
-export function resolveSendBoundaryValidationMode(
-  env?: SendBoundaryValidationEnv,
-): SendBoundaryValidationMode {
-  const raw = typeof env?.VITE_VESLO_SEND_BOUNDARY_VALIDATION === "string"
-    ? env.VITE_VESLO_SEND_BOUNDARY_VALIDATION.trim().toLowerCase()
-    : env?.VITE_VESLO_SEND_BOUNDARY_VALIDATION === false
-      ? "off"
-      : env?.VITE_VESLO_SEND_BOUNDARY_VALIDATION === true
-        ? "report"
-        : "";
+export function resolveSendBoundaryValidationMode(env?: SendBoundaryValidationEnv): SendBoundaryValidationMode {
+  const raw =
+    typeof env?.VITE_VESLO_SEND_BOUNDARY_VALIDATION === "string"
+      ? env.VITE_VESLO_SEND_BOUNDARY_VALIDATION.trim().toLowerCase()
+      : env?.VITE_VESLO_SEND_BOUNDARY_VALIDATION === false
+        ? "off"
+        : env?.VITE_VESLO_SEND_BOUNDARY_VALIDATION === true
+          ? "report"
+          : "";
   if (["0", "false", "no", "off", "disabled"].includes(raw)) return "off";
   if (["strict", "fail", "fail-closed", "block", "blocking"].includes(raw)) return "strict";
   if (["1", "true", "yes", "on", "enabled", "report", "warn", "warning"].includes(raw)) return "report";
   return "report";
 }
 
-function validateSendBoundary<T>(
-  schema: SendBoundarySchema,
-  value: unknown,
-  options: SendBoundaryValidationOptions,
-): SendBoundaryValidationResult<T> {
+function validateSendBoundary<T>(schema: SendBoundarySchema, value: unknown, options: SendBoundaryValidationOptions): SendBoundaryValidationResult<T> {
   const mode = options.mode ?? "report";
   if (mode === "off") {
     return { ok: true, value: value as T };
@@ -460,9 +350,7 @@ function validateSendBoundary<T>(
 
   const issues = validationIssues(result.error);
   const primaryIssue = firstIssue(result.error);
-  const message = `Invalid ${options.schema} send contract: ${issues
-    .map((issue) => `${issue.path}: ${issue.message}`)
-    .join("; ")}`;
+  const message = `Invalid ${options.schema} send contract: ${issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`;
   options.recordSendTrace(options.event, {
     ...(options.traceId ? { traceId: options.traceId } : {}),
     ...(options.context ?? {}),
@@ -494,43 +382,10 @@ export function validateConversationSubmitRequest(
   });
 }
 
-export function validateConversationRunBridgePrepareInput<T>(
-  value: T,
-  options: Omit<SendBoundaryValidationOptions, "schema">,
-): SendBoundaryValidationResult<T> {
-  return validateSendBoundary(conversationRunBridgePrepareInputSchema, value, {
-    ...options,
-    schema: "conversation-run-bridge-prepare-input",
-  });
-}
-
-export function validateConversationRunBridgeSubmitInput<T>(
-  value: T,
-  options: Omit<SendBoundaryValidationOptions, "schema">,
-): SendBoundaryValidationResult<T> {
-  return validateSendBoundary(conversationRunBridgeSubmitInputSchema, value, {
-    ...options,
-    schema: "conversation-run-bridge-submit-input",
-  });
-}
-
-export function validateStagedSessionAttachments<T>(
-  value: T,
-  options: Omit<SendBoundaryValidationOptions, "schema">,
-): SendBoundaryValidationResult<T> {
+export function validateStagedSessionAttachments<T>(value: T, options: Omit<SendBoundaryValidationOptions, "schema">): SendBoundaryValidationResult<T> {
   return validateSendBoundary(z.array(stagedSessionAttachmentSchema), value, {
     ...options,
     schema: "staged-session-attachments",
-  });
-}
-
-export function validateRoutedComposerDraftResult<T>(
-  value: T,
-  options: Omit<SendBoundaryValidationOptions, "schema">,
-): SendBoundaryValidationResult<T> {
-  return validateSendBoundary(routedComposerDraftResultSchema, value, {
-    ...options,
-    schema: "routed-composer-draft-result",
   });
 }
 
@@ -541,15 +396,5 @@ export function validateConversationSubmitTerminalResult(
   return validateSendBoundary(conversationSubmitTerminalResultSchema, value, {
     ...options,
     schema: "conversation-submit-terminal-result",
-  });
-}
-
-export function validateSendRuntimePreparationResult(
-  value: unknown,
-  options: Omit<SendBoundaryValidationOptions, "schema">,
-): SendBoundaryValidationResult<SendRuntimePreparationResult> {
-  return validateSendBoundary(sendRuntimePreparationResultSchema, value, {
-    ...options,
-    schema: "send-runtime-preparation-result",
   });
 }

@@ -3,14 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
-const conversationFlowSource = readFileSync(
-  new URL("../../pages/session-conversation-flow.ts", import.meta.url),
-  "utf8",
-);
-const queueDrainControllerSource = readFileSync(
-  new URL("../../context/session-queue-drain-controller.ts", import.meta.url),
-  "utf8",
-);
+const conversationFlowSource = readFileSync(new URL("../../pages/session-conversation-flow.ts", import.meta.url), "utf8");
+const queueDrainControllerSource = readFileSync(new URL("../../context/session-queue-drain-controller.ts", import.meta.url), "utf8");
 const source = `${sessionSource}\n${conversationFlowSource}\n${queueDrainControllerSource}`;
 const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
@@ -25,14 +19,6 @@ const flowHandleSendStart = conversationFlowSource.indexOf("handleSendPrompt: as
 const flowHandleSendEnd = conversationFlowSource.indexOf("drainNextQueuedDraft: async (", flowHandleSendStart);
 const flowHandleSendSource = conversationFlowSource.slice(flowHandleSendStart, flowHandleSendEnd);
 
-function conversationRunCompatibilityBridgeSource(): string {
-  const start = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const end = sendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.notEqual(start, -1, "conversation run compatibility bridge should exist");
-  assert.notEqual(end, -1, "conversation run compatibility bridge block should end before createSessionSendWorkflow");
-  return sendWorkflowSource.slice(start, end);
-}
-
 test("session page imports queue model helpers, queue list component, and composer send options", () => {
   assert.match(
     source,
@@ -44,11 +30,7 @@ test("session page imports queue model helpers, queue list component, and compos
     /import QueuedMessageList from "\.\.\/components\/session\/queued-message-list";/,
     "session view should render the queued message list component",
   );
-  assert.match(
-    source,
-    /from "\.\.\/components\/session\/session-queue-model\.js";/,
-    "session view should use the shared session queue model helpers",
-  );
+  assert.match(source, /from "\.\.\/components\/session\/session-queue-model\.js";/, "session view should use the shared session queue model helpers");
 });
 
 test("session page owns session-local queue state and handleSendPrompt accepts send options", () => {
@@ -113,11 +95,7 @@ test("running non-sendNow sends use the server queue-drain contract directly", (
     false,
     "running Enter sends should not fabricate a local queue row before server admission",
   );
-  assert.equal(
-    runningBranchSource.includes("local_queue_running_append"),
-    false,
-    "running Enter sends should return the typed server submit result",
-  );
+  assert.equal(runningBranchSource.includes("local_queue_running_append"), false, "running Enter sends should return the typed server submit result");
 });
 
 test("session model selection is roster-validated and snapshots each send", () => {
@@ -169,11 +147,7 @@ test("accepted server queue work has a separate read-only projection and scoped 
     /selectionGeneration: unchanged[\s\S]*previous\.selectionGeneration[\s\S]*props\.reconnectState\?\.status \?\? ""[\s\S]*requestServerQueueProjectionRefresh\(\{ workspaceId, conversationId, uiConversationKey, selectionGeneration \}\);/s,
     "activation and reconnect changes should refresh a monotonic visible selection scope, including A-to-B-to-A returns",
   );
-  assert.match(
-    sessionSource,
-    /<ServerQueuedRunList items=\{visibleServerQueuedRuns\(\)\} \/>/,
-    "server queue rows should render separately from local drafts",
-  );
+  assert.match(sessionSource, /<ServerQueuedRunList items=\{visibleServerQueuedRuns\(\)\} \/>/, "server queue rows should render separately from local drafts");
 });
 
 test("canonical queue documentation keeps the local and server ownership contracts distinct", () => {
@@ -193,14 +167,8 @@ test("canonical queue documentation keeps the local and server ownership contrac
     sessionRuntimeDoc,
     /Queue status `submitted` means that queue processing handed the reserved run to the lifecycle; it is not a successful model response\./,
   );
-  assert.match(
-    sessionRuntimeDoc,
-    /Server projection rows are read-only: they do not expose Retry, Edit, Cancel, Move, Pause, or Resume controls/,
-  );
-  assert.match(
-    sessionRuntimeDoc,
-    /Legacy pending queue-key prefixes remain compatibility state\./,
-  );
+  assert.match(sessionRuntimeDoc, /Server projection rows are read-only: they do not expose Retry, Edit, Cancel, Move, Pause, or Resume controls/);
+  assert.match(sessionRuntimeDoc, /Legacy pending queue-key prefixes remain compatibility state\./);
   assert.doesNotMatch(
     sessionRuntimeDoc,
     /When a session is running or streaming, plain Enter and the queue send button add the draft to a session-local queue/,
@@ -269,24 +237,12 @@ test("idle transition drains only after a non-idle status and only when queue is
     /const sessionId = deps\.sessionKeys\.sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*statusForQueueKey\(sessionKey, previousStatuses\)[\s\S]*statusForQueueKey\(sessionKey, statuses\)/s,
     "background queue status checks should resolve scoped UI keys back to raw session ids in the owner",
   );
-  assert.doesNotMatch(
-    sessionSource,
-    /drainNextQueuedDraft\(/,
-    "SessionView effects should not directly drive queued draft drains",
-  );
+  assert.doesNotMatch(sessionSource, /drainNextQueuedDraft\(/, "SessionView effects should not directly drive queued draft drains");
 });
 
 test("queued drain uses a stable session key and guards stale navigation", () => {
-  assert.match(
-    source,
-    /const queueDrainAttemptInFlightBySessionKey = new Set<string>\(\);/,
-    "queue drain in-flight state should be scoped per session key",
-  );
-  assert.doesNotMatch(
-    source,
-    /let queueDrainAttemptInFlight = false;/,
-    "queue drain in-flight state must not be a single global lock",
-  );
+  assert.match(source, /const queueDrainAttemptInFlightBySessionKey = new Set<string>\(\);/, "queue drain in-flight state should be scoped per session key");
+  assert.doesNotMatch(source, /let queueDrainAttemptInFlight = false;/, "queue drain in-flight state must not be a single global lock");
   assert.match(
     flowDrainSource,
     /const start = resolveQueueDrainStart\(\{[\s\S]*sessionKey: drainSessionKey,[\s\S]*inFlight: queueDrainAttemptInFlightBySessionKey\.has\(drainSessionKey\),[\s\S]*queuePaused: deps\.queue\.queuePausedForSessionKey\(drainSessionKey\),[\s\S]*item,[\s\S]*\}\);[\s\S]*queueDrainAttemptInFlightBySessionKey\.add\(drainSessionKey\)[\s\S]*queueDrainAttemptInFlightBySessionKey\.delete\(drainSessionKey\)/s,
@@ -319,11 +275,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 });
 
 test("pending draft queues remap to the real session key without replacing existing real queues", () => {
-  assert.match(
-    source,
-    /remapPendingSubmittedSession/,
-    "session view should remap optimistic pending submissions when the real session id materializes",
-  );
+  assert.match(source, /remapPendingSubmittedSession/, "session view should remap optimistic pending submissions when the real session id materializes");
 
   assert.match(
     conversationFlowSource,
@@ -505,44 +457,6 @@ test("rejected pending queue drain updates the remapped item key", () => {
     flowDrainSource,
     /else \{[\s\S]*deps\.queue\.updateQueueForSessionKey\([\s\S]*result\.sessionKey,[\s\S]*\(queue\) =>[\s\S]*markQueuedDraftError\([\s\S]*queue,[\s\S]*start\.item\.id,[\s\S]*deps\.runtime\.error\(\) \?\? deps\.feedback\.tr\("session\.connect_server_to_attach"\),[\s\S]*\),[\s\S]*\);[\s\S]*\}/s,
     "rejected queue drains should mark the remapped queued item as error instead of updating the stale pending key",
-  );
-});
-
-test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
-  const sendStart = sendWorkflowSource.indexOf("async function sendPrompt");
-  const targetCapture = sendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(", sendStart);
-  const bridgePrepare = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.prepare({", targetCapture);
-  const bridgeSubmit = sendWorkflowSource.indexOf("conversationRunCompatibilityBridge.submit({", bridgePrepare);
-  const bridgeSource = conversationRunCompatibilityBridgeSource();
-
-  assert.notEqual(sendStart, -1, "app sendPrompt should exist");
-  assert.ok(targetCapture > sendStart, "sendPrompt should accept a captured target session id");
-  assert.match(
-    sendWorkflowSource.slice(targetCapture, bridgePrepare),
-    /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
-    "sendPrompt should prefer an explicit target session over implicit active-workspace selection",
-  );
-  assert.ok(bridgePrepare > targetCapture, "compatibility bridge prepare should run after the explicit target is captured");
-  assert.ok(bridgeSubmit > bridgePrepare, "compatibility bridge submit should run after prepare for the compatibility run path");
-  assert.match(
-    sendWorkflowSource.slice(bridgePrepare, bridgeSubmit),
-    /sendTargetWorkspace,/,
-    "sendPrompt should pass the snapshotted target workspace into compatibility bridge prepare",
-  );
-  assert.match(
-    sendWorkflowSource.slice(bridgeSubmit),
-    /sendTargetWorkspace,/,
-    "sendPrompt should pass the snapshotted target workspace into compatibility bridge submit",
-  );
-  assert.match(
-    bridgeSource,
-    /await deps\.prepareSendRuntimeForSend\(\s*"sendPrompt",\s*input\.sendPreflight,\s*\);[\s\S]*const c = deps\.routedClientForSendTarget\(input\.sendTargetWorkspace\);/,
-    "compatibility bridge should prepare the target runtime before reading its routed client",
-  );
-  assert.match(
-    bridgeSource,
-    /const model =\s*input\.modelOverride \?\? deps\.modelForSession\(materializedSessionID\);[\s\S]*const agent = deps\.agentForSession\(sessionID\);/,
-    "compatibility bridge should resolve model and agent after the prepared compatibility handoff begins",
   );
 });
 

@@ -3,53 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
-const sendWorkflowSource = readFileSync(
-  new URL("../pages/session-send-workflow.ts", import.meta.url),
-  "utf8",
-);
-const createWorkflowSource = readFileSync(
-  new URL("../pages/session-creation-workflow.ts", import.meta.url),
-  "utf8",
-);
-const storeSource = readFileSync(
-  new URL("../context/managed-ai-access-store.ts", import.meta.url),
-  "utf8",
-);
-const runtimeConfigSource = readFileSync(
-  new URL("../context/managed-ai-runtime-config.ts", import.meta.url),
-  "utf8",
-);
+const sendWorkflowSource = readFileSync(new URL("../pages/session-send-workflow.ts", import.meta.url), "utf8");
+const createWorkflowSource = readFileSync(new URL("../pages/session-creation-workflow.ts", import.meta.url), "utf8");
+const storeSource = readFileSync(new URL("../context/managed-ai-access-store.ts", import.meta.url), "utf8");
+const runtimeConfigSource = readFileSync(new URL("../context/managed-ai-runtime-config.ts", import.meta.url), "utf8");
 const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
-
-function conversationRunCompatibilityBridgePrepareSource(): string {
-  const bridgeStart = sendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const prepareStart = sendWorkflowSource.indexOf("  const prepare = async", bridgeStart);
-  const submitStart = sendWorkflowSource.indexOf("  const submit = async", prepareStart);
-  assert.ok(prepareStart >= 0 && submitStart > prepareStart, "compatibility bridge prepare source should be present");
-  return sendWorkflowSource.slice(prepareStart, submitStart);
-}
-
-test("managed AI bootstrap readiness returns a blocking result when setup is not ready", () => {
-  const start = readinessSource.indexOf("const ensureManagedAiBootstrapReady = async");
-  const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend", start);
-  assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
-  const prepareSource = conversationRunCompatibilityBridgePrepareSource();
-  const gateIndex = prepareSource.search(
-    /deps\.prepareSendRuntimeForSend\(\s*"sendPrompt",\s*input\.sendPreflight,?\s*\)/,
-  );
-  const clientIndex = prepareSource.indexOf("const c = deps.routedClientForSendTarget(input.sendTargetWorkspace);");
-  assert.ok(gateIndex >= 0, "compatibility bridge prepare should call the runtime readiness owner");
-  assert.ok(clientIndex >= 0, "compatibility bridge prepare should read the routed client");
-  assert.ok(
-    gateIndex < clientIndex,
-    "compatibility bridge prepare should wait for managed bootstrap readiness before grabbing the routed client",
-  );
-  assert.match(
-    readinessSource,
-    /deps\.sendTraceStep\(\s*`\$\{reason\}:ensure-managed-ai-bootstrap-ready`/,
-    "send runtime readiness owner should trace the managed bootstrap gate",
-  );
-});
 
 test("sendPrompt blocks when managed bootstrap readiness is unavailable before reading client", () => {
   const start = sendWorkflowSource.indexOf("async function sendPrompt(");
@@ -65,10 +23,7 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   assert.ok(skipIndex >= 0, "createSessionAndOpen should skip the gate when send preflight already passed it");
   assert.ok(gateIndex >= 0, "createSessionAndOpen should still trace the direct-create managed bootstrap gate");
   assert.ok(clientIndex >= 0, "createSessionAndOpen should read the routed client");
-  assert.ok(
-    gateIndex < clientIndex,
-    "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the routed client when not skipped",
-  );
+  assert.ok(gateIndex < clientIndex, "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the routed client when not skipped");
 });
 
 test("managed AI bootstrap writes config once local provider routing is available", () => {
@@ -132,25 +87,15 @@ test("managed AI bootstrap skips veslo-server config patches when the computed m
 });
 
 test("managed AI config patching does not auto-dispose the engine before Send", () => {
-  const autoApplyBlocks = runtimeConfigSource.match(
-    /maybeMarkManagedConfigApplied\(input\.providerRoutingReloadKey, true\);/g,
-  );
+  const autoApplyBlocks = runtimeConfigSource.match(/maybeMarkManagedConfigApplied\(input\.providerRoutingReloadKey, true\);/g);
 
-  assert.equal(
-    autoApplyBlocks?.length,
-    2,
-    "both managed AI config branches should record the applied token without calling the destructive reload path",
-  );
+  assert.equal(autoApplyBlocks?.length, 2, "both managed AI config branches should record the applied token without calling the destructive reload path");
 
   const helperStart = runtimeConfigSource.indexOf("const markManagedAiConfigApplied =");
   const helperEnd = runtimeConfigSource.indexOf("const resolveRuntimeSandboxStateForTarget =", helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart, "managed AI config apply helper should be present");
   const helperSource = runtimeConfigSource.slice(helperStart, helperEnd);
-  assert.doesNotMatch(
-    helperSource,
-    /reloadWorkspaceEngine\(/,
-    "managed AI config apply helper must not call reloadWorkspaceEngine",
-  );
+  assert.doesNotMatch(helperSource, /reloadWorkspaceEngine\(/, "managed AI config apply helper must not call reloadWorkspaceEngine");
 });
 
 test("managed AI bootstrap can use a validated current runtime config while access refresh is busy", () => {
@@ -213,11 +158,7 @@ test("managed AI runtime config validation is workspace-scoped", () => {
 });
 
 test("managed AI access cache has a bounded TTL and hydrates before background refresh", () => {
-  assert.match(
-    storeSource,
-    /export const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 \* 60 \* 1000;/,
-    "managed AI access cache should have a bounded lifetime",
-  );
+  assert.match(storeSource, /export const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 \* 60 \* 1000;/, "managed AI access cache should have a bounded lifetime");
   assert.match(
     storeSource,
     /const proofCachedAccess =[\s\S]*proofCacheState\.record[\s\S]*const cachedAccess =[\s\S]*proofCachedAccess \?\? readManagedAiAccessCache\(managedAiCacheKey, cacheOptions\(\)\);[\s\S]*if \(refreshPreflight\.applyCachedAccessFirst && cachedAccess\) \{[\s\S]*setManagedAiAccess\(cachedAccess\.profile\);[\s\S]*setManagedAiGatewayAccessToken\(cachedAccess\.gatewayAccessToken\);[\s\S]*setManagedAiAccessBusy\(true\);/,
