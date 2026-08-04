@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
 import {
   createServer,
   request as httpRequest,
@@ -12,6 +11,7 @@ import { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { EnginePool } from "../engine-pool.js";
+import { stopDirectChild } from "../direct-child-stop.js";
 import { OPENCODE_PROXY_TIMEOUT_ERROR, proxyToEngine } from "../router-proxy.js";
 
 type EchoCapture = {
@@ -98,17 +98,8 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function stopChild(child: ChildProcess, timeoutMs = 1500): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  const exited = await Promise.race([
-    once(child, "exit").then(() => true),
-    delay(timeoutMs).then(() => false),
-  ]);
-  if (exited) return;
-  child.kill("SIGKILL");
-  await Promise.race([once(child, "exit"), delay(timeoutMs)]);
-}
+const stopChild = (child: ChildProcess, timeoutMs = 1500) =>
+  stopDirectChild(child, timeoutMs);
 
 type WorkspaceRecord = { id: string; path: string; type: "local" | "remote" };
 

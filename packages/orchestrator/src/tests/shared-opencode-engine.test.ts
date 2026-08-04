@@ -1,11 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 
 import { SharedOpenCodeEngine } from "../shared-opencode-engine.js";
 import type { EngineSpawnResult } from "../engine-pool.js";
+import type { DirectChildStopResult } from "../direct-child-stop.js";
 
 function fakeChild(pid: number): ChildProcess {
-  return { pid, on: () => undefined } as unknown as ChildProcess;
+  const child = new EventEmitter() as ChildProcess;
+  Object.defineProperties(child, {
+    pid: { value: pid },
+    exitCode: { value: null, writable: true },
+    signalCode: { value: null, writable: true },
+  });
+  return child;
 }
 
 function harness(options: {
@@ -15,12 +23,14 @@ function harness(options: {
   waitForHealthy?: () => Promise<void>;
   onEngineChange?: (event: string, engine: { pid: number } | null) => void;
   generationLifecycle?: ConstructorParameters<typeof SharedOpenCodeEngine>[0]["deps"]["generationLifecycle"];
+  stopResult?: DirectChildStopResult;
 } = {}) {
   let spawns = 0;
   let stops = 0;
   let nextPort = 61000;
   const stoppedPids: number[] = [];
   const alive = new Set<number>();
+  const children = new Map<number, ChildProcess>();
 
   const manager = new SharedOpenCodeEngine({
     runtimeDirectory: "/tmp/veslo/shared-opencode-runtime",
@@ -33,6 +43,7 @@ function harness(options: {
         if (options.failSpawn) throw new Error("spawn failed");
         const child = fakeChild(1000 + spawns);
         alive.add(child.pid!);
+        children.set(child.pid!, child);
         return { child, baseUrl: `http://127.0.0.1:${port}` };
       },
       waitForHealthy: async () => {
@@ -44,10 +55,12 @@ function harness(options: {
       },
       stopChild: async (child) => {
         stops++;
-        if (child.pid) {
+        const result = options.stopResult ?? { outcome: "exit_observed" as const };
+        if (result.outcome === "exit_observed" && child.pid) {
           stoppedPids.push(child.pid);
           alive.delete(child.pid);
         }
+        return result;
       },
       isProcessAlive: (pid) => alive.has(pid),
       now: () => 123456,
@@ -61,6 +74,12 @@ function harness(options: {
     counts: () => ({ spawns, stops, stoppedPids }),
     markDead: (pid: number) => {
       alive.delete(pid);
+    },
+    emitExit: (pid: number) => {
+      const child = children.get(pid);
+      if (!child) throw new Error(`missing child ${pid}`);
+      (child as ChildProcess & { exitCode: number | null }).exitCode = 0;
+      child.emit("exit", 0, null);
     },
   };
 }
@@ -216,7 +235,7 @@ describe("SharedOpenCodeEngine", () => {
     });
   });
 
-  test("detects a dead shared engine and emits a crashed event", async () => {
+  test("cleans up a dead shared engine before spawning its successor", async () => {
     const events: Array<{ event: string; pid: number | null }> = [];
     const h = harness({
       onEngineChange: (event, engine) => {
@@ -228,8 +247,10 @@ describe("SharedOpenCodeEngine", () => {
     h.markDead(engine.pid);
 
     expect(h.manager.getRunning()).toBeNull();
+    await h.manager.ensureStarted("replacement");
     expect(events).toContainEqual({ event: "crashed", pid: engine.pid });
-    expect(h.manager.snapshot().running).toBe(false);
+    expect(h.counts().spawns).toBe(2);
+    expect(h.manager.snapshot().running).toBe(true);
   });
 
   test("health probe failures mark the shared engine crashed", async () => {
@@ -264,5 +285,71 @@ describe("SharedOpenCodeEngine", () => {
       running: false,
       engineState: "failed",
     });
+  });
+
+  test("an unconfirmed dispose blocks successors until a late direct exit", async () => {
+    const exits: string[] = [];
+    const h = harness({
+      stopResult: { outcome: "exit_unconfirmed" },
+      generationLifecycle: {
+        afterExit: (engine) => { exits.push(engine.engineOwnerId); },
+      },
+    });
+    const engine = await h.manager.ensureStarted("prompt");
+
+    await expect(h.manager.dispose()).resolves.toMatchObject({ outcome: "exit_unconfirmed" });
+    await expect(h.manager.ensureStarted("replacement")).rejects.toThrow(
+      "shared_engine_previous_exit_unconfirmed",
+    );
+    expect(h.counts().spawns).toBe(1);
+    expect(exits).toEqual([]);
+
+    h.emitExit(engine.pid);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(exits).toEqual([engine.engineOwnerId]);
+    await h.manager.ensureStarted("retry after observed exit");
+    expect(h.counts().spawns).toBe(2);
+  });
+
+  test("unconfirmed unhealthy cleanup creates zero successor engines", async () => {
+    const h = harness({ stopResult: { outcome: "exit_unconfirmed" } });
+    await h.manager.ensureStarted("prompt");
+
+    await expect(
+      h.manager.markUnhealthy("test", new Error("unhealthy")),
+    ).resolves.toMatchObject({ outcome: "exit_unconfirmed" });
+    await expect(h.manager.ensureStarted("replacement")).rejects.toThrow(
+      "shared_engine_previous_exit_unconfirmed",
+    );
+    expect(h.counts().spawns).toBe(1);
+  });
+
+  test("unconfirmed shared spawn cleanup creates zero successor engines", async () => {
+    const h = harness({
+      failHealth: true,
+      stopResult: { outcome: "exit_unconfirmed" },
+    });
+
+    await expect(h.manager.ensureStarted("first")).rejects.toThrow("health failed");
+    await expect(h.manager.ensureStarted("second")).rejects.toThrow(
+      "shared_engine_previous_exit_unconfirmed",
+    );
+    expect(h.counts().spawns).toBe(1);
+  });
+
+  test("unconfirmed shared generation-activation cleanup creates zero successor engines", async () => {
+    const h = harness({
+      stopResult: { outcome: "exit_unconfirmed" },
+      generationLifecycle: {
+        afterSpawn: async () => { throw new Error("activation failed"); },
+      },
+    });
+
+    await expect(h.manager.ensureStarted("first")).rejects.toThrow("activation failed");
+    await expect(h.manager.ensureStarted("second")).rejects.toThrow(
+      "shared_engine_previous_exit_unconfirmed",
+    );
+    expect(h.counts().spawns).toBe(1);
   });
 });

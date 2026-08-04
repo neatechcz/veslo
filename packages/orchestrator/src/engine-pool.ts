@@ -1,6 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
+import type { DirectChildStopResult } from "./direct-child-stop.js";
 import {
   EMPTY_DIRECT_AUTHORIZATION_REVISION,
   EMPTY_DIRECT_SKILL_VIEW_REVISION,
@@ -64,6 +65,13 @@ export type EngineWorkspace = {
 export type EngineEnsureResult = {
   engine: EngineProcess;
   spawned: boolean;
+};
+
+export type EngineStopReport = DirectChildStopResult & {
+  workspaceId: string;
+  engineOwnerId: string;
+  childKind: "direct" | "wsl";
+  reason: string;
 };
 
 export type EngineSpawnContext = {
@@ -225,7 +233,7 @@ export type EnginePoolDeps = {
   /** Validate a replacement direct view before retiring a healthy engine. */
   validateSkillView?: (workspace: EngineWorkspace) => Promise<void>;
   waitForHealthy: (baseUrl: string) => Promise<void>;
-  stopChild: (child: ChildProcess) => Promise<void>;
+  stopChild: (child: ChildProcess) => Promise<DirectChildStopResult>;
   findFreePort: () => Promise<number>;
   isProcessAlive: (pid: number) => boolean;
   /**
@@ -332,6 +340,8 @@ export class EnginePool {
   private readonly intentionallyStopping = new Set<string>();
   /** One child can notify both its exit event and the awaiting stop path. */
   private readonly generationExitNotifications = new Map<string, Promise<void>>();
+  /** Direct stops that timed out remain intentional when their exit arrives later. */
+  private readonly unconfirmedDirectStops = new Map<string, string>();
   /** F2Ú5 — pending restart timeouts by workspaceId (for cleanup on suspend/killAll). */
   private readonly restartTimers = new Map<string, ScheduleHandle>();
 
@@ -413,6 +423,38 @@ export class EnginePool {
     await notification;
   }
 
+  private async stopEngineChild(engine: EngineProcess, reason: string): Promise<EngineStopReport> {
+    const alreadyStopping = this.intentionallyStopping.has(engine.workspaceId);
+    this.intentionallyStopping.add(engine.workspaceId);
+    try {
+      await this.notifyGenerationBeforeStop(engine, reason);
+      const result = await this.deps.stopChild(engine.child);
+      if (engine.childKind === "direct") {
+        if (result.outcome === "exit_observed") {
+          this.unconfirmedDirectStops.delete(engine.engineOwnerId);
+          await this.notifyGenerationAfterExit(engine, reason);
+        } else {
+          this.unconfirmedDirectStops.set(engine.engineOwnerId, reason);
+        }
+      }
+      return {
+        ...result,
+        workspaceId: engine.workspaceId,
+        engineOwnerId: engine.engineOwnerId,
+        childKind: engine.childKind ?? "direct",
+        reason,
+      };
+    } finally {
+      if (!alreadyStopping) this.intentionallyStopping.delete(engine.workspaceId);
+    }
+  }
+
+  private requireDirectExit(engine: EngineProcess, result: DirectChildStopResult): void {
+    if (engine.childKind === "direct" && result.outcome === "exit_unconfirmed") {
+      throw new Error(`direct_child_exit_unconfirmed:${engine.workspaceId}:${engine.engineOwnerId}`);
+    }
+  }
+
   private async invokeGenerationHook(
     hook: keyof EngineGenerationLifecycleHooks,
     first: EngineProcess | {
@@ -492,6 +534,7 @@ export class EnginePool {
   getRunning(workspaceId: string): EngineProcess | null {
     const engine = this.engines.get(workspaceId);
     if (!engine) return null;
+    if (this.unconfirmedDirectStops.has(engine.engineOwnerId)) return null;
     if (engine.state !== "ready" && engine.state !== "idle") return null;
     if (!this.deps.isProcessAlive(engine.pid) && !this.deps.healthCheck) return null;
     return engine;
@@ -647,6 +690,7 @@ export class EnginePool {
     if (existing) {
       const alive =
         (existing.state === "ready" || existing.state === "idle") &&
+        !this.unconfirmedDirectStops.has(existing.engineOwnerId) &&
         (this.deps.isProcessAlive(existing.pid) || !!this.deps.healthCheck);
       if (alive) {
         const reconciled = await this.reconcileSkillView(workspace, existing);
@@ -688,18 +732,12 @@ export class EnginePool {
         processAlive: this.deps.isProcessAlive(existing.pid),
         hasHealthCheck: Boolean(this.deps.healthCheck),
       });
-      this.engines.delete(workspace.id);
-      if (existing.child && this.deps.isProcessAlive(existing.pid)) {
-        try {
-          await this.notifyGenerationBeforeStop(existing, "stale_respawn");
-          await this.deps.stopChild(existing.child);
-          await this.notifyGenerationAfterExit(existing, "stale_respawn");
-        } catch (err) {
-          this.deps.log?.("engine cleanup on respawn failed", {
-            workspaceId: workspace.id,
-            error: String(err),
-          });
-        }
+      if (existing.childKind === "direct" || this.deps.isProcessAlive(existing.pid)) {
+        const result = await this.stopEngineChild(existing, "stale_respawn");
+        this.requireDirectExit(existing, result);
+      }
+      if (this.engines.get(workspace.id) === existing) {
+        this.engines.delete(workspace.id);
       }
     }
 
@@ -799,20 +837,12 @@ export class EnginePool {
       },
       true,
       async () => {
+      if (engine.childKind === "direct" || this.deps.isProcessAlive(engine.pid)) {
+        const result = await this.stopEngineChild(engine, "skill_view_restart");
+        this.requireDirectExit(engine, result);
+      }
       if (this.engines.get(workspace.id) === engine) {
         this.engines.delete(workspace.id);
-      }
-      if (engine.child && this.deps.isProcessAlive(engine.pid)) {
-        try {
-          await this.notifyGenerationBeforeStop(engine, "skill_view_restart");
-          await this.deps.stopChild(engine.child);
-          await this.notifyGenerationAfterExit(engine, "skill_view_restart");
-        } catch (err) {
-          this.deps.log?.("engine cleanup on skill view restart failed", {
-            workspaceId: workspace.id,
-            error: String(err),
-          });
-        }
       }
       },
     );
@@ -843,9 +873,9 @@ export class EnginePool {
     return promise;
   }
 
-  async suspend(workspaceId: string, reason = "unspecified"): Promise<void> {
+  async suspend(workspaceId: string, reason = "unspecified"): Promise<EngineStopReport | null> {
     const engine = this.engines.get(workspaceId);
-    if (!engine) return;
+    if (!engine) return null;
     writeSpawnDiag("engine-suspend", {
       workspaceId,
       reason,
@@ -865,27 +895,22 @@ export class EnginePool {
     }
     // F2Ú5 — mark before stopChild so child.on('exit') handler treats this as intentional.
     this.intentionallyStopping.add(workspaceId);
+    let result: EngineStopReport;
     try {
-      await this.notifyGenerationBeforeStop(engine, reason);
-      if (this.deps.isProcessAlive(engine.pid)) {
-        try {
-          await this.deps.stopChild(engine.child);
-          await this.notifyGenerationAfterExit(engine, reason);
-        } catch (err) {
-          this.deps.log?.("engine suspend failed", {
-            workspaceId,
-            error: String(err),
-          });
-        }
-      }
+      result = await this.stopEngineChild(engine, reason);
     } finally {
       this.intentionallyStopping.delete(workspaceId);
     }
+    if (engine.childKind === "direct" && result.outcome === "exit_unconfirmed") {
+      this.deps.log?.("engine suspend exit unconfirmed", { workspaceId, reason });
+      return result;
+    }
     engine.state = "suspended";
     this.emit(workspaceId, "suspended", engine);
+    return result;
   }
 
-  async forget(workspaceId: string): Promise<void> {
+  async forget(workspaceId: string): Promise<EngineStopReport | null> {
     const pendingRestart = this.restartTimers.get(workspaceId);
     if (pendingRestart !== undefined) {
       this.deps.schedule.clearTimeout(pendingRestart);
@@ -893,8 +918,7 @@ export class EnginePool {
     }
 
     const engine = this.engines.get(workspaceId);
-    this.engines.delete(workspaceId);
-    if (!engine) return;
+    if (!engine) return null;
     writeSpawnDiag("engine-suspend", {
       workspaceId,
       reason: "forget",
@@ -908,26 +932,22 @@ export class EnginePool {
     });
 
     this.intentionallyStopping.add(workspaceId);
+    let result: EngineStopReport;
     try {
-      await this.notifyGenerationBeforeStop(engine, "forget");
-      if (this.deps.isProcessAlive(engine.pid)) {
-        try {
-          await this.deps.stopChild(engine.child);
-          await this.notifyGenerationAfterExit(engine, "forget");
-        } catch (err) {
-          this.deps.log?.("engine forget failed", {
-            workspaceId,
-            error: String(err),
-          });
-        }
-      }
+      result = await this.stopEngineChild(engine, "forget");
     } finally {
       this.intentionallyStopping.delete(workspaceId);
     }
+    if (engine.childKind === "direct" && result.outcome === "exit_unconfirmed") {
+      this.deps.log?.("engine forget exit unconfirmed", { workspaceId });
+      return result;
+    }
+    if (this.engines.get(workspaceId) === engine) this.engines.delete(workspaceId);
     this.emit(workspaceId, "suspended", engine);
+    return result;
   }
 
-  async killAll(): Promise<void> {
+  async killAll(): Promise<EngineStopReport[]> {
     if (this.idleSweepHandle !== null) {
       this.deps.schedule.clearInterval(this.idleSweepHandle);
       this.idleSweepHandle = null;
@@ -942,30 +962,35 @@ export class EnginePool {
     }
     this.restartTimers.clear();
     const entries = Array.from(this.engines.values());
+    const reports: EngineStopReport[] = [];
     // F2Ú5 — mark every engine as intentionally stopping BEFORE killing.
     for (const engine of entries) {
       this.intentionallyStopping.add(engine.workspaceId);
-      await this.notifyGenerationBeforeStop(engine, "orchestrator_shutdown");
     }
-    this.engines.clear();
     await Promise.all(
       entries.map(async (engine) => {
         try {
-          if (!this.deps.isProcessAlive(engine.pid)) return;
-          try {
-            await this.deps.stopChild(engine.child);
-            await this.notifyGenerationAfterExit(engine, "orchestrator_shutdown");
-          } catch (err) {
-            this.deps.log?.("engine killAll failed", {
+          const result = await this.stopEngineChild(engine, "orchestrator_shutdown");
+          reports.push(result);
+          if (result.outcome === "exit_unconfirmed") {
+            this.deps.log?.("engine killAll exit unconfirmed", {
               workspaceId: engine.workspaceId,
-              error: String(err),
+              engineOwnerId: engine.engineOwnerId,
+              childKind: engine.childKind ?? "direct",
             });
+          }
+          if (
+            !(engine.childKind === "direct" && result.outcome === "exit_unconfirmed") &&
+            this.engines.get(engine.workspaceId) === engine
+          ) {
+            this.engines.delete(engine.workspaceId);
           }
         } finally {
           this.intentionallyStopping.delete(engine.workspaceId);
         }
       }),
     );
+    return reports;
   }
 
   /**
@@ -1073,7 +1098,10 @@ export class EnginePool {
       activeSize: this.activeSize(),
       maxEngines: this.config.maxEngines,
     });
-    await this.suspend(candidate.workspaceId, "lru-eviction");
+    const result = await this.suspend(candidate.workspaceId, "lru-eviction");
+    if (result?.childKind === "direct" && result.outcome === "exit_unconfirmed") {
+      throw new Error(`direct_child_exit_unconfirmed:${result.workspaceId}:${result.engineOwnerId}`);
+    }
   }
 
   private async spawn(workspace: EngineWorkspace): Promise<EngineProcess> {
@@ -1183,7 +1211,6 @@ export class EnginePool {
       await this.deps.waitForHealthy(baseUrl);
     } catch (err) {
       engine.state = "crashed";
-      this.engines.delete(workspace.id);
       if (FLOW_LOG_ENABLED) {
         console.log(
           `[veslo:flow] ENGINE healthy:FAIL { wsId: ${JSON.stringify(
@@ -1248,15 +1275,12 @@ export class EnginePool {
       // before stopChild so the exit handler doesn't trigger restart logic.
       this.intentionallyStopping.add(workspace.id);
       try {
-        await this.deps.stopChild(child);
-      } catch (cleanupErr) {
-        this.deps.log?.("engine cleanup after health failure failed", {
-          workspaceId: workspace.id,
-          error: String(cleanupErr),
-        });
+        const result = await this.stopEngineChild(engine, "spawn_health_cleanup");
+        this.requireDirectExit(engine, result);
       } finally {
         this.intentionallyStopping.delete(workspace.id);
       }
+      if (this.engines.get(workspace.id) === engine) this.engines.delete(workspace.id);
       throw new Error(
         `engine spawn-health failed [${spawnFailureClass}] (${this.deps.now() - spawnedAt}ms): ${String(err)}`,
       );
@@ -1272,13 +1296,14 @@ export class EnginePool {
       // run. Stop it before returning so later recovery cannot mistake pool
       // absence for a proved owner loss.
       engine.state = "crashed";
-      this.engines.delete(workspace.id);
       this.intentionallyStopping.add(workspace.id);
       try {
-        await this.deps.stopChild(child);
+        const result = await this.stopEngineChild(engine, "generation_activation_cleanup");
+        this.requireDirectExit(engine, result);
       } finally {
         this.intentionallyStopping.delete(workspace.id);
       }
+      if (this.engines.get(workspace.id) === engine) this.engines.delete(workspace.id);
       throw error;
     }
     writeSpawnDiag("engine-ready", {
@@ -1317,15 +1342,16 @@ export class EnginePool {
     signal: NodeJS.Signals | null,
   ): Promise<void> {
     const engine = this.engines.get(workspaceId);
+    if (!engine) return;
     if (this.intentionallyStopping.has(workspaceId)) {
       // Intentional kill (suspend, killAll, spawn cleanup) — Set is cleared by caller.
-      if (engine) await this.notifyGenerationAfterExit(engine, "intentional_stop");
+      if (engine.childKind === "direct") {
+        await this.notifyGenerationAfterExit(engine, "intentional_stop");
+      }
       return;
     }
-    if (!engine) return;
     // Engine never reached "ready" (waitForHealthy threw earlier in spawn).
     // Don't treat as crash; ensure() callsite already got the throw.
-    if (engine.lastSuccessfulRunStartedAt === 0) return;
     if (engine.childKind === "wsl" && (engine.state === "ready" || engine.state === "idle")) {
       writeSpawnDiag("engine-wrapper-exit-kept", {
         workspaceId,
@@ -1343,7 +1369,17 @@ export class EnginePool {
       return;
     }
 
-    await this.notifyGenerationAfterExit(engine, "child_exit");
+    if (engine.childKind === "direct") {
+      const pendingStopReason = this.unconfirmedDirectStops.get(engine.engineOwnerId);
+      await this.notifyGenerationAfterExit(engine, pendingStopReason ?? "child_exit");
+      if (pendingStopReason) {
+        this.unconfirmedDirectStops.delete(engine.engineOwnerId);
+        engine.state = "crashed";
+        this.emit(workspaceId, "crashed", engine);
+        return;
+      }
+    }
+    if (engine.lastSuccessfulRunStartedAt === 0) return;
     this.markEngineCrashed(workspaceId, engine, code, signal);
   }
 
@@ -1530,13 +1566,18 @@ export class EnginePool {
             // the actual engine endpoint is gone or wedged and must restart.
             engine.healthStrikes = 0;
             this.intentionallyStopping.add(engine.workspaceId);
+            let stopConfirmed = true;
             try {
-              await this.notifyGenerationBeforeStop(engine, "health_failure");
-              if (this.deps.isProcessAlive(engine.pid)) {
-                await this.deps.stopChild(engine.child);
-                await this.notifyGenerationAfterExit(engine, "health_failure");
+              const result = await this.stopEngineChild(engine, "health_failure");
+              if (engine.childKind === "direct" && result.outcome === "exit_unconfirmed") {
+                stopConfirmed = false;
+                this.deps.log?.("engine health-driven kill exit unconfirmed", {
+                  workspaceId: engine.workspaceId,
+                  engineOwnerId: engine.engineOwnerId,
+                });
               }
             } catch (killErr) {
+              stopConfirmed = false;
               this.deps.log?.("engine health-driven kill failed", {
                 workspaceId: engine.workspaceId,
                 error: String(killErr),
@@ -1544,6 +1585,7 @@ export class EnginePool {
             } finally {
               this.intentionallyStopping.delete(engine.workspaceId);
             }
+            if (!stopConfirmed) return;
             if (engine.state === "ready") {
               this.markEngineCrashed(engine.workspaceId, engine, -1, null);
             }

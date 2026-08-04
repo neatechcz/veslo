@@ -11,6 +11,7 @@ import type {
 import type { RuntimeEngineState } from "./runtime-engine-state.js";
 import { runtimeEngineStateFromEngineState } from "./runtime-engine-state.js";
 import type { EngineTopologyMode } from "./engine-topology.js";
+import type { DirectChildStopResult } from "./direct-child-stop.js";
 
 export type SharedOpenCodeEngineSnapshot = {
   mode: Extract<EngineTopologyMode, "shared-unsandboxed" | "shared-directory-scoped">;
@@ -33,12 +34,18 @@ export type SharedOpenCodeEngineSnapshot = {
 
 export type SharedOpenCodeEngineEvent = "spawned" | "suspended" | "crashed";
 
+export type SharedEngineStopReport = DirectChildStopResult & {
+  engineOwnerId: string;
+  childKind: "direct" | "wsl";
+  reason: string;
+};
+
 export type SharedOpenCodeEngineDeps = {
   prepareRuntime?: () => Promise<void>;
   spawnEngine: (ctx: EngineSpawnContext) => Promise<EngineSpawnResult>;
   waitForHealthy: (baseUrl: string) => Promise<void>;
   healthCheck?: (baseUrl: string) => Promise<void>;
-  stopChild: (child: ChildProcess) => Promise<void>;
+  stopChild: (child: ChildProcess) => Promise<DirectChildStopResult>;
   findFreePort: () => Promise<number>;
   isProcessAlive: (pid: number) => boolean;
   now?: () => number;
@@ -71,6 +78,7 @@ export class SharedOpenCodeEngine {
   private readonly healthFailureThreshold = 2;
   /** Bound recent exit dedupe across stop completion and a later child exit event. */
   private readonly generationExitNotifications = new Map<string, Promise<void>>();
+  private unconfirmedStopOwnerId: string | null = null;
 
   constructor(input: SharedOpenCodeEngineInput) {
     this.runtimeDirectory = input.runtimeDirectory;
@@ -86,13 +94,9 @@ export class SharedOpenCodeEngine {
   getRunning(): EngineProcess | null {
     const engine = this.engine;
     if (!engine) return null;
+    if (this.unconfirmedStopOwnerId === engine.engineOwnerId) return null;
     if (engine.state !== "ready" && engine.state !== "idle") return null;
     if (!this.deps.isProcessAlive(engine.pid)) {
-      this.engine = null;
-      engine.state = "crashed";
-      this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
-      void this.notifyGenerationAfterExit(engine, "process_not_alive");
-      this.emit("crashed", engine);
       return null;
     }
     engine.lastActivityAt = this.deps.now();
@@ -119,9 +123,19 @@ export class SharedOpenCodeEngine {
     const running = this.getRunning();
     if (running) return { engine: running, spawned: false };
 
+    if (this.engine) {
+      const stop = await this.markUnhealthy("process_not_alive", new Error("shared engine process not alive"));
+      if (stop?.childKind === "direct" && stop.outcome === "exit_unconfirmed") {
+        throw new Error("shared_engine_previous_exit_unconfirmed");
+      }
+    }
+
     if (this.pending) {
       this.deps.log?.("shared opencode ensure pending reuse", { reason });
       return { engine: await this.pending, spawned: false };
+    }
+    if (this.unconfirmedStopOwnerId || this.startingEngine) {
+      throw new Error("shared_engine_previous_exit_unconfirmed");
     }
 
     this.pending = this.spawn(reason);
@@ -164,7 +178,7 @@ export class SharedOpenCodeEngine {
     };
   }
 
-  async dispose(): Promise<void> {
+  async dispose(): Promise<SharedEngineStopReport | null> {
     const pending = this.pending;
     if (pending) {
       try {
@@ -174,16 +188,18 @@ export class SharedOpenCodeEngine {
       }
     }
 
-    const engine = this.engine;
-    this.engine = null;
-    this.startingEngine = null;
-    if (!engine) return;
+    const engine = this.engine ?? this.startingEngine;
+    if (!engine) return null;
+    const result = await this.stopEngineChild(engine, "shared_engine_dispose");
+    if (engine.childKind === "direct" && result.outcome === "exit_unconfirmed") {
+      return result;
+    }
+    if (this.engine?.engineOwnerId === engine.engineOwnerId) this.engine = null;
+    if (this.startingEngine?.engineOwnerId === engine.engineOwnerId) this.startingEngine = null;
     engine.state = "suspended";
     this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
-    await this.notifyGenerationBeforeStop(engine, "shared_engine_dispose");
-    await this.deps.stopChild(engine.child);
-    await this.notifyGenerationAfterExit(engine, "shared_engine_dispose");
     this.emit("suspended", engine);
+    return result;
   }
 
   private async notifyGenerationBeforeSpawn(input: {
@@ -217,6 +233,28 @@ export class SharedOpenCodeEngine {
       this.generationExitNotifications.delete(oldest);
     }
     await notification;
+  }
+
+  private async stopEngineChild(
+    engine: EngineProcess,
+    reason: string,
+  ): Promise<SharedEngineStopReport> {
+    await this.notifyGenerationBeforeStop(engine, reason);
+    const result = await this.deps.stopChild(engine.child);
+    if (engine.childKind === "direct") {
+      if (result.outcome === "exit_observed") {
+        this.unconfirmedStopOwnerId = null;
+        await this.notifyGenerationAfterExit(engine, reason);
+      } else {
+        this.unconfirmedStopOwnerId = engine.engineOwnerId;
+      }
+    }
+    return {
+      ...result,
+      engineOwnerId: engine.engineOwnerId,
+      childKind: engine.childKind ?? "direct",
+      reason,
+    };
   }
 
   private async invokeGenerationHook(
@@ -256,10 +294,17 @@ export class SharedOpenCodeEngine {
   }
 
   private async handleChildExit(engine: EngineProcess): Promise<void> {
-    await this.notifyGenerationAfterExit(engine, "child_exit");
-    if (this.engine?.engineOwnerId !== engine.engineOwnerId) return;
-    this.engine = null;
-    this.startingEngine = null;
+    const ownsEngine = this.engine?.engineOwnerId === engine.engineOwnerId;
+    const ownsStartingEngine = this.startingEngine?.engineOwnerId === engine.engineOwnerId;
+    if (!ownsEngine && !ownsStartingEngine) return;
+    if (engine.childKind === "direct") {
+      await this.notifyGenerationAfterExit(engine, "child_exit");
+      if (this.unconfirmedStopOwnerId === engine.engineOwnerId) {
+        this.unconfirmedStopOwnerId = null;
+      }
+    }
+    if (ownsEngine) this.engine = null;
+    if (ownsStartingEngine) this.startingEngine = null;
     engine.state = "crashed";
     this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
     this.emit("crashed", engine);
@@ -282,6 +327,7 @@ export class SharedOpenCodeEngine {
     const now = this.deps.now();
     const engineOwnerId = randomUUID();
     let spawned: EngineSpawnResult | null = null;
+    let spawnedEngine: EngineProcess | null = null;
 
     await this.notifyGenerationBeforeSpawn({
       workspaceId: this.workspaceId,
@@ -315,7 +361,7 @@ export class SharedOpenCodeEngine {
         baseUrl: spawned.baseUrl,
         workdir: this.runtimeDirectory,
         configDir: this.configDirectory,
-        childKind: spawned.childKind,
+        childKind: spawned.childKind ?? "direct",
         state: "spawning",
         spawnedAt: now,
         lastActivityAt: now,
@@ -324,6 +370,7 @@ export class SharedOpenCodeEngine {
         restartCount: 0,
         lastSuccessfulRunStartedAt: 0,
       };
+      spawnedEngine = engine;
       this.startingEngine = engine;
       this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
       spawned.child.on("exit", () => { void this.handleChildExit(engine); });
@@ -345,13 +392,14 @@ export class SharedOpenCodeEngine {
       this.emit("spawned", engine);
       return engine;
     } catch (error) {
-      if (spawned?.child) {
-        try {
-          await this.deps.stopChild(spawned.child);
-        } catch (stopError) {
-          this.deps.log?.("shared opencode spawn cleanup failed", {
-            error: String(stopError),
-          });
+      if (spawnedEngine) {
+        const cleanupReason = spawnedEngine.state === "ready"
+          ? "shared_engine_generation_activation_cleanup"
+          : "shared_engine_spawn_cleanup";
+        const result = await this.stopEngineChild(spawnedEngine, cleanupReason);
+        if (spawnedEngine.childKind === "direct" && result.outcome === "exit_unconfirmed") {
+          this.lastEngineState = "failed";
+          throw error;
         }
       }
       this.engine = null;
@@ -391,13 +439,9 @@ export class SharedOpenCodeEngine {
     }
   }
 
-  async markUnhealthy(reason: string, error: unknown): Promise<void> {
+  async markUnhealthy(reason: string, error: unknown): Promise<SharedEngineStopReport | null> {
     const engine = this.engine;
-    if (!engine) return;
-    this.engine = null;
-    this.startingEngine = null;
-    engine.state = "crashed";
-    this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
+    if (!engine) return null;
     this.deps.log?.("shared opencode marked unhealthy", {
       reason,
       workspaceId: this.workspaceId,
@@ -405,18 +449,15 @@ export class SharedOpenCodeEngine {
       baseUrl: engine.baseUrl,
       error: error instanceof Error ? error.message : String(error),
     });
-    try {
-      await this.notifyGenerationBeforeStop(engine, `shared_engine_unhealthy:${reason}`);
-      if (this.deps.isProcessAlive(engine.pid)) {
-        await this.deps.stopChild(engine.child);
-      }
-      await this.notifyGenerationAfterExit(engine, `shared_engine_unhealthy:${reason}`);
-    } catch (stopError) {
-      this.deps.log?.("shared opencode unhealthy cleanup failed", {
-        reason,
-        error: stopError instanceof Error ? stopError.message : String(stopError),
-      });
+    const result = await this.stopEngineChild(engine, `shared_engine_unhealthy:${reason}`);
+    if (engine.childKind === "direct" && result.outcome === "exit_unconfirmed") {
+      return result;
     }
+    if (this.engine?.engineOwnerId === engine.engineOwnerId) this.engine = null;
+    this.startingEngine = null;
+    engine.state = "crashed";
+    this.lastEngineState = runtimeEngineStateFromEngineState(engine.state);
     this.emit("crashed", engine);
+    return result;
   }
 }

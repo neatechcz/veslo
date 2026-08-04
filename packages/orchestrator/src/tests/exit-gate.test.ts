@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
 import {
   createServer,
   type IncomingMessage,
@@ -11,6 +10,7 @@ import type { AddressInfo } from "node:net";
 
 import { EnginePool } from "../engine-pool.js";
 import { proxyToEngine } from "../router-proxy.js";
+import { stopDirectChild } from "../direct-child-stop.js";
 
 /**
  * VSLO-171 fáze 2 F2Ú8 — exit gate test.
@@ -38,28 +38,8 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function stopChild(child: ChildProcess, timeoutMs = 1500): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    return;
-  }
-  const exited = await Promise.race([
-    once(child, "exit").then(() => true),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs, false)),
-  ]);
-  if (exited) return;
-  try {
-    child.kill("SIGKILL");
-  } catch {
-    return;
-  }
-  await Promise.race([
-    once(child, "exit").then(() => true),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs, false)),
-  ]);
-}
+const stopChild = (child: ChildProcess, timeoutMs = 1500) =>
+  stopDirectChild(child, timeoutMs);
 
 type EchoServer = {
   baseUrl: string;

@@ -24,11 +24,13 @@ describe("orchestrator shutdown", () => {
       pool: {
         killAll: async () => {
           events.push("kill-all");
+          return [];
         },
       },
       sharedOpenCodeEngine: {
         dispose: async () => {
           events.push("dispose-shared-engine");
+          return null;
         },
       },
       persistShutdownState: async () => {
@@ -90,6 +92,7 @@ describe("orchestrator shutdown", () => {
           await new Promise<void>((resolve) => {
             finishKillAll = resolve;
           });
+          return [];
         },
       },
       persistShutdownState: async () => {
@@ -112,5 +115,38 @@ describe("orchestrator shutdown", () => {
     await first;
 
     expect(events).toEqual(["server-close-start", "persist", "kill-all", "persist", "exit:0"]);
+  });
+
+  test("reports unconfirmed direct stops during shutdown", async () => {
+    const warnings: Array<Record<string, unknown> | undefined> = [];
+    const shutdown = createOrchestratorShutdown({
+      server: { close: (callback) => { callback?.(); } },
+      pool: {
+        killAll: async () => [{
+          outcome: "exit_unconfirmed",
+          childKind: "direct",
+          engineOwnerId: "pool-owner",
+        }],
+      },
+      sharedOpenCodeEngine: {
+        dispose: async () => ({
+          outcome: "exit_unconfirmed",
+          childKind: "direct",
+          engineOwnerId: "shared-owner",
+        }),
+      },
+      persistShutdownState: async () => {},
+      exitProcess: () => {},
+      logger: { warn: (_message, attributes) => { warnings.push(attributes); } },
+    });
+
+    await shutdown();
+
+    expect(warnings).toContainEqual({
+      errors: [
+        "pool.killAll:exit_unconfirmed:pool-owner",
+        "sharedOpenCodeEngine.dispose:exit_unconfirmed:shared-owner",
+      ],
+    });
   });
 });

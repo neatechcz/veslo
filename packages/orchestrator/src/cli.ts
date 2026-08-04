@@ -63,6 +63,11 @@ import {
   type RunProbeResult,
 } from "./run-registry.js";
 import { createRunActivityProbe } from "./run-activity-probe.js";
+import {
+  classifyCurrentRuntimeEvidence,
+  runningEngineFromCurrentRuntimeEvidence,
+} from "./current-runtime-evidence.js";
+import { resolveTerminalRuntimeHandoffEvidence } from "./terminal-runtime-handoff-recovery.js";
 import { createEngineLossNotifier } from "./engine-loss-notifier.js";
 import { createRunDeliverySnapshotNotifier } from "./run-delivery-snapshot-notifier.js";
 import { routerRequestObservation } from "./router-request-observability.js";
@@ -90,6 +95,7 @@ import {
 } from "./engine-skill-staging.js";
 import { DirectorySkillViewLifecycle, type DirectorySkillViewInstance } from "./directory-skill-view-lifecycle.js";
 import { createWorkspaceOperationQueue } from "./workspace-operation-queue.js";
+import { stopDirectChild } from "./direct-child-stop.js";
 import { inspectDirectoryScopedConfigProfile } from "./directory-scoped-placement.js";
 import { syncWorkspaceOpencodeConfigToConfigDir } from "./workspace-opencode-config-mirror.js";
 import {
@@ -2707,28 +2713,7 @@ function printHelp(): void {
   console.log(message);
 }
 
-async function stopChild(child: ReturnType<typeof spawn>, timeoutMs = 2500): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    return;
-  }
-  const exited = await Promise.race([
-    once(child, "exit").then(() => true),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs, false)),
-  ]);
-  if (exited) return;
-  try {
-    child.kill("SIGKILL");
-  } catch {
-    return;
-  }
-  await Promise.race([
-    once(child, "exit").then(() => true),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs, false)),
-  ]);
-}
+const stopChild = stopDirectChild;
 
 /**
  * F4Ú4 — shell-quote a single argument (bash-safe single-quoting).
@@ -5428,7 +5413,10 @@ async function runRouterDaemon(args: ParsedArgs) {
           nextWorkspace: nextPath,
           nextRevision: nextRevision ?? null,
         });
-        await sharedOpenCodeEngine.dispose();
+        const stop = await sharedOpenCodeEngine.dispose();
+        if (stop?.childKind === "direct" && stop.outcome === "exit_unconfirmed") {
+          throw new Error("shared_engine_previous_exit_unconfirmed");
+        }
       }
       sharedSkillView = nextView;
       sharedOpenCodeEngine.setSkillView({
@@ -5515,6 +5503,16 @@ async function runRouterDaemon(args: ParsedArgs) {
     };
   };
   const e2eRunActivityProbeMode = process.env.E2E_RUN_ACTIVITY_PROBE_MODE?.trim() ?? "";
+  const currentRuntimeEvidence = (workspaceId: string) => {
+    if (usesSharedOpenCodeEngine(engineTopology.mode)) {
+      const running = sharedOpenCodeEngine?.getRunning() ?? null;
+      return classifyCurrentRuntimeEvidence({
+        snapshot: running,
+        sharedPendingStart: running ? false : sharedOpenCodeEngine?.snapshot().pending === true,
+      });
+    }
+    return classifyCurrentRuntimeEvidence({ snapshot: pool.get(workspaceId) });
+  };
   const probeRunActivity = e2eRunActivityProbeMode === "model-retry-no-progress"
     ? async (record: RunRecord): Promise<RunProbeResult> => ({
         active: true,
@@ -5524,9 +5522,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       })
     : createRunActivityProbe({
         getEngine: (workspaceId) =>
-          usesSharedOpenCodeEngine(engineTopology.mode)
-            ? sharedOpenCodeEngine?.getRunning()
-            : pool.get(workspaceId),
+          runningEngineFromCurrentRuntimeEvidence(currentRuntimeEvidence(workspaceId)),
         getEngineOwnerId: (engine) => engine.engineOwnerId,
         buildEngineRequest,
       });
@@ -5604,14 +5600,10 @@ async function runRouterDaemon(args: ParsedArgs) {
       engineStartedAt: record.engineStartedAt,
       engineBaseUrl: record.engineBaseUrl,
     };
-    const currentEngine = usesSharedOpenCodeEngine(engineTopology.mode)
-      ? sharedOpenCodeEngine?.getRunning() ?? null
-      : pool.get(record.workspaceId) ?? null;
-    const sharedEngineStarting = usesSharedOpenCodeEngine(engineTopology.mode) &&
-      sharedOpenCodeEngine?.snapshot().pending === true;
+    const currentRuntime = currentRuntimeEvidence(record.workspaceId);
     const evidence = await engineGenerationAuthority.resolveOwnerEvidence({
       owner,
-      currentPoolEntry: Boolean(currentEngine) || sharedEngineStarting,
+      currentRuntimeEvidence: currentRuntime.kind,
     });
     if (evidence.kind === "lost_proven") {
       const marked = runRegistry.markTerminalRunEngineLost({
@@ -5802,11 +5794,20 @@ async function runRouterDaemon(args: ParsedArgs) {
         }
         if (req.method === "POST" && url.pathname === "/e2e/shared-engine/kill-child") {
           const before = sharedOpenCodeEngine?.snapshot() ?? null;
-          await sharedOpenCodeEngine?.markUnhealthy(
+          const stop = await sharedOpenCodeEngine?.markUnhealthy(
             "e2e-kill-child",
             new Error("e2e shared engine child kill requested"),
           );
           persistEnginesSnapshot();
+          if (stop?.childKind === "direct" && stop.outcome === "exit_unconfirmed") {
+            send(409, {
+              ok: false,
+              error: "shared_engine_exit_unconfirmed",
+              before,
+              after: sharedOpenCodeEngine?.snapshot() ?? null,
+            });
+            return;
+          }
           send(200, {
             ok: true,
             before,
@@ -5928,7 +5929,11 @@ async function runRouterDaemon(args: ParsedArgs) {
           legacyWorkspaceIds: legacyIds,
         });
         for (const legacyId of legacyIds) {
-          await pool.forget(legacyId);
+          const stop = await pool.forget(legacyId);
+          if (stop?.childKind === "direct" && stop.outcome === "exit_unconfirmed") {
+            send(409, { error: "workspace_previous_engine_exit_unconfirmed", workspaceId: legacyId });
+            return;
+          }
         }
         const runStoreMigrations = legacyIds
           .map((legacyId) => runStore.migrateWorkspaceId(legacyId, id))
@@ -6269,7 +6274,12 @@ async function runRouterDaemon(args: ParsedArgs) {
             "shared-opencode-engine",
           );
         } else if (workspace.workspaceType === "local") {
-          await pool.suspend(workspace.id, "api-dispose");
+          const stop = await pool.suspend(workspace.id, "api-dispose");
+          if (stop?.childKind === "direct" && stop.outcome === "exit_unconfirmed") {
+            persistEnginesSnapshot();
+            send(409, { disposed: false, error: "engine_exit_unconfirmed" });
+            return;
+          }
           persistEnginesSnapshot();
         }
         workspace.lastUsedAt = nowMs();
@@ -6403,22 +6413,22 @@ async function runRouterDaemon(args: ParsedArgs) {
               });
               return;
             }
+            const currentRuntime = currentRuntimeEvidence(workspace.id);
             const currentEngine = usesSharedOpenCodeEngine(engineTopology.mode)
               ? sharedOpenCodeEngine?.getRunning() ?? null
               : pool.get(workspace.id);
-            const sharedEngineStarting = usesSharedOpenCodeEngine(engineTopology.mode) &&
-              sharedOpenCodeEngine?.snapshot().pending === true;
             const currentOwner = runEngineOwnerFromEngine(currentEngine);
-            if (terminalHandoffRecovery && (currentOwner.engineOwnerId || sharedEngineStarting)) {
-              send(409, { error: "terminal_handoff_recovery_runtime_active" });
-              return;
-            }
             let terminalHandoffEvidenceId: string | null = null;
             if (terminalHandoffRecovery) {
-              const evidence = await engineGenerationAuthority.resolveOwnerEvidence({
+              const evidence = await resolveTerminalRuntimeHandoffEvidence({
                 owner: recordOwner,
-                currentPoolEntry: Boolean(currentEngine) || sharedEngineStarting,
+                currentRuntimeEvidence: currentRuntime.kind,
+                generationAuthority: engineGenerationAuthority,
               });
+              if (evidence.kind === "runtime_active") {
+                send(409, { error: "terminal_handoff_recovery_runtime_active" });
+                return;
+              }
               if (evidence.kind !== "lost_proven") {
                 traceRuntime("orchestrator:run-lifecycle:terminal-runtime-handoff-evidence-unresolved", {
                   workspaceId: workspace.id,
@@ -6447,7 +6457,11 @@ async function runRouterDaemon(args: ParsedArgs) {
               return;
             }
             if (!terminalHandoffRecovery && ownerMatchesCurrentEngine) {
-              await pool.suspend(workspace.id, "provider-start-timeout-recovery");
+              const stop = await pool.suspend(workspace.id, "provider-start-timeout-recovery");
+              if (stop?.childKind === "direct" && stop.outcome === "exit_unconfirmed") {
+                send(409, { error: "provider_start_recovery_engine_exit_unconfirmed" });
+                return;
+              }
             }
             const recovered = runRegistry.markTerminalRunEngineLost({
               workspaceId: workspace.id,
@@ -8161,7 +8175,16 @@ async function runStart(args: ParsedArgs) {
       { children: children.map((handle) => handle.name) },
       "veslo-orchestrator",
     );
-    await Promise.all(children.map((handle) => stopChild(handle.child)));
+    const stops = await Promise.all(children.map(async (handle) => ({
+      name: handle.name,
+      result: await stopChild(handle.child),
+    })));
+    const unconfirmed = stops
+      .filter((stop) => stop.result.outcome === "exit_unconfirmed")
+      .map((stop) => stop.name);
+    if (unconfirmed.length > 0) {
+      logger.warn("Child shutdown exit unconfirmed", { children: unconfirmed }, "veslo-orchestrator");
+    }
   };
 
   const detachChildren = () => {

@@ -20,12 +20,18 @@ type CloseableServer = {
   close: (callback?: (error?: Error) => void) => unknown;
 };
 
+type ShutdownStopReport = {
+  outcome: "exit_observed" | "exit_unconfirmed";
+  childKind?: "direct" | "wsl";
+  engineOwnerId?: string;
+};
+
 type ShutdownEnginePool = {
-  killAll: () => Promise<void>;
+  killAll: () => Promise<ShutdownStopReport[]>;
 };
 
 type ShutdownSharedEngine = {
-  dispose: () => Promise<void> | void;
+  dispose: () => Promise<ShutdownStopReport | null> | ShutdownStopReport | null;
 };
 
 export type ShutdownAttribution = {
@@ -168,12 +174,20 @@ async function runOrchestratorShutdown(
     "veslo-orchestrator-router",
   );
   try {
-    await options.pool.killAll();
+    const reports = await options.pool.killAll();
+    for (const report of reports) {
+      if (report.outcome === "exit_unconfirmed") {
+        cleanupErrors.push(`pool.killAll:exit_unconfirmed:${report.engineOwnerId ?? "unknown"}`);
+      }
+    }
   } catch (error) {
     cleanupErrors.push(`pool.killAll:${error instanceof Error ? error.message : String(error)}`);
   }
   try {
-    await options.sharedOpenCodeEngine?.dispose();
+    const report = await options.sharedOpenCodeEngine?.dispose();
+    if (report?.outcome === "exit_unconfirmed") {
+      cleanupErrors.push(`sharedOpenCodeEngine.dispose:exit_unconfirmed:${report.engineOwnerId ?? "unknown"}`);
+    }
   } catch (error) {
     cleanupErrors.push(`sharedOpenCodeEngine.dispose:${error instanceof Error ? error.message : String(error)}`);
   }

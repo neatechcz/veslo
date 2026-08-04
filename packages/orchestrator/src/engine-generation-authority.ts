@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 import type { RunEngineOwner } from "./run-store.js";
+import type { CurrentRuntimeEvidenceKind } from "./current-runtime-evidence.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -56,7 +57,10 @@ export type EngineGenerationRecord = EngineGenerationActivation & {
 
 export type EngineOwnerEvidence =
   | { kind: "lost_proven"; evidenceId: string }
-  | { kind: "live_or_ambiguous"; reason: "current_pool_entry" | "exact_process_alive" }
+  | {
+      kind: "live_or_ambiguous";
+      reason: "current_pool_entry" | "exact_process_alive" | "unsupported_wrapper_snapshot";
+    }
   | {
       kind: "unknown";
       reason:
@@ -74,7 +78,7 @@ export type EngineGenerationAuthority = {
   confirmExit(owner: RunEngineOwner, reason: string): EngineGenerationRecord | null;
   resolveOwnerEvidence(input: {
     owner: RunEngineOwner;
-    currentPoolEntry: boolean;
+    currentRuntimeEvidence: CurrentRuntimeEvidenceKind;
   }): Promise<EngineOwnerEvidence>;
   get(engineOwnerId: string): EngineGenerationRecord | null;
 };
@@ -493,8 +497,16 @@ export function createEngineGenerationAuthority(input: {
       return updateState(owner, "exited_confirmed", trim(reason) || "child_exit");
     },
 
-    async resolveOwnerEvidence({ owner, currentPoolEntry }) {
-      if (currentPoolEntry) return { kind: "live_or_ambiguous", reason: "current_pool_entry" };
+    async resolveOwnerEvidence({ owner, currentRuntimeEvidence }) {
+      if (currentRuntimeEvidence === "running" || currentRuntimeEvidence === "starting") {
+        return { kind: "live_or_ambiguous", reason: "current_pool_entry" };
+      }
+      // A wrapper snapshot is stopped, but host-wrapper exit never proves the
+      // guest engine exited. Report it apart from a live pool entry so support
+      // captures can tell "engine still running" from "topology unsupported".
+      if (currentRuntimeEvidence === "unsupported_wrapper_snapshot") {
+        return { kind: "live_or_ambiguous", reason: "unsupported_wrapper_snapshot" };
+      }
       const ownerId = trim(owner.engineOwnerId);
       if (!ownerId) return { kind: "unknown", reason: "generation_incomplete" };
       const record = get(ownerId);

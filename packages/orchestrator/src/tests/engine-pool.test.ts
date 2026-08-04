@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 
 import {
   EnginePool,
@@ -9,6 +9,7 @@ import {
   type ScheduleApi,
   type ScheduleHandle,
 } from "../engine-pool.js";
+import { stopDirectChild } from "../direct-child-stop.js";
 
 /**
  * Minimal fake timer queue for F2Ú4/F2Ú5 tests. Supports setInterval and
@@ -84,44 +85,39 @@ class FakeTimers {
   }
 }
 
+const fakeAlive = new Set<number>();
+let nextFakePid = 20_000;
+
 function isProcessAlive(pid: number): boolean {
-  if (!pid || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  return fakeAlive.has(pid);
 }
 
 function spawnLongLivedChild(): ChildProcess {
-  return spawn("node", ["-e", "process.stdin.resume()"], {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const child = fakeChild(nextFakePid++);
+  fakeAlive.add(child.pid!);
+  return child;
 }
 
-async function stopChild(child: ChildProcess, timeoutMs = 1500): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    return;
-  }
-  const exited = await Promise.race([
-    once(child, "exit").then(() => true),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs, false)),
-  ]);
-  if (exited) return;
-  try {
-    child.kill("SIGKILL");
-  } catch {
-    return;
-  }
-  await Promise.race([
-    once(child, "exit").then(() => true),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs, false)),
-  ]);
+function fakeChild(pid: number): ChildProcess {
+  const child = new EventEmitter() as ChildProcess;
+  Object.defineProperties(child, {
+    pid: { value: pid },
+    exitCode: { value: null, writable: true },
+    signalCode: { value: null, writable: true },
+  });
+  child.kill = (signal = "SIGTERM") => {
+    if (!fakeAlive.has(pid)) return false;
+    fakeAlive.delete(pid);
+    const exitSignal = typeof signal === "string" ? signal : "SIGTERM";
+    (child as ChildProcess & { signalCode: NodeJS.Signals | null }).signalCode = exitSignal;
+    queueMicrotask(() => child.emit("exit", null, exitSignal));
+    return true;
+  };
+  return child;
 }
+
+const stopChild = (child: ChildProcess, timeoutMs = 1500) =>
+  stopDirectChild(child, timeoutMs);
 
 type Counters = { spawns: number; nextPort: number };
 
@@ -493,7 +489,7 @@ describe("EnginePool", () => {
       },
       stopChild: async (child) => {
         stopped += 1;
-        await stopChild(child);
+        return await stopChild(child);
       },
     });
     try {
@@ -611,7 +607,7 @@ describe("EnginePool", () => {
       stopChild: async (child) => {
         stops += 1;
         if (stops === 1) await stopGate;
-        await stopChild(child);
+        return await stopChild(child);
       },
     });
     try {
@@ -1546,6 +1542,169 @@ describe("EnginePool — F2Ú5 crash recovery + health monitor", () => {
       await h.pool.ensure({ id: "a", path: "/tmp/a" });
       await h.pool.suspend("a");
       expect(h.pool.getRunning("a")).toBeNull();
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("an unconfirmed suspend retains the owner and a late direct exit confirms it once", async () => {
+    const child = fakeChild(9001);
+    const exits: string[] = [];
+    const h = harness({
+      spawnEngine: async ({ port }) => ({
+        child,
+        childKind: "direct",
+        baseUrl: `http://127.0.0.1:${port}`,
+      }),
+      isProcessAlive: () => true,
+      stopChild: async () => ({ outcome: "exit_unconfirmed" }),
+      generationLifecycle: {
+        afterExit: (engine) => { exits.push(engine.engineOwnerId); },
+      },
+    });
+    try {
+      const engine = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      const result = await h.pool.suspend("a", "test-unconfirmed");
+
+      expect(result?.outcome).toBe("exit_unconfirmed");
+      expect(h.pool.get("a")).toBe(engine);
+      expect(engine.state).toBe("ready");
+      expect(h.pool.getRunning("a")).toBeNull();
+      expect(exits).toEqual([]);
+
+      (child as ChildProcess & { exitCode: number | null }).exitCode = 0;
+      child.emit("exit", 0, null);
+      await tick();
+
+      expect(exits).toEqual([engine.engineOwnerId]);
+      expect(h.pool.get("a")?.state).toBe("crashed");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("unconfirmed stale respawn creates zero successor engines", async () => {
+    let alive = true;
+    const h = harness({
+      isProcessAlive: () => alive,
+      stopChild: async () => ({ outcome: "exit_unconfirmed" }),
+    });
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      alive = false;
+
+      await expect(h.pool.ensure({ id: "a", path: "/tmp/a" })).rejects.toThrow(
+        "direct_child_exit_unconfirmed",
+      );
+      expect(h.counters.spawns).toBe(1);
+      expect(h.pool.get("a")).toBe(first);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("unconfirmed skill-view replacement creates zero successor engines", async () => {
+    const h = harness({
+      stopChild: async () => ({ outcome: "exit_unconfirmed" }),
+    });
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a", skillViewRevision: "one" });
+
+      await expect(
+        h.pool.ensure({ id: "a", path: "/tmp/a", skillViewRevision: "two" }),
+      ).rejects.toThrow("direct_child_exit_unconfirmed");
+      expect(h.counters.spawns).toBe(1);
+      expect(h.pool.get("a")).toBe(first);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("unconfirmed LRU eviction creates zero successor engines", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      { stopChild: async () => ({ outcome: "exit_unconfirmed" }) },
+      { maxEngines: 1, lruActivityGuardMs: 0, idleSweepIntervalMs: 999_999 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+
+      await expect(h.pool.ensure({ id: "b", path: "/tmp/b" })).rejects.toThrow(
+        "direct_child_exit_unconfirmed",
+      );
+      expect(h.counters.spawns).toBe(1);
+      expect(h.pool.get("b")).toBeUndefined();
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("unconfirmed health-driven replacement creates zero successor engines", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {
+        healthCheck: async () => { throw new Error("unhealthy"); },
+        stopChild: async () => ({ outcome: "exit_unconfirmed" }),
+      },
+      {
+        healthIntervalMs: 100,
+        healthFailureThreshold: 1,
+        restartBackoffBaseMs: 10,
+        idleSweepIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      timers.advance(100);
+      await tick();
+      timers.advance(100);
+      await tick();
+
+      expect(h.counters.spawns).toBe(1);
+      expect(h.pool.get("a")?.state).toBe("ready");
+      expect(h.pool.getRunning("a")).toBeNull();
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("unconfirmed spawn-health cleanup blocks every later spawn", async () => {
+    const h = harness({
+      waitForHealthy: async () => { throw new Error("health failed"); },
+      stopChild: async () => ({ outcome: "exit_unconfirmed" }),
+    });
+    try {
+      await expect(h.pool.ensure({ id: "a", path: "/tmp/a" })).rejects.toThrow(
+        "direct_child_exit_unconfirmed",
+      );
+      await expect(h.pool.ensure({ id: "a", path: "/tmp/a" })).rejects.toThrow(
+        "direct_child_exit_unconfirmed",
+      );
+      expect(h.counters.spawns).toBe(1);
+      expect(h.pool.get("a")).toBeDefined();
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("unconfirmed generation-activation cleanup blocks every later spawn", async () => {
+    const h = harness({
+      generationLifecycle: {
+        afterSpawn: async () => { throw new Error("activation failed"); },
+      },
+      stopChild: async () => ({ outcome: "exit_unconfirmed" }),
+    });
+    try {
+      await expect(h.pool.ensure({ id: "a", path: "/tmp/a" })).rejects.toThrow(
+        "direct_child_exit_unconfirmed",
+      );
+      await expect(h.pool.ensure({ id: "a", path: "/tmp/a" })).rejects.toThrow(
+        "direct_child_exit_unconfirmed",
+      );
+      expect(h.counters.spawns).toBe(1);
+      expect(h.pool.get("a")).toBeDefined();
     } finally {
       await h.cleanup();
     }

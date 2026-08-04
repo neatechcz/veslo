@@ -11,7 +11,9 @@ import {
   macosProcBsdInfoBirthToken,
   type ProcessInstanceInspector,
 } from "../engine-generation-authority.js";
+import { classifyCurrentRuntimeEvidence } from "../current-runtime-evidence.js";
 import { createRunStore } from "../run-store.js";
+import { resolveTerminalRuntimeHandoffEvidence } from "../terminal-runtime-handoff-recovery.js";
 
 const directories: string[] = [];
 
@@ -91,7 +93,7 @@ describe("engine generation authority", () => {
     observation = "absent";
     const recovered = await create().resolveOwnerEvidence({
       owner,
-      currentPoolEntry: false,
+      currentRuntimeEvidence: "absent",
     });
 
     expect(recovered.kind).toBe("lost_proven");
@@ -107,7 +109,7 @@ describe("engine generation authority", () => {
     await activate(value);
 
     birthToken = "birth-b";
-    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual({
+    await expect(value.resolveOwnerEvidence({ owner, currentRuntimeEvidence: "absent" })).resolves.toEqual({
       kind: "unknown",
       reason: "pid_reused",
     });
@@ -125,10 +127,24 @@ describe("engine generation authority", () => {
     expect(value.beginStop(owner, "clean_shutdown_requested")?.state).toBe("stopping");
 
     observation = "absent";
-    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual(
+    await expect(value.resolveOwnerEvidence({ owner, currentRuntimeEvidence: "absent" })).resolves.toEqual(
       expect.objectContaining({ kind: "lost_proven" }),
     );
     expect(value.get(owner.engineOwnerId)?.state).toBe("exited_confirmed");
+  });
+
+  test("keeps a requested stop durable until direct exit evidence is reported", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async (pid) => ({ kind: "alive", identity: { pid, birthToken: "birth-a" } }),
+    };
+    const { value, create } = await authority(inspector);
+    await activate(value);
+
+    expect(value.beginStop(owner, "direct_stop_requested")?.state).toBe("stopping");
+    expect(create().get(owner.engineOwnerId)?.state).toBe("stopping");
+
+    expect(value.confirmExit(owner, "direct_exit_observed")?.state).toBe("exited_confirmed");
+    expect(create().get(owner.engineOwnerId)?.state).toBe("exited_confirmed");
   });
 
   test("keeps automatic recovery closed when exact process identity was unavailable at activation", async () => {
@@ -138,7 +154,7 @@ describe("engine generation authority", () => {
     const { value } = await authority(inspector);
     await activate(value);
 
-    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual({
+    await expect(value.resolveOwnerEvidence({ owner, currentRuntimeEvidence: "absent" })).resolves.toEqual({
       kind: "unknown",
       reason: "generation_incomplete",
     });
@@ -152,7 +168,7 @@ describe("engine generation authority", () => {
 
     const recovered = await value.resolveOwnerEvidence({
       owner,
-      currentPoolEntry: false,
+      currentRuntimeEvidence: "absent",
     });
 
     expect(recovered).toEqual(expect.objectContaining({ kind: "lost_proven" }));
@@ -161,7 +177,7 @@ describe("engine generation authority", () => {
       closureReason: "legacy_process_absent",
       processBirthToken: null,
     });
-    await expect(create().resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual(
+    await expect(create().resolveOwnerEvidence({ owner, currentRuntimeEvidence: "absent" })).resolves.toEqual(
       expect.objectContaining({ kind: "lost_proven" }),
     );
   });
@@ -218,7 +234,7 @@ describe("engine generation authority", () => {
       before.close();
     }
 
-    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual(
+    await expect(value.resolveOwnerEvidence({ owner, currentRuntimeEvidence: "absent" })).resolves.toEqual(
       expect.objectContaining({ kind: "lost_proven" }),
     );
     expect(runStore.get(owner.workspaceId, "run-historical-hidden")).toMatchObject({
@@ -240,7 +256,7 @@ describe("engine generation authority", () => {
     };
     const { value } = await authority(inspector);
 
-    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual({
+    await expect(value.resolveOwnerEvidence({ owner, currentRuntimeEvidence: "absent" })).resolves.toEqual({
       kind: "unknown",
       reason: "generation_not_found",
     });
@@ -253,7 +269,7 @@ describe("engine generation authority", () => {
     };
     const { value } = await authority(inspector);
 
-    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: false })).resolves.toEqual({
+    await expect(value.resolveOwnerEvidence({ owner, currentRuntimeEvidence: "absent" })).resolves.toEqual({
       kind: "unknown",
       reason: "process_identity_unavailable",
     });
@@ -268,9 +284,116 @@ describe("engine generation authority", () => {
     const { value } = await authority(inspector);
     await activate(value);
 
-    await expect(value.resolveOwnerEvidence({ owner, currentPoolEntry: true })).resolves.toEqual({
+    await expect(value.resolveOwnerEvidence({ owner, currentRuntimeEvidence: "running" })).resolves.toEqual({
       kind: "live_or_ambiguous",
       reason: "current_pool_entry",
+    });
+  });
+
+  test("terminal handoff accepts a confirmed exit behind a direct stopped snapshot", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async (pid) => ({ kind: "alive", identity: { pid, birthToken: "birth-a" } }),
+    };
+    const { value } = await authority(inspector);
+    await activate(value);
+    value.beginStop(owner, "direct_stop_requested");
+    value.confirmExit(owner, "direct_exit_observed");
+    const currentRuntime = classifyCurrentRuntimeEvidence({
+      snapshot: { state: "suspended", childKind: "direct" },
+    });
+
+    await expect(resolveTerminalRuntimeHandoffEvidence({
+      owner,
+      currentRuntimeEvidence: currentRuntime.kind,
+      generationAuthority: value,
+    })).resolves.toEqual(expect.objectContaining({ kind: "lost_proven" }));
+  });
+
+  test("terminal handoff rejects running and starting runtime evidence", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async (pid) => ({ kind: "alive", identity: { pid, birthToken: "birth-a" } }),
+    };
+    const { value } = await authority(inspector);
+    await activate(value);
+    value.beginStop(owner, "direct_stop_requested");
+    value.confirmExit(owner, "direct_exit_observed");
+    const currentRuntimeKinds = [
+      classifyCurrentRuntimeEvidence({
+        snapshot: { state: "ready" as const, childKind: "direct" as const },
+      }).kind,
+      classifyCurrentRuntimeEvidence({
+        snapshot: { state: "spawning" as const, childKind: "direct" as const },
+      }).kind,
+    ];
+
+    for (const currentRuntimeEvidence of currentRuntimeKinds) {
+      await expect(resolveTerminalRuntimeHandoffEvidence({
+        owner,
+        currentRuntimeEvidence,
+        generationAuthority: value,
+      })).resolves.toEqual({ kind: "runtime_active" });
+    }
+  });
+
+  test("terminal handoff fails closed when an exact stopping process is alive", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async (pid) => ({ kind: "alive", identity: { pid, birthToken: "birth-a" } }),
+    };
+    const { value } = await authority(inspector);
+    await activate(value);
+    value.beginStop(owner, "direct_stop_requested");
+    const currentRuntime = classifyCurrentRuntimeEvidence({
+      snapshot: { state: "suspended", childKind: "direct" },
+    });
+
+    await expect(resolveTerminalRuntimeHandoffEvidence({
+      owner,
+      currentRuntimeEvidence: currentRuntime.kind,
+      generationAuthority: value,
+    })).resolves.toEqual({ kind: "live_or_ambiguous", reason: "exact_process_alive" });
+  });
+
+  test("terminal handoff fails closed when a stopping process cannot be inspected", async () => {
+    let inspectionUnknown = false;
+    const inspector: ProcessInstanceInspector = {
+      inspect: async (pid) => inspectionUnknown
+        ? { kind: "unknown", reason: "inspection_failed" }
+        : { kind: "alive", identity: { pid, birthToken: "birth-a" } },
+    };
+    const { value } = await authority(inspector);
+    await activate(value);
+    value.beginStop(owner, "direct_stop_requested");
+    inspectionUnknown = true;
+    const currentRuntime = classifyCurrentRuntimeEvidence({
+      snapshot: { state: "crashed", childKind: "direct" },
+    });
+
+    await expect(resolveTerminalRuntimeHandoffEvidence({
+      owner,
+      currentRuntimeEvidence: currentRuntime.kind,
+      generationAuthority: value,
+    })).resolves.toEqual({ kind: "unknown", reason: "process_identity_unavailable" });
+  });
+
+  test("terminal handoff keeps a WSL stopped snapshot unsupported and blocked", async () => {
+    const inspector: ProcessInstanceInspector = {
+      inspect: async (pid) => ({ kind: "alive", identity: { pid, birthToken: "birth-a" } }),
+    };
+    const { value } = await authority(inspector);
+    await activate(value);
+    value.beginStop(owner, "wrapper_stop_requested");
+    const currentRuntime = classifyCurrentRuntimeEvidence({
+      snapshot: { state: "suspended", childKind: "wsl" },
+    });
+
+    expect(currentRuntime.kind).toBe("unsupported_wrapper_snapshot");
+    await expect(resolveTerminalRuntimeHandoffEvidence({
+      owner,
+      currentRuntimeEvidence: currentRuntime.kind,
+      generationAuthority: value,
+    })).resolves.toEqual({
+      kind: "live_or_ambiguous",
+      reason: "unsupported_wrapper_snapshot",
     });
   });
 });
