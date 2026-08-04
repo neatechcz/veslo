@@ -101,31 +101,84 @@ export function parseArgs(argv) {
   return options;
 }
 
-export function summarizeDiagnosticLine(line) {
+export function normalizeTraceLine(line) {
   if (typeof line !== "string") return null;
-  const prefix = "[veslo:send-workflow] ";
-  const runtimePrefix = "[veslo:runtime-trace] ";
-  const gatewayPrefix = "[veslo:ai-gateway] ";
-  const activePrefix = line.startsWith(prefix)
-    ? prefix
-    : line.startsWith(runtimePrefix)
-      ? runtimePrefix
-      : line.startsWith(gatewayPrefix)
-        ? gatewayPrefix
-        : null;
-  if (!activePrefix) return null;
-
-  const remainder = line.slice(activePrefix.length);
-  const jsonStart = remainder.indexOf(" {");
-  const event = jsonStart === -1 ? remainder : remainder.slice(0, jsonStart);
-  let data = {};
-  if (jsonStart !== -1) {
+  const prefixes = ["[veslo:send-workflow] ", "[veslo:runtime-trace] ", "[veslo:ai-gateway] "];
+  const prefix = prefixes.find((value) => line.startsWith(value));
+  let format;
+  let event;
+  let source;
+  if (prefix) {
+    format = "legacy";
+    const remainder = line.slice(prefix.length);
+    const jsonStart = remainder.indexOf(" {");
+    event = jsonStart === -1 ? remainder : remainder.slice(0, jsonStart);
     try {
-      data = JSON.parse(remainder.slice(jsonStart + 1));
+      source = jsonStart === -1 ? {} : JSON.parse(remainder.slice(jsonStart + 1));
     } catch {
-      return null;
+      return { malformed: true, format };
     }
+  } else {
+    if (!line.trimStart().startsWith("{")) return null;
+    format = "otel";
+    let envelope;
+    try {
+      envelope = JSON.parse(line);
+    } catch {
+      return { malformed: true, format };
+    }
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) return null;
+    const looksLikeOtel = Object.hasOwn(envelope, "body")
+      || Object.hasOwn(envelope, "attributes")
+      || Object.hasOwn(envelope, "resource");
+    if (!looksLikeOtel) return null;
+    if (typeof envelope.body !== "string") {
+      return { malformed: true, format };
+    }
+    if (envelope.attributes !== undefined
+      && (!envelope.attributes || typeof envelope.attributes !== "object" || Array.isArray(envelope.attributes))) {
+      return { malformed: true, format };
+    }
+    event = envelope.body;
+    source = envelope.attributes ?? {};
   }
+
+  const boundedText = (value, max = 256) => {
+    if (typeof value === "number" && Number.isFinite(value)) value = String(value);
+    const text = typeof value === "string" ? value.trim() : "";
+    return text && text.length <= max ? text : null;
+  };
+  event = boundedText(event, 512);
+  if (!event || !source || typeof source !== "object" || Array.isArray(source)) {
+    return { malformed: true, format };
+  }
+  const booleanOrNull = (value) => value === true || value === false ? value : null;
+  const countOrNull = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 10_000 ? value : null;
+  const data = {
+    workspaceId: boundedText(source.workspaceId),
+    conversationId: boundedText(source.conversationId),
+    runId: boundedText(source.runId) ?? boundedText(source.blockingRunId) ?? boundedText(source["run.id"]),
+    blockingRunId: boundedText(source.blockingRunId),
+    clientMessageId: boundedText(source.clientMessageId),
+    origin: boundedText(source.origin, 128),
+    status: boundedText(source.status, 128),
+    code: boundedText(source.code, 128),
+    reason: boundedText(source.reason, 256),
+    terminalError: boundedText(source.terminalError, 512),
+    classification: boundedText(source.classification, 128),
+    runtimeReadyForSuccessor: booleanOrNull(source.runtimeReadyForSuccessor),
+    engineOwnerState: boundedText(source.engineOwnerState, 128),
+    unavailableReason: boundedText(source.unavailableReason, 256),
+    generationEvidenceKind: boundedText(source.generationEvidenceKind, 128),
+    decision: boundedText(source.decision, 128),
+    pendingState: boundedText(source.pendingState, 128),
+    eligibility: booleanOrNull(source.eligibility ?? source.eligible) ?? boundedText(source.eligibility, 128),
+    result: boundedText(source.result, 128),
+    matchKind: boundedText(source.matchKind, 128),
+    candidateCount: countOrNull(source.candidateCount),
+    unresolvedReason: boundedText(source.unresolvedReason, 256),
+    correlation: source.correlation,
+  };
 
   let kind = null;
   if (event === "server:conversation-run:ai-gateway-provider-start-watch:timeout") kind = "provider_start_timeout";
@@ -139,13 +192,27 @@ export function summarizeDiagnosticLine(line) {
     kind = "terminal_handoff_unresolved";
   } else if (event === "server:conversation-run:queue-drain-terminal-handoff-unresolved") {
     kind = "terminal_handoff_unresolved";
+  } else if (event === "server:conversation-run:admission-decision" && data.decision === "blocked_terminal_handoff_unresolved") {
+    kind = "blocked_terminal_handoff_unresolved";
+  } else if (/pending/i.test(event) && /adoption|reconciliation/i.test(event)
+    && (data.pendingState || data.result || data.unresolvedReason)) {
+    kind = "pending_adoption_reconciliation";
   }
-  if (!kind) return null;
+
+  return { malformed: false, format, event, data, kind };
+}
+
+export function summarizeDiagnosticLine(line) {
+  const trace = normalizeTraceLine(line);
+  if (!trace || trace.malformed || !trace.kind) return null;
+  const { data, event, kind } = trace;
 
   return {
     kind,
     event,
+    workspaceId: data.workspaceId,
     runId: textOrNull(data.runId),
+    blockingRunId: textOrNull(data.blockingRunId),
     conversationId: textOrNull(data.conversationId),
     clientMessageId: textOrNull(data.clientMessageId),
     status: textOrNull(data.status),
@@ -159,6 +226,13 @@ export function summarizeDiagnosticLine(line) {
     engineOwnerState: textOrNull(data.engineOwnerState),
     unavailableReason: textOrNull(data.unavailableReason),
     generationEvidenceKind: textOrNull(data.generationEvidenceKind),
+    decision: textOrNull(data.decision),
+    pendingState: textOrNull(data.pendingState),
+    eligibility: data.eligibility === true || data.eligibility === false ? data.eligibility : textOrNull(data.eligibility),
+    result: textOrNull(data.result),
+    matchKind: textOrNull(data.matchKind),
+    candidateCount: data.candidateCount,
+    unresolvedReason: textOrNull(data.unresolvedReason),
   };
 }
 
@@ -222,6 +296,7 @@ const { createRequire } = require("node:module");
 const { existsSync } = require("node:fs");
 const request = ${request};
 ${appendDiagnosticAnomaly.toString()}
+${normalizeTraceLine.toString()}
 const denPackagePath = ["/app/services/den/package.json", "/workspace/services/den/package.json"].find(existsSync);
 if (!denPackagePath) throw new Error("Den package manifest is unavailable in the running container.");
 const mysql = createRequire(denPackagePath)("mysql2");
@@ -236,30 +311,6 @@ function decrypt(row) {
     new Uint8Array(decipher.update(new Uint8Array(Buffer.from(row.payload_ciphertext, "base64")))),
     new Uint8Array(decipher.final()),
   ]).toString("utf8"));
-}
-
-function traceSummary(line) {
-  if (typeof line !== "string") return null;
-  const prefixes = ["[veslo:send-workflow] ", "[veslo:runtime-trace] ", "[veslo:ai-gateway] "];
-  const prefix = prefixes.find((value) => line.startsWith(value));
-  if (!prefix) return null;
-  const rest = line.slice(prefix.length);
-  const jsonStart = rest.indexOf(" {");
-  const event = jsonStart === -1 ? rest : rest.slice(0, jsonStart);
-  let data = {};
-  if (jsonStart !== -1) {
-    try { data = JSON.parse(rest.slice(jsonStart + 1)); } catch { return null; }
-  }
-  let kind = null;
-  if (event === "server:conversation-run:ai-gateway-provider-start-watch:timeout") kind = "provider_start_timeout";
-  else if (/opencode-submit:error/.test(event)) kind = "opencode_submit_error";
-  else if (/engine-unreachable|terminal-status/.test(event) && /unreachable/i.test(String(data.terminalError ?? ""))) kind = "engine_unreachable";
-  else if (/opencode-json:fallback-orchestrator/.test(event)) kind = "opencode_fallback";
-  else if (/opencode-json:error-status/.test(event)) kind = "opencode_status_error";
-  else if (/lifecycle-reconcile/.test(event) && data.status === "failed") kind = "run_failed";
-  else if (event === "server:conversation-run:predecessor-classified" && data.classification === "terminal_handoff_unresolved") kind = "terminal_handoff_unresolved";
-  else if (event === "server:conversation-run:queue-drain-terminal-handoff-unresolved") kind = "terminal_handoff_unresolved";
-  return { event, data, kind };
 }
 
 function correlation(value) {
@@ -396,6 +447,7 @@ async function main() {
       runs: new Map(),
       operations: new Map(),
       malformedCorrelationEvents: 0,
+      malformedTraceEnvelopeEvents: 0,
       omittedRunObservations: 0,
       captureWorkspaceIds: new Set(),
       workspaceSummaries: new Map(),
@@ -421,7 +473,7 @@ async function main() {
           payload,
         }) + "\n");
       }
-      const trace = traceSummary(payload?.line);
+      const trace = normalizeTraceLine(payload?.line);
       const correlationResult = correlation(trace?.data?.correlation ?? payload?.correlation);
       if (correlationResult.kind === "malformed") {
         diagnostics.malformedCorrelationEvents += 1;
@@ -431,6 +483,11 @@ async function main() {
       }
       if (/user capture/i.test(String(row.source)) && correlationResult.kind === "valid" && correlationResult.value.scope.workspaceId) {
         diagnostics.captureWorkspaceIds.add(correlationResult.value.scope.workspaceId);
+      }
+      if (trace?.malformed) {
+        diagnostics.malformedTraceEnvelopeEvents += 1;
+        diagnostics.signals.trace_envelope_malformed = (diagnostics.signals.trace_envelope_malformed || 0) + 1;
+        return;
       }
       const workspaceId = workspaceIdFor(trace, correlationResult);
       const scopedSummary = workspaceId ? workspaceSummary(diagnostics, workspaceId) : null;
@@ -474,6 +531,8 @@ async function main() {
           kind: trace.kind,
           event: trace.event,
           runId,
+          workspaceId,
+          blockingRunId: optional(trace.data.blockingRunId),
           conversationId: optional(trace.data.conversationId),
           clientMessageId: optional(trace.data.clientMessageId),
           status: optional(trace.data.status),
@@ -487,6 +546,15 @@ async function main() {
           engineOwnerState: optional(trace.data.engineOwnerState),
           unavailableReason: optional(trace.data.unavailableReason),
           generationEvidenceKind: optional(trace.data.generationEvidenceKind),
+          decision: optional(trace.data.decision),
+          pendingState: optional(trace.data.pendingState),
+          eligibility: trace.data.eligibility === true || trace.data.eligibility === false
+            ? trace.data.eligibility
+            : optional(trace.data.eligibility),
+          result: optional(trace.data.result),
+          matchKind: optional(trace.data.matchKind),
+          candidateCount: trace.data.candidateCount,
+          unresolvedReason: optional(trace.data.unresolvedReason),
       };
       appendDiagnosticAnomaly(diagnostics, scopedSummary, anomaly, request.maxAnomalies);
     });
@@ -653,6 +721,9 @@ export function formatReport(report, includeFeedbackText) {
   } else if (diagnostics.scope) {
     lines.push("Scope: user-capture workspace correlation unavailable; diagnostics are not attributed to one workspace.");
   }
+  if (diagnostics.malformedTraceEnvelopeEvents) {
+    lines.push(`Malformed trace envelopes: ${diagnostics.malformedTraceEnvelopeEvents}.`);
+  }
   const signals = Object.entries(diagnostics.signals);
   lines.push(`Signals: ${signals.length ? signals.map(([kind, count]) => `${kind}=${count}`).join(", ") : "none"}.`);
   const operations = diagnostics.operations ?? [];
@@ -673,11 +744,22 @@ export function formatReport(report, includeFeedbackText) {
     lines.push("Anomalies:");
     for (const anomaly of diagnostics.anomalies) {
       const evidence = [
+        anomaly.workspaceId ? `workspace=${anomaly.workspaceId}` : null,
+        anomaly.runId ? `run=${anomaly.runId}` : null,
+        anomaly.blockingRunId ? `blockingRun=${anomaly.blockingRunId}` : null,
         anomaly.classification ? `classification=${anomaly.classification}` : null,
+        anomaly.decision ? `decision=${anomaly.decision}` : null,
         anomaly.runtimeReadyForSuccessor === null ? null : `ready=${anomaly.runtimeReadyForSuccessor}`,
         anomaly.engineOwnerState ? `owner=${anomaly.engineOwnerState}` : null,
         anomaly.generationEvidenceKind ? `evidence=${anomaly.generationEvidenceKind}` : null,
         anomaly.reason ? `reason=${anomaly.reason}` : null,
+        anomaly.unavailableReason ? `unavailable=${anomaly.unavailableReason}` : null,
+        anomaly.pendingState ? `pending=${anomaly.pendingState}` : null,
+        anomaly.eligibility === null || anomaly.eligibility === undefined ? null : `eligible=${anomaly.eligibility}`,
+        anomaly.result ? `result=${anomaly.result}` : null,
+        anomaly.matchKind ? `match=${anomaly.matchKind}` : null,
+        anomaly.candidateCount === null || anomaly.candidateCount === undefined ? null : `candidates=${anomaly.candidateCount}`,
+        anomaly.unresolvedReason ? `unresolved=${anomaly.unresolvedReason}` : null,
       ].filter(Boolean).join(", ");
       lines.push(`- ${anomaly.at} ${anomaly.kind}: ${anomaly.event}${anomaly.status ? ` (${anomaly.status})` : ""}${anomaly.code ? ` [${anomaly.code}]` : ""}${evidence ? ` — ${evidence}` : ""}${anomaly.terminalError ? ` - ${anomaly.terminalError}` : ""}`);
     }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { appendDiagnosticAnomaly, buildRemoteCommand, buildRemoteProgram, feedbackDiagnosticArtifactName, formatReport, normalizeOperationCorrelation, parseArgs, summarizeDiagnosticLine, writeReportOutput } from "./feedback-diagnostic-report.mjs";
+import { appendDiagnosticAnomaly, buildRemoteCommand, buildRemoteProgram, feedbackDiagnosticArtifactName, formatReport, normalizeOperationCorrelation, normalizeTraceLine, parseArgs, summarizeDiagnosticLine, writeReportOutput } from "./feedback-diagnostic-report.mjs";
 
 test("feedback diagnostic report defaults to the latest feedback without exposing text", () => {
   assert.deepEqual(parseArgs([]), {
@@ -37,7 +37,9 @@ test("feedback diagnostic report summarizes provider start timeout without retur
   assert.deepEqual(summary, {
     kind: "provider_start_timeout",
     event: "server:conversation-run:ai-gateway-provider-start-watch:timeout",
+    workspaceId: null,
     runId: "run_1",
+    blockingRunId: null,
     conversationId: "conv_1",
     clientMessageId: "msg_1",
     status: null,
@@ -49,6 +51,13 @@ test("feedback diagnostic report summarizes provider start timeout without retur
     engineOwnerState: null,
     unavailableReason: null,
     generationEvidenceKind: null,
+    decision: null,
+    pendingState: null,
+    eligibility: null,
+    result: null,
+    matchKind: null,
+    candidateCount: null,
+    unresolvedReason: null,
   });
 });
 
@@ -59,7 +68,9 @@ test("feedback diagnostic report names an unresolved historical handoff with its
   assert.deepEqual(summary, {
     kind: "terminal_handoff_unresolved",
     event: "server:conversation-run:predecessor-classified",
+    workspaceId: null,
     runId: "run_old",
+    blockingRunId: null,
     conversationId: "conv_old",
     clientMessageId: null,
     status: null,
@@ -71,9 +82,102 @@ test("feedback diagnostic report names an unresolved historical handoff with its
     engineOwnerState: "attached",
     unavailableReason: "no_current_engine",
     generationEvidenceKind: null,
+    decision: null,
+    pendingState: null,
+    eligibility: null,
+    result: null,
+    matchKind: null,
+    candidateCount: null,
+    unresolvedReason: null,
   });
 });
 
+test("feedback diagnostic report summarizes mixed production-shaped trace fixtures", async () => {
+  const fixture = await readFile(new URL("./test-fixtures/feedback-diagnostic-mixed-events.ndjson", import.meta.url), "utf8");
+  const rows = fixture.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  const traces = rows
+    .filter((row) => row.recordType === "event")
+    .map((row) => normalizeTraceLine(row.payload.line));
+
+  assert.deepEqual(new Set(traces.filter((trace) => trace && !trace.malformed).map((trace) => trace.format)), new Set(["legacy", "otel"]));
+  assert.equal(traces.filter((trace) => trace?.malformed).length, 1);
+  assert.equal(traces.find((trace) => trace?.event === "proxy").format, "legacy");
+
+  const summaries = rows
+    .filter((row) => row.recordType === "event")
+    .map((row) => ({ at: row.at, ...summarizeDiagnosticLine(row.payload.line) }))
+    .filter((summary) => summary.kind);
+  const noEngine = summaries.find((summary) => summary.reason === "no_current_engine" && summary.classification);
+  assert.equal(noEngine.kind, "terminal_handoff_unresolved");
+  assert.equal(noEngine.workspaceId, "workspace_fixture");
+  assert.equal(noEngine.runId, "run_blocking_no_engine");
+  assert.equal(noEngine.unavailableReason, "no_current_engine");
+
+  const transportFailure = summaries.find((summary) => summary.reason === "request_transport_error");
+  assert.equal(transportFailure.runId, "run_blocking_transport");
+  assert.equal(transportFailure.unavailableReason, "request_transport_error");
+
+  const blockingDecision = summaries.find((summary) => summary.decision === "blocked_terminal_handoff_unresolved");
+  assert.equal(blockingDecision.kind, "blocked_terminal_handoff_unresolved");
+  assert.equal(blockingDecision.runId, "run_attempt_1");
+  assert.equal(blockingDecision.blockingRunId, "run_blocking_no_engine");
+
+  const adoption = summaries.find((summary) => summary.kind === "pending_adoption_reconciliation");
+  assert.equal(adoption.workspaceId, null);
+  assert.deepEqual({
+    pendingState: adoption.pendingState,
+    eligibility: adoption.eligibility,
+    result: adoption.result,
+    matchKind: adoption.matchKind,
+    candidateCount: adoption.candidateCount,
+    unresolvedReason: adoption.unresolvedReason,
+  }, {
+    pendingState: "outcome-unknown",
+    eligibility: "outcome-unknown",
+    result: "unresolved",
+    matchKind: null,
+    candidateCount: 0,
+    unresolvedReason: "no-match",
+  });
+
+  const output = formatReport({
+    feedback: { id: "fb_fixture", status: "stored", submittedAt: null, screenshotStatus: "captured" },
+    diagnostics: {
+      eventCount: rows.length - 1, payloadBytes: 1, firstEventAt: null, lastEventAt: null, sources: {},
+      signals: Object.fromEntries(summaries.map((summary) => [summary.kind, 1])),
+      runs: [{ runId: "run_attempt_1", finalStatus: null }], runsTruncated: false, operations: [], anomalies: summaries,
+      malformedTraceEnvelopeEvents: 1,
+      scope: { status: "scoped_from_user_capture", primaryWorkspaceId: "workspace_fixture", primaryWorkspaceEventCount: 5, outOfScopeEventCount: 0, unscopedEventCount: 1 },
+    },
+  }, false);
+  assert.match(output, /workspace workspace_fixture/);
+  assert.match(output, /run=run_attempt_1/);
+  assert.match(output, /reason=no_current_engine/);
+  assert.match(output, /unavailable=no_current_engine/);
+  assert.match(output, /decision=blocked_terminal_handoff_unresolved/);
+  assert.match(output, /Malformed trace envelopes: 1/);
+  assert.doesNotMatch(output, /C:\\/);
+});
+
+test("feedback diagnostic report drops non-allowlisted OTel attributes", () => {
+  const summary = summarizeDiagnosticLine(JSON.stringify({
+    body: "server:conversation-run:admission-decision",
+    attributes: {
+      workspaceId: "workspace_safe",
+      runId: "run_safe",
+      decision: "blocked_terminal_handoff_unresolved",
+      reason: "no_current_engine",
+      prompt: "private_prompt",
+      transcript: "private_transcript",
+      filename: "private_filename",
+      path: "private_path",
+      token: "private_token",
+      credential: "private_credential",
+    },
+  }));
+  const serialized = JSON.stringify(summary);
+  assert.doesNotMatch(serialized, /private_(prompt|transcript|filename|path|token|credential)/);
+});
 test("feedback diagnostic report accepts only the versioned allowlisted operation correlation", () => {
   assert.deepEqual(normalizeOperationCorrelation({
     version: 1,
@@ -212,6 +316,10 @@ test("feedback diagnostic report streams full event rows instead of retaining th
   assert.match(remoteProgram, /runsTruncated: diagnostics\.omittedRunObservations > 0/);
   assert.match(remoteProgram, /malformedCorrelationEvents/);
   assert.match(remoteProgram, /correlation_malformed/);
+  assert.equal(remoteProgram.match(/function normalizeTraceLine/g)?.length, 1);
+  assert.doesNotMatch(remoteProgram, /function traceSummary/);
+  assert.match(remoteProgram, /malformedTraceEnvelopeEvents/);
+  assert.match(remoteProgram, /trace_envelope_malformed/);
   assert.match(remoteProgram, /scoped_from_user_capture/);
   assert.match(remoteProgram, /outOfScopeEventCount/);
 });
