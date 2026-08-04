@@ -103,7 +103,7 @@ test("startup update check waits for preferences and updater environment", () =>
   );
 });
 
-test("session archive loader retries the same client after server readiness changes", () => {
+test("session archive loader waits for readiness and retries the same client after later health checks", () => {
   assert.match(
     archiveStoreSource,
     /function buildSessionArchiveClientKey\([\s\S]*?JSON\.stringify\(\[client\.baseUrl, client\.token \?\? "", ownerKey\]\)/,
@@ -116,8 +116,8 @@ test("session archive loader retries the same client after server readiness chan
   );
   assert.match(
     archiveStoreSource,
-    /const archiveServerStatus = deps\.vesloServerStatus\(\);/,
-    "archive startup loading should track server status so a failed initial load retries when the server becomes ready",
+    /if \(archiveServerStatus !== "connected" \|\| archiveServerCheckedAt === null\) return;/,
+    "archive startup loading should not issue its first request before an authenticated server health check succeeds",
   );
   assert.match(
     archiveStoreSource,

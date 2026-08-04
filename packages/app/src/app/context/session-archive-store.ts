@@ -416,11 +416,10 @@ export function createSessionArchiveStore(deps: SessionArchiveStoreDeps): Sessio
     const archiveServerStatus = deps.vesloServerStatus();
     const archiveServerCheckedAt = deps.vesloServerCheckedAt() ?? null;
     if (!snapshot) return;
+    if (archiveServerStatus !== "connected" || archiveServerCheckedAt === null) return;
 
     const retryFailedSessionArchiveLoad =
       sameSessionArchiveSnapshot(failedSessionArchiveSnapshot, snapshot)
-      && archiveServerStatus === "connected"
-      && archiveServerCheckedAt !== null
       && archiveServerCheckedAt !== failedSessionArchiveCheckedAt;
     if (
       lastStartedSessionArchiveGeneration === snapshot.generation

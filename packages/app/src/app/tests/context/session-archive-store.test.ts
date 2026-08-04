@@ -229,6 +229,50 @@ test("archive store handles missing client or owner without mutating records", a
   });
 });
 
+test("archive store waits for a connected server health check before its initial load", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const { client, calls } = createArchiveClient([archiveRecord("sess-a")]);
+      const [serverStatus, setServerStatus] = createSignal<"connected" | "disconnected">(
+        "disconnected",
+      );
+      const [checkedAt, setCheckedAt] = createSignal<number | null>(null);
+      const reported: unknown[] = [];
+      const visibleErrors: Array<string | null> = [];
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: () => client,
+        sessionArchiveOwnerKey: () => "owner-a",
+        vesloServerStatus: serverStatus,
+        vesloServerCheckedAt: checkedAt,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: (error) => reported.push(error),
+        setError: (message) => visibleErrors.push(message),
+        storage: createMemoryStorage(),
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+      assert.equal(calls.list, 0);
+
+      setServerStatus("connected");
+      await effects.flush();
+      assert.equal(calls.list, 0);
+
+      setCheckedAt(1);
+      await effects.flush();
+
+      assert.equal(calls.list, 1);
+      assert.deepEqual(store.sessionArchives().map((item) => item.sessionId), ["sess-a"]);
+      assert.deepEqual(reported, []);
+      assert.deepEqual(visibleErrors, []);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("archive mutations trace the durable commit and the visible projection without recording content", async () => {
   await createRoot(async (dispose) => {
     try {

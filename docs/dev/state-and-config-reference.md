@@ -70,6 +70,8 @@ Session archive records are loaded through the Veslo server archive API. When a 
 
 Archive reads are scoped to a structured `(base URL, token, owner)` snapshot. A late response from an older scope cannot replace the current owner's records or trigger legacy-local-storage migration. Within one scope, a list also captures the archive-record revision, so an older list response cannot overwrite a successful archive/unarchive mutation. A successful mutation confirms the current scope, including after a failed first list, before legacy migration can write its completion marker. The archive list boundary accepts empty success responses, but turns an unexpected non-JSON or malformed JSON response into a typed, sanitized error; it never renders or reports the raw upstream body.
 
+The initial archive list waits until the active Veslo server has completed an authenticated health check. Cold-start connection failures therefore remain part of server readiness instead of surfacing as an archive error; a load attempted after readiness still reports failures and retries after a later health check.
+
 When runtime diagnostics are enabled, the archive owner records the mutation
 sequence `mutation-requested`, `mutation-committed`, and either
 `projection-applied` or `projection-superseded` in the shared workflow trace.
