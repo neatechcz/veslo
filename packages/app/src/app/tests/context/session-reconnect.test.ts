@@ -102,6 +102,7 @@ test("reconnect state captures operational UI details without blocking sends", (
 
   assert.deepEqual(state, {
     status: "reconnecting",
+    reason: null,
     workspaceId: "ws-a",
     sessionId: "sess-a",
     attempt: 2,
@@ -111,6 +112,29 @@ test("reconnect state captures operational UI details without blocking sends", (
     updatedAt: 123,
   });
   assert.equal(reconnectStateBlocksSend(state), false);
+});
+
+test("a live runtime carries no reason even if one is offered", () => {
+  const state = createReconnectState({
+    status: "live",
+    reason: "catchup-incomplete",
+    now: () => 1,
+  });
+
+  assert.equal(state.reason, null);
+});
+
+test("a degraded runtime keeps its classified reason and hides upstream error text from it", () => {
+  const state = createReconnectState({
+    status: "degraded",
+    reason: "runtime-recovery-unavailable",
+    lastError: '{"name":"UnknownError","data":{"ref":"err_112acf0f"}}',
+    now: () => 1,
+  });
+
+  assert.equal(state.reason, "runtime-recovery-unavailable");
+  // The envelope stays available for diagnostics but is not the reason.
+  assert.notEqual(state.lastError, null);
 });
 
 test("event stream runtime recovery requires scoped runtime evidence", () => {

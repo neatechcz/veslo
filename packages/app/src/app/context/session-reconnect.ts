@@ -7,12 +7,26 @@ export type ReconnectStateStatus =
   | "degraded"
   | "runtime-recovering";
 
+/**
+ * Finite vocabulary for why the runtime is not live. The user-visible detail is
+ * derived from this, never from upstream error text: an engine error envelope
+ * is meaningless to the reader and unclassifiable for support.
+ */
+export type ReconnectStateReason =
+  | "catchup-incomplete"
+  | "runtime-recovery-unavailable"
+  | "runtime-recovery-failed"
+  | "runtime-recovery-exhausted"
+  | "stream-unavailable";
+
 export type ReconnectState = {
   status: ReconnectStateStatus;
+  reason: ReconnectStateReason | null;
   workspaceId: string | null;
   sessionId: string | null;
   attempt: number | null;
   delayMs: number | null;
+  /** Diagnostic only. Never rendered to the user. */
   lastError: string | null;
   messagesMayBeDelayed: boolean;
   updatedAt: number;
@@ -20,6 +34,7 @@ export type ReconnectState = {
 
 export function createReconnectState(input: {
   status: ReconnectStateStatus;
+  reason?: ReconnectStateReason | null;
   workspaceId?: string | null;
   sessionId?: string | null;
   attempt?: number | null;
@@ -30,6 +45,8 @@ export function createReconnectState(input: {
 }): ReconnectState {
   return {
     status: input.status,
+    // A reason only describes a non-live runtime; returning to live clears it.
+    reason: input.status === "live" ? null : input.reason ?? null,
     workspaceId: input.workspaceId?.trim() || null,
     sessionId: input.sessionId?.trim() || null,
     attempt: input.attempt ?? null,

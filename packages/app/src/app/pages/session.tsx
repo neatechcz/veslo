@@ -145,6 +145,7 @@ import {
 } from "../components/session/pending-submit-model";
 import {
   decidePendingSubmittedTranscriptAdoption,
+  describePendingSubmittedTranscriptReconciliation,
   resolvePendingSubmittedRenderReplacement,
 } from "../components/session/pending-submit-reconciliation";
 import {
@@ -566,6 +567,22 @@ const interpolate = (template: string, values: Record<string, string | number>) 
     template,
   );
 
+const reconnectStateReasonKey = (reason: NonNullable<ReconnectState["reason"]>) => {
+  switch (reason) {
+    case "catchup-incomplete":
+      return "session.reconnect_reason_catchup_incomplete";
+    case "runtime-recovery-unavailable":
+      return "session.reconnect_reason_recovery_unavailable";
+    case "runtime-recovery-failed":
+      return "session.reconnect_reason_recovery_failed";
+    case "runtime-recovery-exhausted":
+      return "session.reconnect_reason_recovery_exhausted";
+    case "stream-unavailable":
+    default:
+      return "session.reconnect_reason_stream_unavailable";
+  }
+};
+
 const reconnectStateLabelKey = (status: ReconnectState["status"]) => {
   switch (status) {
     case "reconnecting":
@@ -604,7 +621,9 @@ export default function SessionView(props: SessionViewProps) {
       }));
     }
     if (state.messagesMayBeDelayed) details.push(tr("session.reconnect_state_messages_delayed"));
-    if (state.lastError) details.push(state.lastError);
+    // Only the classified reason is shown. `lastError` stays diagnostic: it can
+    // carry an upstream error envelope that is meaningless to the reader.
+    if (state.reason) details.push(tr(reconnectStateReasonKey(state.reason)));
     return details.join(" · ");
   };
   let messagesEndEl: HTMLDivElement | undefined;
@@ -1547,13 +1566,17 @@ export default function SessionView(props: SessionViewProps) {
   });
   createEffect(() => {
     const submitted = optimisticSubmittedDraft();
-    if (!submitted || submitted.state !== "sending") return;
+    if (!submitted || (submitted.state !== "sending" && submitted.state !== "outcome-unknown")) return;
     const adoption = decidePendingSubmittedTranscriptAdoption({
       pending: submitted,
       messages: props.messages,
       sessionKey: currentSessionQueueKey(),
       sessionId: props.selectedSessionId,
     });
+    recordSendTrace(
+      "pending-submit:transcript-reconciliation",
+      describePendingSubmittedTranscriptReconciliation(submitted, adoption),
+    );
     if (adoption.kind !== "adopt") return;
     setPendingSubmittedDraftBySessionKey((current) =>
       removePendingSubmittedDraftForKey(current, submitted.sessionKey, submitted.id),

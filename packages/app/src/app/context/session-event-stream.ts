@@ -101,6 +101,11 @@ const sameRouteDescriptor = (
   current.baseUrl === next.baseUrl &&
   current.directory === next.directory;
 
+// OpenCode validates this prefix itself and rejects any other identity. Session
+// status is deliberately mirrored onto local aliases such as the Veslo
+// conversation id, which makes filtering them a read-side responsibility.
+const isOpenCodeSessionId = (value: string): boolean => value.startsWith("ses");
+
 const PERMISSION_REFRESH_EVENT_TYPES = new Set([
   "permission.asked",
   "permission.replied",
@@ -1322,21 +1327,52 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     const activeSubscriptions = new Set<SseSubscription>();
     let lastUpstreamEventId: string | null = null;
 
+    // Single owner of the user-visible connection state. Every observation goes
+    // through here so that the presented status, its finite reason, the outage
+    // scoped recovery budget, and the diagnostic record cannot drift apart.
+    let presentedStatus: ReconnectState["status"] | null = null;
+    let presentedReason: ReconnectState["reason"] = null;
     const emitReconnectState = (
       status: ReconnectState["status"],
       input: Partial<Omit<ReconnectState, "status" | "workspaceId" | "sessionId" | "updatedAt">> = {},
     ) => {
-      deps.onReconnectState?.(
-        createReconnectState({
-          status,
-          workspaceId: sourceWsId,
-          sessionId: deps.selectedSessionId(),
-          attempt: input.attempt,
-          delayMs: input.delayMs,
-          lastError: input.lastError,
-          messagesMayBeDelayed: input.messagesMayBeDelayed,
-        }),
-      );
+      const next = createReconnectState({
+        status,
+        reason: input.reason,
+        workspaceId: sourceWsId,
+        sessionId: deps.selectedSessionId(),
+        attempt: input.attempt,
+        delayMs: input.delayMs,
+        lastError: input.lastError,
+        messagesMayBeDelayed: input.messagesMayBeDelayed,
+      });
+      // The recovery budget belongs to one outage, not to the workspace. Once
+      // the runtime is live again the outage is over, so a later outage must be
+      // allowed to attempt recovery instead of degrading immediately.
+      if (next.status === "live") runtimeRecoveryEpisodesByWorkspace.delete(streamConnectionKey);
+      if (presentedStatus !== next.status || presentedReason !== next.reason) {
+        // Content-free and never debug-gated: this is the record that was
+        // missing when a degraded runtime had to be explained after the fact.
+        const transition = {
+          previousStatus: presentedStatus,
+          nextStatus: next.status,
+          reason: next.reason,
+          sourceWorkspaceId: sourceWsId || null,
+          attempt: next.attempt,
+          messagesMayBeDelayed: next.messagesMayBeDelayed,
+        };
+        deps.recordSessionStatusTrace("reconnect-state-transition", transition);
+        // The status trace lives only in the page. Support needs this after the
+        // window is gone, so it must also reach the durable workflow mirror.
+        recordSendWorkflowTrace("session-sse", "session-sse:reconnect-state-transition", {
+          ...transition,
+          workspaceId: sourceWsId || null,
+          generation,
+        });
+      }
+      presentedStatus = next.status;
+      presentedReason = next.reason;
+      deps.onReconnectState?.(next);
     };
 
     let queue: Array<OpencodeEvent | undefined> = [];
@@ -1483,6 +1519,18 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       let lastCriticalFailure: string | null = null;
       for (const sessionID of sessionIds) {
         if (!sessionID) continue;
+        // Session status is keyed by whatever owns the row, which includes
+        // Veslo conversation and pending-draft keys. Only an OpenCode session
+        // id may reach OpenCode; sending anything else makes the engine reject
+        // the request and would degrade the runtime for a purely local naming
+        // mismatch. Skipping is not a catch-up failure.
+        if (!isOpenCodeSessionId(sessionID)) {
+          deps.recordSessionStatusTrace("sse-reconnect-catchup-skipped-non-opencode-session", {
+            sessionId: sessionID,
+            sourceWorkspaceId: sourceWsId || null,
+          });
+          continue;
+        }
 
         try {
           const fetched = unwrap(await c.session.get({ sessionID })) as Record<string, unknown>;
@@ -1556,6 +1604,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         outageEpisode = clearOutageEpisode();
         setOutageEpisode(streamConnectionKey, outageEpisode);
         emitReconnectState("degraded", {
+          reason: "catchup-incomplete",
           lastError: truncateErrorField(lastCriticalFailure ?? "Reconnect catch-up incomplete"),
           messagesMayBeDelayed: true,
         });
@@ -1760,6 +1809,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               recoveryCategory,
             });
             emitReconnectState("degraded", {
+              reason: "runtime-recovery-exhausted",
               lastError: "Runtime recovery already attempted for this outage.",
               messagesMayBeDelayed: true,
             });
@@ -1796,6 +1846,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             });
             if (!recovered) {
               emitReconnectState("degraded", {
+                reason: "runtime-recovery-unavailable",
                 lastError: truncateErrorField(message),
                 messagesMayBeDelayed: true,
               });
@@ -1808,6 +1859,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             }
           } catch (recoveryError) {
             emitReconnectState("degraded", {
+              reason: "runtime-recovery-failed",
               lastError: truncateErrorField(recoveryError instanceof Error ? recoveryError.message : String(recoveryError)),
               messagesMayBeDelayed: true,
             });
@@ -1871,6 +1923,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           });
         }
         emitReconnectState("degraded", {
+          reason: "stream-unavailable",
           lastError: "Connection is still unavailable; reconnecting in the background.",
           messagesMayBeDelayed: true,
         });

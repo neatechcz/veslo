@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createComputed, createRoot, createSignal } from "solid-js";
@@ -13,6 +13,7 @@ import {
 } from "../../context/session-event-stream.js";
 import { createConversationRunDeliveryReporter } from "../../context/conversation-run-delivery-reporter.js";
 import type { ReconnectState } from "../../context/session-reconnect.js";
+import { readSessionStatus, scopedSessionStatusKey } from "../../lib/scoped-session-status.js";
 import type { MessageInfo, OpencodeEvent, SessionErrorTurn, TodoItem } from "../../types";
 
 function makeStore() {
@@ -168,11 +169,15 @@ function makeController(options: {
     recordSessionStatusTrace: (event, payload) => {
       options.statusTraces?.push({ event, payload });
     },
+    // Key exactly like production. Outage bookkeeping parses these keys, so a
+    // harness-only key shape would make reconnect tests exercise a scope that
+    // never occurs in the app.
     readStatusForSession: (sessionID, workspaceId) =>
-      store.sessionStatus[`${workspaceId ?? ""}:${sessionID ?? ""}`] ?? "idle",
+      readSessionStatus(store.sessionStatus, workspaceId, sessionID),
     setSessionStatusForWorkspace: (sessionID, status, workspaceId) => {
       if (!sessionID) return;
-      setStore("sessionStatus", `${workspaceId ?? ""}:${sessionID}`, status);
+      const key = scopedSessionStatusKey(workspaceId, sessionID) || sessionID;
+      setStore("sessionStatus", key, status);
     },
     notifySessionBusy: (sessionID, status, workspaceId) => {
       busyCalls.push({ sessionID, status, workspaceId: workspaceId ?? undefined });
@@ -325,7 +330,7 @@ test("background events update scoped runtime state without mutating active mess
       await controller.applyEvent({ type: "permission.v2.asked", properties: {} } as OpencodeEvent, "ws-b");
       await controller.applyEvent({ type: "question.v2.asked", properties: {} } as OpencodeEvent, "ws-b");
 
-      assert.equal(store.sessionStatus["ws-b:sess-b"], "running");
+      assert.equal(store.sessionStatus["ws-b\0sess-b"], "running");
       assert.deepEqual(busyCalls, [{ sessionID: "sess-b", status: "running", workspaceId: "ws-b" }]);
       assert.deepEqual(store.messages, {});
       assert.deepEqual(backgroundIngest, []);
@@ -358,7 +363,7 @@ test("server-bound background lifecycle events do not need foreground session hy
         "ws-b",
       );
 
-      assert.equal(store.sessionStatus["ws-b:sess-b"], "running");
+      assert.equal(store.sessionStatus["ws-b\0sess-b"], "running");
       assert.deepEqual(busyCalls, [{ sessionID: "sess-b", status: "running", workspaceId: "ws-b" }]);
     } finally {
       dispose();
@@ -1058,7 +1063,7 @@ test("active session idle delegates durable reconciliation without legacy app-si
         transcriptIngest,
         backgroundIngest,
       });
-      setStore("sessionStatus", "ws-a:sess-a", "running");
+      setStore("sessionStatus", "ws-a\0sess-a", "running");
 
       await controller.applyEvent(
         {
@@ -1070,7 +1075,7 @@ test("active session idle delegates durable reconciliation without legacy app-si
 
       assert.deepEqual(transcriptIngest, []);
       assert.deepEqual(backgroundIngest, []);
-      assert.equal(store.sessionStatus["ws-a:sess-a"], "idle");
+      assert.equal(store.sessionStatus["ws-a\0sess-a"], "idle");
     } finally {
       dispose();
     }
@@ -1170,7 +1175,7 @@ test("lifecycle-owned foreground idle preserves the active status until durable 
         statusTraces,
         lifecycleObservation: () => true,
       });
-      setStore("sessionStatus", "ws-a:sess-a", "running");
+      setStore("sessionStatus", "ws-a\0sess-a", "running");
 
       await controller.applyEvent(
         {
@@ -1180,7 +1185,7 @@ test("lifecycle-owned foreground idle preserves the active status until durable 
         "ws-a",
       );
 
-      assert.equal(store.sessionStatus["ws-a:sess-a"], "running");
+      assert.equal(store.sessionStatus["ws-a\0sess-a"], "running");
       assert.deepEqual(statusTraces, [{
         event: "sse-session-idle",
         payload: {
@@ -1210,7 +1215,7 @@ test("lifecycle-owned idle session.status preserves the active status until dura
           return true;
         },
       });
-      setStore("sessionStatus", "ws-a:sess-a", "running");
+      setStore("sessionStatus", "ws-a\0sess-a", "running");
 
       await controller.applyEvent(
         {
@@ -1220,7 +1225,7 @@ test("lifecycle-owned idle session.status preserves the active status until dura
         "ws-a",
       );
 
-      assert.equal(store.sessionStatus["ws-a:sess-a"], "running");
+      assert.equal(store.sessionStatus["ws-a\0sess-a"], "running");
       assert.deepEqual(observed, [{ sessionID: "sess-a", workspaceId: "ws-a", type: "session.idle" }]);
       assert.deepEqual(statusTraces, [{
         event: "sse-session-status",
@@ -1263,7 +1268,7 @@ test("lifecycle-owned background idle preserves the scoped active status", async
         activeWorkspaceId: "ws-a",
         lifecycleObservation: () => true,
       });
-      setStore("sessionStatus", "ws-b:sess-b", "submitted");
+      setStore("sessionStatus", "ws-b\0sess-b", "submitted");
 
       await controller.applyEvent(
         {
@@ -1273,7 +1278,7 @@ test("lifecycle-owned background idle preserves the scoped active status", async
         "ws-b",
       );
 
-      assert.equal(store.sessionStatus["ws-b:sess-b"], "submitted");
+      assert.equal(store.sessionStatus["ws-b\0sess-b"], "submitted");
     } finally {
       dispose();
     }
@@ -1292,7 +1297,7 @@ test("lifecycle-owned background idle session.status preserves the scoped active
           return true;
         },
       });
-      setStore("sessionStatus", "ws-b:sess-b", "submitted");
+      setStore("sessionStatus", "ws-b\0sess-b", "submitted");
 
       await controller.applyEvent(
         {
@@ -1302,7 +1307,7 @@ test("lifecycle-owned background idle session.status preserves the scoped active
         "ws-b",
       );
 
-      assert.equal(store.sessionStatus["ws-b:sess-b"], "submitted");
+      assert.equal(store.sessionStatus["ws-b\0sess-b"], "submitted");
       assert.deepEqual(observed, [{ sessionID: "sess-b", workspaceId: "ws-b", type: "session.idle" }]);
     } finally {
       dispose();
@@ -1322,7 +1327,7 @@ test("background abort errors still release the scoped active status immediately
           return true;
         },
       });
-      setStore("sessionStatus", "ws-b:sess-b", "running");
+      setStore("sessionStatus", "ws-b\0sess-b", "running");
 
       await controller.applyEvent(
         {
@@ -1333,7 +1338,7 @@ test("background abort errors still release the scoped active status immediately
       );
 
       assert.equal(observations, 0);
-      assert.equal(store.sessionStatus["ws-b:sess-b"], "idle");
+      assert.equal(store.sessionStatus["ws-b\0sess-b"], "idle");
     } finally {
       dispose();
     }
@@ -1355,7 +1360,7 @@ test("known admitted run uses durable lifecycle arbitration for SSE errors", asy
           return true;
         },
       });
-      setStore("sessionStatus", "ws-a:sess-a", "running");
+      setStore("sessionStatus", "ws-a\0sess-a", "running");
 
       await controller.applyEvent({
         type: "session.error",
@@ -1368,7 +1373,7 @@ test("known admitted run uses durable lifecycle arbitration for SSE errors", asy
       assert.deepEqual(observed, [{ sessionID: "sess-a", workspaceId: "ws-a", type: "session.error" }]);
       assert.deepEqual(sessionErrorTurns, []);
       assert.deepEqual(errors, []);
-      assert.equal(store.sessionStatus["ws-a:sess-a"], "running");
+      assert.equal(store.sessionStatus["ws-a\0sess-a"], "running");
     } finally {
       dispose();
     }
@@ -1811,8 +1816,8 @@ test("an admitted session remains pinned to its original workspace event stream"
         properties: { sessionID: "sess-pinned", status: "idle" },
       } as OpencodeEvent, "ws-b");
 
-      assert.equal(store.sessionStatus["ws-a:sess-pinned"], "running");
-      assert.equal(store.sessionStatus["ws-b:sess-pinned"], undefined);
+      assert.equal(store.sessionStatus["ws-a\0sess-pinned"], "running");
+      assert.equal(store.sessionStatus["ws-b\0sess-pinned"], undefined);
     } finally {
       dispose();
     }
@@ -2125,7 +2130,9 @@ test("reconnect catch-up preserves running status when status refresh fails", as
 
     assert.deepEqual(statusRefreshes, ["sess-a"]);
     assert.equal(store.sessionStatus["ws-a\0sess-a"], "running");
-    assert.equal(store.sessionStatus["ws-a:sess-a"], undefined);
+    // The status must stay scoped to its workspace; a bare session key would
+    // leak the row across workspaces.
+    assert.equal(store.sessionStatus["sess-a"], undefined);
     assert.equal(busyCalls.some((call) => call.sessionID === "sess-a" && call.status === "idle"), false);
     assert.equal(
       statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-status-failed"),
@@ -2134,7 +2141,89 @@ test("reconnect catch-up preserves running status when status refresh fails", as
     assert.equal(reconnectStates.at(-1)?.status, "degraded");
     assert.equal(reconnectStates.at(-1)?.messagesMayBeDelayed, true);
     assert.equal(reconnectStates.at(-1)?.lastError, "status unavailable");
+    assert.equal(reconnectStates.at(-1)?.reason, "catchup-incomplete");
     assert.equal(reconnectNotices.includes("reconnected"), false);
+
+    const transitions = statusTraces.filter((trace) => trace.event === "reconnect-state-transition");
+    assert.equal(
+      transitions.some((trace) => trace.payload?.nextStatus === "degraded" && trace.payload?.reason === "catchup-incomplete"),
+      true,
+    );
+    // The transition record must stay classifiable, never carry upstream text.
+    assert.equal(
+      transitions.some((trace) => JSON.stringify(trace.payload ?? {}).includes("status unavailable")),
+      false,
+    );
+
+    cleanup();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("reconnect catch-up never sends a non-OpenCode session key to the engine", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let reconnectCallback: (() => void) | null = null;
+  const statusRefreshes: string[] = [];
+  const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const reconnectStates: ReconnectState[] = [];
+  let subscribeCount = 0;
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+    reconnectCallback = () => callback();
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    const { controller, setStore } = makeController({
+      activeWorkspaceId: "ws-a",
+      statusTraces,
+      onReconnectState: (state) => reconnectStates.push(state),
+    });
+    // Run promotion deliberately mirrors a running status onto its Veslo
+    // conversation alias. That alias is local identity and must never be
+    // offered to OpenCode, which rejects anything not prefixed "ses".
+    setStore("sessionStatus", "ws-a\0conv-f5bc4ba8965824675ca5", "running");
+
+    const client = {
+      ...makeEventClient(async () => {
+        subscribeCount += 1;
+        if (subscribeCount === 1) return { stream: (async function* () {})() };
+        return {
+          stream: (async function* () {
+            await new Promise<void>(() => {});
+          })(),
+        };
+      }),
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => {
+          statusRefreshes.push(sessionID);
+          throw new Error('Expected a string starting with "ses"');
+        },
+      },
+    } as any;
+
+    const cleanup = controller.setupSseStream("ws-a", client);
+    await tick(4);
+    const runReconnect = reconnectCallback as (() => void) | null;
+    assert.ok(runReconnect);
+
+    runReconnect();
+    await tick(12);
+
+    assert.deepEqual(statusRefreshes, []);
+    assert.equal(
+      statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-skipped-non-opencode-session"),
+      true,
+    );
+    assert.equal(
+      statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-status-failed"),
+      false,
+    );
+    assert.notEqual(reconnectStates.at(-1)?.status, "degraded");
 
     cleanup();
   } finally {
