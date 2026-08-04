@@ -25,6 +25,20 @@ export type PendingSubmittedRenderReplacement =
       candidateCount: number;
     };
 
+export type PendingSubmittedTranscriptAdoptionEligibility =
+  | "accepted-sending"
+  | "outcome-unknown"
+  | "ineligible";
+
+export type PendingSubmittedTranscriptReconciliationTrace = {
+  pendingState: PendingSubmittedDraft["state"];
+  eligibility: PendingSubmittedTranscriptAdoptionEligibility;
+  result: PendingSubmittedTranscriptAdoption["kind"];
+  matchKind: "identity" | "fingerprint" | null;
+  candidateCount: number;
+  unresolvedReason: Extract<PendingSubmittedTranscriptAdoption, { kind: "unresolved" }>["reason"] | null;
+};
+
 type PendingSubmittedTranscriptMatch =
   | Extract<PendingSubmittedTranscriptAdoption, { kind: "adopt" }>
   | {
@@ -230,11 +244,35 @@ export function decidePendingSubmittedTranscriptAdoption(input: {
   sessionId?: string | null;
 }): PendingSubmittedTranscriptAdoption {
   const pending = input.pending;
-  if (pending.state !== "sending" || pending.admission !== "accepted") {
+  const eligibility = pendingSubmittedTranscriptAdoptionEligibility(pending);
+  if (eligibility === "ineligible") {
+    if (pending.admissionDiagnostic) {
+      return { kind: "unresolved", reason: pending.admissionDiagnostic, candidateCount: 0 };
+    }
     return { kind: "unresolved", reason: "not-accepted", candidateCount: 0 };
   }
-  if (pending.admissionDiagnostic) {
-    return { kind: "unresolved", reason: pending.admissionDiagnostic, candidateCount: 0 };
-  }
   return findPendingSubmittedTranscriptMatch(input);
+}
+
+export function pendingSubmittedTranscriptAdoptionEligibility(
+  pending: PendingSubmittedDraft,
+): PendingSubmittedTranscriptAdoptionEligibility {
+  if (pending.admissionDiagnostic) return "ineligible";
+  if (pending.state === "sending" && pending.admission === "accepted") return "accepted-sending";
+  if (pending.state === "outcome-unknown") return "outcome-unknown";
+  return "ineligible";
+}
+
+export function describePendingSubmittedTranscriptReconciliation(
+  pending: PendingSubmittedDraft,
+  adoption: PendingSubmittedTranscriptAdoption,
+): PendingSubmittedTranscriptReconciliationTrace {
+  return {
+    pendingState: pending.state,
+    eligibility: pendingSubmittedTranscriptAdoptionEligibility(pending),
+    result: adoption.kind,
+    matchKind: adoption.kind === "adopt" ? adoption.match : null,
+    candidateCount: adoption.candidateCount,
+    unresolvedReason: adoption.kind === "unresolved" ? adoption.reason : null,
+  };
 }
