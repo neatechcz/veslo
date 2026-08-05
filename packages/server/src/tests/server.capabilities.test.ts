@@ -37,3 +37,18 @@ test("buildCapabilities exposes skill registry availability", () => {
   expect(buildCapabilities(baseConfig({ skillRegistryBaseUrl: "   " })).skillRegistry)
     .toEqual({ configured: false });
 });
+
+test("buildCapabilities exposes the orchestrator-backed OpenCode proxy for a local workspace without a direct URL", () => {
+  const capabilities = buildCapabilities(baseConfig({
+    orchestratorDaemonUrl: "http://127.0.0.1:4097",
+    workspaces: [{
+      id: "ws-local",
+      name: "Local workspace",
+      path: "C:/workspace",
+      workspaceType: "local",
+      baseUrl: "",
+    }],
+  }));
+
+  expect(capabilities.proxy.opencode).toBe(true);
+});

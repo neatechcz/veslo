@@ -1495,6 +1495,81 @@ test("terminal lifecycle truth remains available after its watch is released", a
   assert.equal(diagnostics[0]?.status, "failed");
 });
 
+test("a later session lifecycle event does not rewatch an exact terminal run", async () => {
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  let reads = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => ({
+      sessionId: "ses-a",
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-a",
+    }),
+    readConversationRunStatus: async () => {
+      reads += 1;
+      return { runId: "run-a", status: "completed", stale: false };
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    trace: (event, payload) => traces.push({ event, payload }),
+  });
+
+  assert.equal(controller.observeSessionLifecycleEvent("ses-a", "ws-a", "session.idle"), true);
+  await waitForAsyncPoll();
+  assert.equal(reads, 1);
+  assert.equal(controller.activeWatchCount(), 0);
+
+  assert.equal(controller.observeSessionLifecycleEvent("ses-a", "ws-a", "session.idle"), true);
+  await waitForAsyncPoll();
+  assert.equal(reads, 1);
+  assert.equal(controller.activeWatchCount(), 0);
+  const ignoredObservation = traces.find(
+    (entry) => entry.event === "session-lifecycle-recovery:observation-ignored-settled",
+  )?.payload;
+  assert.equal(ignoredObservation?.eventType, "session.idle");
+  assert.equal(ignoredObservation?.outcome, "exact-run-already-settled");
+});
+
+test("reconciliation and reconnect do not revive an exact settled accepted run", async () => {
+  const statuses = { "ws-a\0ses-a": "running" };
+  let reads = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => statuses,
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => ({
+      sessionId: "ses-a",
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-a",
+    }),
+    readConversationRunStatus: async () => {
+      reads += 1;
+      return { runId: "run-a", status: "completed", stale: false };
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }), true);
+  await waitForAsyncPoll();
+
+  assert.equal(reads, 1);
+  assert.equal(controller.activeWatchCount(), 0);
+  controller.reconcile();
+  assert.equal(controller.activeWatchCount(), 0);
+  assert.equal(controller.resumeAcceptedRunsForWorkspace("ws-a"), 0);
+  await waitForAsyncPoll();
+  assert.equal(reads, 1);
+});
+
 test("an exact in-flight lifecycle poll may terminalize its own run after a newer run is watched", async () => {
   const timers: Timer[] = [];
   const terminals: string[] = [];

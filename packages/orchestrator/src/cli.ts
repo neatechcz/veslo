@@ -3003,6 +3003,7 @@ async function startOpencode(options: {
   }
 
   let child: ChildProcess;
+  const childStartedAt = Date.now();
   let connectHost: string | undefined;
   let childKind: "direct" | "wsl" = "direct";
   let launchDiag: LogAttributes | undefined;
@@ -3197,6 +3198,8 @@ async function startOpencode(options: {
     );
   }
   writeSendWorkflowTrace("orchestrator:engine-spawned", {
+    workspaceId: options.workspaceId ?? null,
+    engineOwnerId: options.engineOwnerId ?? null,
     workspacePath: options.workspace,
     configDir: options.configDir ?? null,
     pid: child.pid ?? null,
@@ -3229,6 +3232,19 @@ async function startOpencode(options: {
     );
   });
   child.once("exit", (code, signal) => {
+    // This is intentionally a structured, low-cardinality diagnostic record:
+    // it lets a later SSE close be correlated to the exact engine generation
+    // without retaining OpenCode's raw error/output text in the trace.
+    writeSendWorkflowTrace("orchestrator:engine-child-exit", {
+      workspaceId: options.workspaceId ?? null,
+      engineOwnerId: options.engineOwnerId ?? null,
+      pid: child.pid ?? null,
+      childKind,
+      code,
+      signal,
+      exitKind: code === 0 && signal === null ? "clean" : "unexpected",
+      runtimeMs: Date.now() - childStartedAt,
+    });
     if (code === 0) return; // clean shutdown
     options.logger.warn(
       "engine process exited",
@@ -4226,6 +4242,19 @@ async function runRouterDaemon(args: ParsedArgs) {
       traceFile: runtimeTraceFile,
       ...payload,
     });
+  const traceEngineGenerationExit = (engine: EngineProcess, reason: string): void => {
+    const payload = {
+      workspaceId: engine.workspaceId,
+      engineOwnerId: engine.engineOwnerId,
+      enginePid: engine.pid,
+      engineStartedAt: engine.spawnedAt,
+      childKind: engine.childKind ?? "direct",
+      lifecycleExitReason: reason,
+      exitTrigger: reason === "child_exit" ? "unplanned_child_exit" : "managed_stop",
+    };
+    traceRuntime("orchestrator:engine-generation-exit", payload);
+    writeSendWorkflowTrace("orchestrator:engine-generation-exit", payload);
+  };
   // Workspace ids may survive a move or an older registration. Keep a stable
   // path correlation key in traces, while the trace writer continues to redact
   // any human-readable filesystem path it already receives.
@@ -4927,6 +4956,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         },
         afterExit: (engine, reason) => {
           engineGenerationAuthority.confirmExit(runEngineOwnerFromEngine(engine), reason);
+          traceEngineGenerationExit(engine, reason);
         },
       },
       // F2Ú5 — state transition events. Log + trigger debounced persist.
@@ -5091,6 +5121,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               },
               afterExit: (engine, reason) => {
                 engineGenerationAuthority.confirmExit(runEngineOwnerFromEngine(engine), reason);
+                traceEngineGenerationExit(engine, reason);
               },
             },
             prepareRuntime: async () => {
@@ -7338,6 +7369,9 @@ async function runRouterDaemon(args: ParsedArgs) {
             workspacePath: ws.path,
             engineTopology: workspaceTopology,
             engineKind: proxyTarget.engineKind,
+            engineOwnerId: engine.engineOwnerId,
+            enginePid: engine.pid,
+            engineStartedAt: engine.spawnedAt,
             method: req.method,
             path: url.pathname,
             search: url.search,

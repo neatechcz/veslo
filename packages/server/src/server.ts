@@ -1102,15 +1102,19 @@ export function startServer(config: ServerConfig) {
         url.pathname.startsWith("/opencode/")
       ) {
         authMode = "client";
-        proxyBaseUrl = config.workspaces[0]?.baseUrl?.trim() || undefined;
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
+          const configuredWorkspace = config.workspaces[0];
+          const workspace = configuredWorkspace
+            ? await resolveWorkspace(config, configuredWorkspace.id)
+            : undefined;
           proxyService = "opencode";
+          proxyBaseUrl = workspace?.baseUrl?.trim() || undefined;
           const response = await proxyOpencodeRequest({
             request,
             url,
-            workspace: config.workspaces[0],
+            workspace,
           });
           return finalize(response);
         } catch (error) {
@@ -2237,27 +2241,24 @@ function detailsText(details: unknown): string {
   }
 }
 
-function shouldRetryOpenCodeViaOrchestrator(error: unknown): boolean {
-  if (!(error instanceof ApiError)) return false;
+function openCodeOrchestratorFallbackReason(error: unknown): string | null {
+  if (!(error instanceof ApiError)) return null;
   // Local OpenCode URLs are per-runtime; retry stale/missing mounts via orchestrator.
-  if (error.code === "opencode_unconfigured") return true;
-  if (error.code === "opencode_request_timeout") return true;
-  if (error.code !== "opencode_request_failed") return false;
+  if (error.code === "opencode_unconfigured") return "opencode_unconfigured";
+  if (error.code === "opencode_request_timeout") return "opencode_request_timeout";
+  if (error.code !== "opencode_request_failed") return null;
   const details = isRecordLike(error.details) ? error.details : {};
   const status = typeof details.status === "number" ? details.status : null;
+  if (status === 404) return "upstream_http_404";
+  if (status === 502) return "upstream_http_502";
+  if (status === 503) return "upstream_http_503";
   const text = detailsText(error.details).toLowerCase();
-  return (
-    status === 404 ||
-    status === 502 ||
-    status === 503 ||
-    text.includes("engine_not_running") ||
-    text.includes("connection refused") ||
-    text.includes("econnrefused") ||
-    text.includes("unable to connect") ||
-    text.includes("failed to fetch") ||
-    text.includes("fetch failed") ||
-    text.includes("error sending request")
-  );
+  if (text.includes("engine_not_running")) return "engine_not_running";
+  if (text.includes("connection refused") || text.includes("econnrefused")) return "connection_refused";
+  if (text.includes("unable to connect")) return "connection_unavailable";
+  if (text.includes("failed to fetch") || text.includes("fetch failed")) return "fetch_failed";
+  if (text.includes("error sending request")) return "request_send_failed";
+  return null;
 }
 
 function shouldRetryConversationSubmitAfterTransport(error: unknown): boolean {
@@ -2568,6 +2569,24 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
     config,
     workspace,
   );
+  const fallback = orchestratorFallbackWorkspace(config, workspace);
+  if (!workspace.baseUrl?.trim() && fallback) {
+    recordSendWorkflowTrace(
+      "server",
+      "server:opencode-json:route-orchestrator",
+      {
+        traceId: init.sendTraceId?.trim() || null,
+        workspaceId: workspace.id,
+        method: init.method,
+        path,
+        routeReason: "workspace_base_url_absent",
+        primaryBaseUrl: null,
+        orchestratorBaseUrl: fallback.baseUrl ?? null,
+      },
+    );
+    await ensureOrchestratorWorkspaceRegistered(config, workspace, routedInit);
+    return await fetchOpencodeJson(fallback, path, routedInit);
+  }
   if (
     orchestratorBaseUrl &&
     workspace.baseUrl?.trim() === orchestratorBaseUrl
@@ -2577,8 +2596,8 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
   try {
     return await fetchOpencodeJson(workspace, path, routedInit);
   } catch (error) {
-    const fallback = orchestratorFallbackWorkspace(config, workspace);
-    if (!fallback || !shouldRetryOpenCodeViaOrchestrator(error)) {
+    const fallbackReason = openCodeOrchestratorFallbackReason(error);
+    if (!fallback || !fallbackReason) {
       throw error;
     }
     recordSendWorkflowTrace(
@@ -2591,8 +2610,12 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
         path,
         primaryBaseUrl: workspace.baseUrl?.trim() || null,
         fallbackBaseUrl: fallback.baseUrl ?? null,
-        error: error instanceof Error ? error.message : String(error),
-        code: error instanceof ApiError ? error.code : null,
+        fallbackReason,
+        fallbackErrorCode: error instanceof ApiError ? error.code : null,
+        fallbackHttpStatus: error instanceof ApiError && isRecordLike(error.details)
+          && typeof error.details.status === "number"
+          ? error.details.status
+          : null,
       },
     );
     await ensureOrchestratorWorkspaceRegistered(config, workspace, routedInit);
@@ -4569,7 +4592,7 @@ export function buildCapabilities(config: ServerConfig): Capabilities {
     parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT),
   );
   const opencodeConfigured = config.workspaces.some((workspace) =>
-    Boolean(workspace.baseUrl?.trim()),
+    Boolean(resolveWorkspaceOpencodeBaseUrl(config, workspace)),
   );
   return {
     schemaVersion,

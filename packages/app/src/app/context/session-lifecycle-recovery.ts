@@ -895,6 +895,7 @@ export function createSessionLifecycleRecoveryController(
       const scope = options.resolveConversationRunForSession(parsed.sessionId, parsed.workspaceId);
       if (!scope) continue;
       const key = recoveryKey(scope);
+      if (key && settledRunKeys.has(key)) continue;
       if (key) desired.set(key, scope);
     }
 
@@ -1278,6 +1279,13 @@ export function createSessionLifecycleRecoveryController(
       const scope = options.resolveConversationRunForSession(sessionId, workspaceId);
       const key = scope ? recoveryKey(scope) : "";
       if (!scope || !key) return false;
+      if (settledRunKeys.has(key)) {
+        traceForScope("session-lifecycle-recovery:observation-ignored-settled", scope, 1, {
+          eventType: eventType ?? null,
+          outcome: "exact-run-already-settled",
+        });
+        return true;
+      }
       const exhausted = exhaustedWatches.get(key);
       if (exhausted) {
         exhaustedWatches.delete(key);
@@ -1415,6 +1423,7 @@ export function createSessionLifecycleRecoveryController(
       const targetWorkspaceId = normalize(workspaceId);
       let resumed = 0;
       for (const [key, watch] of [...watches, ...exhaustedWatches]) {
+        if (settledRunKeys.has(key)) continue;
         if (!watch.admitted) continue;
         if (targetWorkspaceId && normalize(watch.scope.workspaceId) !== targetWorkspaceId) continue;
         if (exhaustedWatches.delete(key)) {

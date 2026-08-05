@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -2090,7 +2090,9 @@ describe("conversation routes", () => {
   });
 
   test("POST /workspace/:id/conversations/submit records direct-to-orchestrator fallback attempts in order", async () => {
-    await useTempVesloDataDir();
+    const dataDir = await useTempVesloDataDir();
+    const traceFile = join(dataDir, "send-workflow-trace.server.ndjson");
+    setEnvVarForTest("VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE", traceFile);
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-fallback-evidence-"));
     tempDirs.push(workspaceRoot);
     const direct = Bun.serve({
@@ -2206,6 +2208,11 @@ describe("conversation routes", () => {
     const failures = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
     const engineOwnerEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-engine-owner"));
     const finalEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-final"));
+    const fallbackEvidence = (await readFile(traceFile, "utf8"))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.event === "server:opencode-json:fallback-orchestrator");
     expect(attemptStarts).toHaveLength(2);
     expect(attemptStarts[0]).toContain('"attemptOrdinal":1');
     expect(attemptStarts[0]).toContain('"executionRoute":"direct"');
@@ -2218,8 +2225,117 @@ describe("conversation routes", () => {
     expect(engineOwnerEvidence).toContain('"engineOwnerId":"owner-fallback-evidence"');
     expect(engineOwnerEvidence).not.toContain("127.0.0.1:9999");
     expect(finalEvidence).toContain('"firstFailureAttemptOrdinal":1');
+    expect(fallbackEvidence).toMatchObject({
+      fallbackReason: "upstream_http_404",
+      fallbackErrorCode: "opencode_request_failed",
+      fallbackHttpStatus: 404,
+    });
+    expect(JSON.stringify(fallbackEvidence)).not.toContain("stale direct mount");
     expect(finalEvidence).toContain('"engineOwnerObserved":true');
     expect(finalEvidence).toContain('"submitStatus":"submitted"');
+  });
+
+  test("POST /workspace/:id/conversations routes an unconfigured local workspace through the orchestrator without a fallback error", async () => {
+    const dataDir = await useTempVesloDataDir();
+    const traceFile = join(dataDir, "send-workflow-trace.server.ndjson");
+    setEnvVarForTest("VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE", traceFile);
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-unconfigured-route-"));
+    tempDirs.push(workspaceRoot);
+    const orchestratorRequests: string[] = [];
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        orchestratorRequests.push(`${request.method} ${url.pathname}`);
+        if (request.method === "POST" && url.pathname === "/workspaces") {
+          return Response.json({ ok: true, workspace: { id: "ws_1" } });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+          const body = (await request.json()) as Record<string, unknown>;
+          return Response.json({
+            id: "sess-unconfigured-route",
+            title: body.title,
+            directory: body.directory ?? workspaceRoot,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-unconfigured-route/prompt_async") {
+          return boundEngineResponse(request, { ok: true }, {
+            slotId: "slot-unconfigured-route",
+            ownerId: "owner-unconfigured-route",
+            directoryInstanceEpoch: 1,
+            pid: 1234,
+            startedAt: 5678,
+            baseUrl: "http://127.0.0.1:9999",
+            configDigest: "config-unconfigured-route",
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route" }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: 1,
+      workspaces: [{
+        id: "ws_1",
+        name: "Workspace",
+        path: workspaceRoot,
+        baseUrl: "",
+      }],
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ directory: workspaceRoot, title: "Orchestrator route" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(orchestratorRequests).toContain("POST /workspace/ws_1/opencode/session");
+    const created = (await response.json()) as { conversationId: string; opencodeSessionId: string };
+    const submitResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+        "x-veslo-send-trace-id": "unconfigured-route-trace",
+      },
+      body: JSON.stringify({
+        clientMessageId: "msg-unconfigured-route",
+        origin: "session:normal",
+        target: {
+          conversationId: created.conversationId,
+          opencodeSessionId: created.opencodeSessionId,
+          directory: workspaceRoot,
+        },
+        draft: {
+          mode: "prompt",
+          text: "Use direct orchestrator routing",
+          parts: [{ type: "text", text: "Use direct orchestrator routing" }],
+        },
+      }),
+    });
+
+    expect(submitResponse.status).toBe(200);
+    expect(((await submitResponse.json()) as { status?: string }).status).toBe("submitted");
+    expect(orchestratorRequests).toContain("POST /workspace/ws_1/opencode/session/sess-unconfigured-route/prompt_async");
+    const traceEntries = (await readFile(traceFile, "utf8"))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(traceEntries).toContainEqual(expect.objectContaining({
+      event: "server:conversation-submit:evidence-attempt-start",
+      traceId: "unconfigured-route-trace",
+      executionRoute: "orchestrator",
+      attemptOrdinal: 1,
+    }));
+    expect(traceEntries.some((entry) => entry.event === "server:opencode-json:fallback-orchestrator")).toBe(false);
   });
 
   test("POST /workspace/:id/conversations/submit records one bounded transport replay", async () => {
@@ -5381,7 +5497,9 @@ describe("conversation routes", () => {
     setEnvVarForTest("VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_INITIAL_DELAY_MS", "10");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-lifecycle-workspace-"));
     tempDirs.push(workspaceRoot);
-    await useTempVesloDataDir();
+    const dataDir = await useTempVesloDataDir();
+    const traceFile = join(dataDir, "send-workflow-trace.server.ndjson");
+    setEnvVarForTest("VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE", traceFile);
 
     const events: string[] = [];
     let submitShouldFail = false;
@@ -5391,6 +5509,7 @@ describe("conversation routes", () => {
     let activeRunAvailable = false;
     let lifecycleStatus = "running";
     let lifecycleError: string | null = null;
+    let lifecycleFailureClassification: string | null = null;
     const orchestratorRequests: Array<{
       method: string;
       pathname: string;
@@ -5529,6 +5648,7 @@ describe("conversation routes", () => {
             runtimeReadyForSuccessor: ["completed", "failed", "aborted"].includes(lifecycleStatus),
             clientMessageId: "msg-lifecycle",
             error: lifecycleError,
+            failureClassification: lifecycleFailureClassification,
             activityKind: "model_retry",
             waitReason: "model_retry_no_output",
             lastUsefulProgressAt: 1_000,
@@ -5680,6 +5800,7 @@ describe("conversation routes", () => {
 
     lifecycleStatus = "failed";
     lifecycleError = `Bearer secret-token authorization=secret-authorization ${"detail ".repeat(100)}`;
+    lifecycleFailureClassification = "runtime_authorization_recovery_unavailable";
     const failedStatusResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
       { headers: { Authorization: "Bearer client-token" } },
@@ -5697,6 +5818,47 @@ describe("conversation routes", () => {
     expect(failedStatusPayload).not.toHaveProperty("directory");
     expect(failedStatusPayload).not.toHaveProperty("body");
     expect(failedStatusPayload).not.toHaveProperty("runtimeAuthorizationActorTokenHash");
+    const statusTraceEntries = (await readFile(traceFile, "utf8"))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const failedStatusTrace = [...statusTraceEntries].reverse().find(
+      (entry) =>
+        entry.event === "server:conversation-run-status:settle" &&
+        entry.status === "failed",
+    );
+    expect(failedStatusTrace).toMatchObject({
+      runId: "latest",
+      resolvedRunId: runIdFromRegister,
+      terminalErrorPresent: true,
+      failureReason: null,
+      failureClassification: "runtime_authorization_recovery_unavailable",
+    });
+    expect(JSON.stringify(failedStatusTrace)).not.toContain("secret-token");
+    expect(JSON.stringify(failedStatusTrace)).not.toContain("secret-authorization");
+
+    lifecycleError = "Managed AI gateway authorization is not available in this Veslo server runtime";
+    const authorizationFailureResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    expect(authorizationFailureResponse.status).toBe(200);
+    const authorizationFailureTrace = (await readFile(traceFile, "utf8"))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .reverse()
+      .find(
+        (entry) =>
+          entry.event === "server:conversation-run-status:settle" &&
+          entry.status === "failed",
+      );
+    expect(authorizationFailureTrace).toMatchObject({
+      resolvedRunId: runIdFromRegister,
+      terminalErrorPresent: true,
+      failureReason: "managed_ai_gateway_authorization_unavailable",
+      failureClassification: "runtime_authorization_recovery_unavailable",
+    });
 
     lifecycleError = JSON.stringify({
       authorization: "json-authorization-secret",

@@ -659,6 +659,25 @@ function sanitizeConversationRunError(error: string | null): string | null {
     .slice(0, 500);
 }
 
+function conversationRunFailureReason(error: string | null | undefined): string | null {
+  switch (error?.trim()) {
+    case "Managed AI gateway authorization actor is unavailable for this run":
+      return "managed_ai_gateway_authorization_actor_unavailable";
+    case "Managed AI gateway authorization is ambiguous for this workspace":
+      return "managed_ai_gateway_authorization_ambiguous";
+    case "Managed AI gateway authorization requires an organization-bound run":
+      return "managed_ai_gateway_authorization_org_binding_required";
+    case "Managed AI gateway authorization in this Veslo server runtime has expired":
+      return "managed_ai_gateway_authorization_expired";
+    case "Managed AI gateway authorization is not available in this Veslo server runtime":
+      return "managed_ai_gateway_authorization_unavailable";
+    case "Legacy AI gateway token is redacted or unavailable":
+      return "managed_ai_gateway_legacy_token_unavailable";
+    default:
+      return null;
+  }
+}
+
 function serializeConversationRunQueueStatus(
   item: ConversationRunQueueItem,
   queuePosition: number | null = null,
@@ -1686,8 +1705,12 @@ export function registerConversationSessionRoutes(
     recordSendWorkflowTrace("server", "server:conversation-run-status:settle", {
       ...statusTrace,
       outcome: "lifecycle-status",
+      resolvedRunId: status.runId,
       status: status.status,
       stale: status.stale,
+      terminalErrorPresent: Boolean(status.error?.trim()),
+      failureReason: conversationRunFailureReason(status.error),
+      failureClassification: status.failureClassification ?? null,
     });
     const { terminalization, terminalHandoff } = runProjectionDetails(durableSnapshot, status.runId);
     return jsonResponse({

@@ -80,7 +80,10 @@ function buildWorkspace(id: string, path: string, baseUrl: string): WorkspaceInf
   };
 }
 
-async function startVesloFixture(workspaces: WorkspaceInfo[]) {
+async function startVesloFixture(
+  workspaces: WorkspaceInfo[],
+  options: { orchestratorDaemonUrl?: string } = {},
+) {
   const server = startServer({
     host: "127.0.0.1",
     port: 0,
@@ -96,6 +99,7 @@ async function startVesloFixture(workspaces: WorkspaceInfo[]) {
     hostTokenSource: "cli",
     logFormat: "pretty",
     logRequests: false,
+    orchestratorDaemonUrl: options.orchestratorDaemonUrl,
     debugLogs: {
       enabled: false,
       ingestUrl: null,
@@ -109,6 +113,26 @@ async function startVesloFixture(workspaces: WorkspaceInfo[]) {
   runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
   return { server };
 }
+
+test("legacy /opencode proxy derives the first local workspace orchestrator mount", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-legacy-opencode-proxy-"));
+  tempDirs.push(workspaceRoot);
+  const mock = startMockOpencode();
+  const { server } = await startVesloFixture([
+    buildWorkspace("ws_legacy", workspaceRoot, ""),
+  ], { orchestratorDaemonUrl: mock.baseUrl });
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.port}/opencode/session/list`,
+    { headers: { Authorization: "Bearer client-token" } },
+  );
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    seenPath: "/workspace/ws_legacy/opencode/session/list",
+    seenDirectory: workspaceRoot,
+  });
+});
 
 async function makeTwoWorkspaces() {
   const wsA = await mkdtemp(join(tmpdir(), "veslo-ws-A-"));

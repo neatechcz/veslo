@@ -127,8 +127,16 @@ stale workspace registration can be distinguished from a different checkout
 without writing local paths into the trace. The server records these on
 OpenCode requests and registration; the orchestrator records the corresponding
 path ids at registration, workspace resolution, skill-view validation, and
-engine spawn. Terminal lifecycle entries also carry the bounded, credential-
-redacted `terminalError` and the engine owner tuple.
+engine spawn. Terminal lifecycle entries carry a safe `failureReason` when
+the failure is recognized, `terminalErrorPresent`, any typed
+`failureClassification`, and the engine owner tuple. They never include a
+free-form upstream error message. Direct OpenCode retries through the
+orchestrator likewise record safe `fallbackReason`, `fallbackErrorCode`, and
+`fallbackHttpStatus` fields instead of an upstream exception string.
+If a local workspace has no direct OpenCode base URL, server-owned background
+work routes to its registered orchestrator mount before making a request; that
+normal route is recorded as `server:opencode-json:route-orchestrator`, not as
+an error fallback.
 
 App-side send trace payloads are sanitized before they enter the webview
 buffer or the shared native workflow trace. Raw paths, URLs, prompts,
@@ -247,6 +255,11 @@ The server route shape should remain workspace-scoped:
 
 - `POST /workspace/:id/conversations`
 - `GET /workspace/:id/conversations`
+
+The legacy root `/opencode/*` proxy remains a single-workspace compatibility
+surface. It resolves that first local workspace through the same orchestrator
+base-URL resolver as workspace-scoped requests; an absent persisted direct URL
+must not make the proxy appear unavailable or return `opencode_unconfigured`.
 - `GET /workspace/:id/sessions/:sessionOrConversationId/transcript`
 - `POST /workspace/:id/conversations/:conversationId/runs`
 - `POST /workspace/:id/conversations/:conversationId/abort`

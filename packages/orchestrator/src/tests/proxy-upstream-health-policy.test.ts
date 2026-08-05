@@ -79,6 +79,17 @@ describe("proxy upstream shared-engine health policy", () => {
     expect(cliSource).toContain("nonFatalEngineError: healthPolicy.nonFatalEngineError");
     expect(cliSource).toContain("const expectedEventStreamClose = healthPolicy.eventStream && healthPolicy.nonFatalEngineError;");
     expect(cliSource).toContain('"orchestrator:event-stream:closed"');
+    expect(cliSource).toContain("engineOwnerId: engine.engineOwnerId");
+    expect(cliSource).toContain("enginePid: engine.pid");
+    expect(cliSource).toContain('traceRuntime("orchestrator:engine-generation-exit", payload)');
     expect(cliSource).toContain("usesSharedOpenCodeEngine(workspaceTopology) && healthPolicy.markSharedEngineUnhealthy");
+  });
+
+  test("records a safe engine-child exit correlation record", () => {
+    expect(cliSource).toContain('writeSendWorkflowTrace("orchestrator:engine-child-exit"');
+    expect(cliSource).toContain("engineOwnerId: options.engineOwnerId ?? null");
+    expect(cliSource).toContain('exitKind: code === 0 && signal === null ? "clean" : "unexpected"');
+    expect(cliSource).toContain("runtimeMs: Date.now() - childStartedAt");
+    expect(cliSource).toContain('exitTrigger: reason === "child_exit" ? "unplanned_child_exit" : "managed_stop"');
   });
 });
