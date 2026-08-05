@@ -181,4 +181,18 @@ describe("workspace-config-owner", () => {
       globalThis.fetch = previousFetch;
     }
   });
+
+  test("if-running reload treats a bare missing OpenCode instance as not running", async () => {
+    const workspace = await tempWorkspace();
+    workspace.baseUrl = "http://127.0.0.1:41004";
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "not_found" }), { status: 404 })) as unknown as typeof fetch;
+    try {
+      await expect(reloadOpencodeEngine(workspace, { ifRunning: true }))
+        .resolves.toEqual({ kind: "not-running" });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
 });

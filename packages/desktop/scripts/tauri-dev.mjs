@@ -19,9 +19,17 @@ const tauriCli = require.resolve("@tauri-apps/cli/tauri.js");
 const DEV_PILOT_IDENTIFIER = "com.neatech.veslo.dev";
 const MANUAL_PILOT_MODE = "manual-pilot";
 const LIVE_WEBDRIVER_MODE = "live-dev-webdriver";
+const ISOLATED_WEBDRIVER_MODE = "isolated-dev-webdriver";
 const devCliArgs = process.argv.slice(2);
 const liveWebDriverRequested = devCliArgs.includes("--webdriver");
-const tauriCliArgs = devCliArgs.filter((argument) => argument !== "--webdriver");
+const isolatedWebDriverRequested = devCliArgs.includes("--webdriver-isolated");
+const webdriverRequested = liveWebDriverRequested || isolatedWebDriverRequested;
+if (liveWebDriverRequested && isolatedWebDriverRequested) {
+  throw new Error("Choose either --webdriver or --webdriver-isolated, not both.");
+}
+const tauriCliArgs = devCliArgs.filter(
+  (argument) => argument !== "--webdriver" && argument !== "--webdriver-isolated",
+);
 
 loadDotEnv({ cwd: repoRoot });
 
@@ -39,6 +47,30 @@ function assertLiveWebDriverEnvironment(env = process.env) {
     throw new Error(
       `Refusing live WebDriver mode with E2E/profile overrides: ${unsafeOverrides.join(", ")}. `
       + "Unset them so Veslo uses the normal signed-in development profile.",
+    );
+  }
+}
+
+function assertIsolatedWebDriverEnvironment(env = process.env) {
+  if (!isolatedWebDriverRequested) return;
+
+  const required = [
+    "VESLO_WEBDRIVER_ISOLATED_PROFILE",
+    "OPENCODE_HOME",
+    "VESLO_DATA_DIR",
+    "VESLO_APP_CONFIG_DIR",
+    "VESLO_APP_DATA_DIR",
+    "VESLO_APP_LOCAL_DATA_DIR",
+    "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+    "HOME",
+    "USERPROFILE",
+  ];
+  if (process.platform === "win32") required.push("WEBVIEW2_USER_DATA_FOLDER");
+  const missing = required.filter((name) => !env[name]?.trim());
+  if (env.VESLO_WEBDRIVER_ISOLATED_PROFILE?.trim() !== "1" || missing.length > 0) {
+    throw new Error(
+      "Refusing isolated WebDriver mode without the harness-owned profile contract: "
+      + `missing ${missing.join(", ") || "VESLO_WEBDRIVER_ISOLATED_PROFILE=1"}.`,
     );
   }
 }
@@ -65,6 +97,7 @@ async function allocateLoopbackPort() {
 }
 
 assertLiveWebDriverEnvironment();
+assertIsolatedWebDriverEnvironment();
 
 const readPort = () => {
   const value = Number.parseInt(process.env.PORT ?? "", 10);
@@ -299,22 +332,59 @@ function createManualPilotRuntime(baseEnv) {
   };
 }
 
-function createLiveWebDriverRuntime(baseEnv, pilotRuntime, webdriverPort) {
+function createWebDriverRuntime(baseEnv, pilotRuntime, webdriverPort) {
   const configuredRunDir = baseEnv.VESLO_DEV_RUNTIME_DIR?.trim() || baseEnv.VESLO_MANUAL_RUNTIME_DIR?.trim();
   const runDir = pilotRuntime?.runDir || resolve(configuredRunDir || defaultManualRuntimeDir());
   const logDir = pilotRuntime?.logDir || resolve(baseEnv.TAURI_PILOT_LOG_DIR?.trim() || runDir);
   ensureDirectory(runDir);
   ensureDirectory(logDir);
 
+  // Native WebDriver is a real-desktop test path, not a reduced observability
+  // mode.  It deliberately does not start Pilot, but still needs the same
+  // per-process traces to explain a failure before the browser can render it.
+  const runtimeDiagnostics = valueOrDefault(baseEnv, "VESLO_RUNTIME_DIAGNOSTICS", "1");
+  const viteRuntimeDiagnostics = valueOrDefault(baseEnv, "VITE_VESLO_RUNTIME_DIAGNOSTICS", runtimeDiagnostics);
+  const runtimeTraceFile = pilotRuntime?.runtimeTraceFile ??
+    valueOrDefault(baseEnv, "VESLO_RUNTIME_TRACE_FILE", join(logDir, "runtime-trace.ndjson"));
+  const sendWorkflowTraceFile = pilotRuntime?.sendWorkflowTraceFile ??
+    valueOrDefault(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_FILE", join(logDir, "send-workflow-trace.ndjson"));
+  const sendWorkflowTraceUiFile = pilotRuntime?.sendWorkflowTraceUiFile ??
+    valueOrDerivedTrace(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_UI_FILE", sendWorkflowTraceFile, "ui");
+  const sendWorkflowTraceServerFile = pilotRuntime?.sendWorkflowTraceServerFile ??
+    valueOrDerivedTrace(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE", sendWorkflowTraceFile, "server");
+  const sendWorkflowTraceOrchestratorFile = pilotRuntime?.sendWorkflowTraceOrchestratorFile ??
+    valueOrDerivedTrace(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE", sendWorkflowTraceFile, "orchestrator");
+  const opencodeHealthDiagFile = pilotRuntime?.opencodeHealthDiagFile ??
+    valueOrDefault(baseEnv, "VESLO_OPENCODE_HEALTH_DIAG_FILE", join(logDir, "opencode-health.ndjson"));
+
   return {
-    mode: LIVE_WEBDRIVER_MODE,
+    mode: isolatedWebDriverRequested ? ISOLATED_WEBDRIVER_MODE : LIVE_WEBDRIVER_MODE,
     endpoint: `http://127.0.0.1:${webdriverPort}`,
     port: webdriverPort,
     descriptorPath: join(logDir, "native-webdriver.json"),
+    runtimeTraceFile,
+    sendWorkflowTraceFile,
+    sendWorkflowTraceUiFile,
+    sendWorkflowTraceServerFile,
+    sendWorkflowTraceOrchestratorFile,
+    opencodeHealthDiagFile,
     env: {
-      VESLO_DEV_RUNTIME_MODE: LIVE_WEBDRIVER_MODE,
+      VESLO_DEV_RUNTIME_MODE: isolatedWebDriverRequested ? ISOLATED_WEBDRIVER_MODE : LIVE_WEBDRIVER_MODE,
       TAURI_WEBDRIVER_PORT: String(webdriverPort),
       VESLO_WEBDRIVER_DESCRIPTOR_PATH: join(logDir, "native-webdriver.json"),
+      VESLO_RUNTIME_DIAGNOSTICS: runtimeDiagnostics,
+      VITE_VESLO_RUNTIME_DIAGNOSTICS: viteRuntimeDiagnostics,
+      VESLO_RUNTIME_TRACE: valueOrDefault(baseEnv, "VESLO_RUNTIME_TRACE", "1"),
+      VESLO_RUNTIME_TRACE_FILE: runtimeTraceFile,
+      VESLO_SEND_WORKFLOW_TRACE: valueOrDefault(baseEnv, "VESLO_SEND_WORKFLOW_TRACE", "1"),
+      VESLO_SEND_WORKFLOW_TRACE_FILE: sendWorkflowTraceFile,
+      VESLO_SEND_WORKFLOW_TRACE_UI_FILE: sendWorkflowTraceUiFile,
+      VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE: sendWorkflowTraceServerFile,
+      VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE: sendWorkflowTraceOrchestratorFile,
+      VITE_VESLO_SEND_WORKFLOW_TRACE: valueOrDefault(baseEnv, "VITE_VESLO_SEND_WORKFLOW_TRACE", "1"),
+      VITE_VESLO_SESSION_UI_MUTATION_TRACE: valueOrDefault(baseEnv, "VITE_VESLO_SESSION_UI_MUTATION_TRACE", "1"),
+      VESLO_OPENCODE_HEALTH_DIAG: valueOrDefault(baseEnv, "VESLO_OPENCODE_HEALTH_DIAG", "1"),
+      VESLO_OPENCODE_HEALTH_DIAG_FILE: opencodeHealthDiagFile,
     },
   };
 }
@@ -334,8 +404,10 @@ function writeDevRuntimeInfo(pilotRuntime, webdriverRuntime, env, args) {
     dataDir,
     serverDir,
     profile: {
-      kind: webdriverRuntime ? "existing-development" : "development",
-      isolated: false,
+      kind: webdriverRuntime
+        ? (webdriverRuntime.mode === ISOLATED_WEBDRIVER_MODE ? "isolated-test" : "existing-development")
+        : "development",
+      isolated: webdriverRuntime?.mode === ISOLATED_WEBDRIVER_MODE,
       dataDir,
       authSnapshot: false,
     },
@@ -364,20 +436,20 @@ function writeDevRuntimeInfo(pilotRuntime, webdriverRuntime, env, args) {
     } : null,
     traces: {
       logDir,
-      runtimeTraceFile: pilotRuntime?.runtimeTraceFile ?? null,
-      sendWorkflowTraceFile: pilotRuntime?.sendWorkflowTraceFile ?? null,
+      runtimeTraceFile: runtime?.runtimeTraceFile ?? null,
+      sendWorkflowTraceFile: runtime?.sendWorkflowTraceFile ?? null,
       sendWorkflowTraceMirrorFile: pilotRuntime?.sendWorkflowTraceMirrorFile ?? null,
       sendWorkflowTraceFiles: {
-        ui: pilotRuntime?.sendWorkflowTraceUiFile ?? null,
-        server: pilotRuntime?.sendWorkflowTraceServerFile ?? null,
-        orchestrator: pilotRuntime?.sendWorkflowTraceOrchestratorFile ?? null,
+        ui: runtime?.sendWorkflowTraceUiFile ?? null,
+        server: runtime?.sendWorkflowTraceServerFile ?? null,
+        orchestrator: runtime?.sendWorkflowTraceOrchestratorFile ?? null,
       },
       sendWorkflowTraceMirrorFiles: {
         ui: pilotRuntime?.sendWorkflowTraceUiMirrorFile ?? null,
         server: pilotRuntime?.sendWorkflowTraceServerMirrorFile ?? null,
         orchestrator: pilotRuntime?.sendWorkflowTraceOrchestratorMirrorFile ?? null,
       },
-      opencodeHealthDiagFile: pilotRuntime?.opencodeHealthDiagFile ?? null,
+      opencodeHealthDiagFile: runtime?.opencodeHealthDiagFile ?? null,
     },
     env: {
       VESLO_DATA_DIR: env.VESLO_DATA_DIR,
@@ -609,9 +681,11 @@ const baseEnv = {
   VESLO_SERVER_DEV_WATCH: process.env.VESLO_SERVER_DEV_WATCH?.trim() || "1",
   VESLO_SERVER_DEV_DIR: process.env.VESLO_SERVER_DEV_DIR?.trim() || serverDir,
 };
-const manualPilotRuntime = shouldEnableManualPilotRuntime(baseEnv) ? createManualPilotRuntime(baseEnv) : null;
-const liveWebDriverRuntime = liveWebDriverRequested
-  ? createLiveWebDriverRuntime(baseEnv, manualPilotRuntime, await allocateLoopbackPort())
+const manualPilotRuntime = !webdriverRequested && shouldEnableManualPilotRuntime(baseEnv)
+  ? createManualPilotRuntime(baseEnv)
+  : null;
+const liveWebDriverRuntime = webdriverRequested
+  ? createWebDriverRuntime(baseEnv, manualPilotRuntime, await allocateLoopbackPort())
   : null;
 const env = {
   ...baseEnv,
@@ -648,11 +722,16 @@ if (manualPilotRuntime || liveWebDriverRuntime) {
   console.info("[veslo:dev-runtime] mode=standard; set VESLO_TAURI_PILOT=1 to enable manual Pilot diagnostics.");
 }
 
+const captureChildOutput = env.VESLO_DEV_CAPTURE_CHILD_OUTPUT?.trim() === "1";
 const child = spawn(process.execPath, [tauriCli, ...args], {
   cwd: desktopDir,
   env,
-  stdio: "inherit",
+  stdio: captureChildOutput ? ["ignore", "pipe", "pipe"] : "inherit",
 });
+if (captureChildOutput) {
+  child.stdout?.on("data", (chunk) => process.stdout.write(chunk));
+  child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
+}
 
 let exiting = false;
 

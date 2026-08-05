@@ -10,6 +10,7 @@ import { VesloServerError } from "../../lib/veslo-server.js";
 import { VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE } from "../../lib/opencode.js";
 import type { ModelRef } from "../../types.js";
 import {
+  createManagedAiRuntimeAuthorizationGenerationRecovery,
   createManagedAiRuntimeConfigSync,
   type ManagedAiRuntimeConfigSyncOptions,
   type ManagedAiRuntimeConfigVesloClient,
@@ -979,6 +980,65 @@ test("server-owned send freshness reloads after a patch before it verifies", asy
   assert.equal(client.patched[0]?.workspaceId, "server-resolved-exact");
   assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "server-resolved-exact", ifIdle: true }]);
   assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+});
+
+test("a changed local server instance re-primes managed AI authorization even without a disconnect", async () => {
+  let status = "connected" as const;
+  let instanceId = "worker-a";
+  let accessCalls = 0;
+  const effects: Array<() => void> = [];
+  let cacheClears = 0;
+  createManagedAiRuntimeAuthorizationGenerationRecovery({
+    effect: (fn) => effects.push(fn),
+    isTauriRuntime: () => true,
+    vesloServerStatus: () => status,
+    vesloServerInstanceId: () => instanceId,
+    clearPrimeCache: () => { cacheClears += 1; },
+    ensureAuthorization: async () => {
+      accessCalls += 1;
+      return true;
+    },
+    recordTrace: () => undefined,
+  });
+
+  effects[0]?.();
+  instanceId = "worker-b";
+  effects[0]?.();
+  await Promise.resolve();
+
+  assert.equal(status, "connected");
+  assert.equal(accessCalls, 1);
+  assert.equal(cacheClears, 1);
+});
+
+test("a server reconnect re-primes managed AI authorization after a visible disconnect", async () => {
+  let status = "connected" as "connected" | "disconnected";
+  let instanceId = "worker-a";
+  let accessCalls = 0;
+  const effects: Array<() => void> = [];
+  createManagedAiRuntimeAuthorizationGenerationRecovery({
+    effect: (fn) => effects.push(fn),
+    isTauriRuntime: () => true,
+    vesloServerStatus: () => status,
+    vesloServerInstanceId: () => instanceId,
+    clearPrimeCache: () => undefined,
+    ensureAuthorization: async () => {
+      accessCalls += 1;
+      return true;
+    },
+    recordTrace: () => undefined,
+  });
+
+  effects[0]?.();
+  status = "disconnected";
+  effects[0]?.();
+  instanceId = "worker-b";
+  effects[0]?.();
+  status = "connected";
+  effects[0]?.();
+  await Promise.resolve();
+
+  assert.equal(accessCalls, 1);
 });
 
 test("server send reuses the exact verified intent without rereading local config", async () => {

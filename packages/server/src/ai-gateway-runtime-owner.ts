@@ -18,6 +18,9 @@ export type ActiveAiGatewayRunContext = {
   opencodeSessionId: string;
   clientMessageId: string | null;
   origin: string | null;
+  /** Present only for a durable recovery context and never contains a bearer. */
+  directory?: string | null;
+  recoveryAuthorizationPending?: boolean;
   runtimeAuthorizationActorTokenHash: string | null;
   runtimeAuthorizationOrgId: string | null;
 };
@@ -170,6 +173,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   const activeProxyRequests = new Map<string, ActiveAiGatewayProxyRequest>();
   const runtimeAuthorizationByActorToken = new Map<string, Map<string, AiGatewayRuntimeAuthorizationEntry>>();
   const runtimeAuthorizationOrgByActorWorkspace = new Map<string, Map<string, string>>();
+  const recoveryAuthorizationByRun = new Map<string, "pending" | "authorized" | "terminalizing">();
   const managedAiModelCapabilityDescriptors = new Map<string, CachedManagedAiModelCapabilityDescriptor>();
 
   const cloneManagedAiModelCapabilityDescriptor = (
@@ -245,6 +249,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       origin: context.origin,
       runtimeAuthorizationActorTokenHashPresent: Boolean(context.runtimeAuthorizationActorTokenHash),
       runtimeAuthorizationOrgIdPresent: Boolean(context.runtimeAuthorizationOrgId),
+      recoveryAuthorizationPending: isRecoveryAuthorizationPending(context),
     };
   };
 
@@ -410,6 +415,21 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       const bindings = runtimeAuthorizationOrgByActorWorkspace.get(key) ?? new Map<string, string>();
       bindings.set(workspaceId, orgId ?? "");
       runtimeAuthorizationOrgByActorWorkspace.set(key, bindings);
+    }
+    for (const context of listActiveRunContexts()) {
+      if (
+        context.workspaceId === workspaceId &&
+        context.runtimeAuthorizationActorTokenHash === key &&
+        (context.runtimeAuthorizationOrgId ?? "") === (orgId ?? "") &&
+        recoveryAuthorizationByRun.get(recoveryAuthorizationKey(context)) === "pending"
+      ) {
+        recoveryAuthorizationByRun.set(recoveryAuthorizationKey(context), "authorized");
+        recordTrace("server:ai-gateway-recovery:authorization-restored", {
+          workspaceId: context.workspaceId,
+          conversationId: context.conversationId,
+          runId: context.runId,
+        });
+      }
     }
   }
 
@@ -607,6 +627,9 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     const at = now();
     pruneActiveRuns(at);
     const context: ActiveAiGatewayRunContext = { ...input, at };
+    if (input.recoveryAuthorizationPending === true) {
+      recoveryAuthorizationByRun.set(recoveryAuthorizationKey(context), "pending");
+    }
     const sessionId = normalizeAiGatewaySessionId(input.opencodeSessionId);
     if (sessionId) {
       const items = activeRunsBySession.get(sessionId) ?? [];
@@ -638,6 +661,9 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   function unregisterActiveRun(
     input: Pick<ActiveAiGatewayRunContext, "workspaceId" | "conversationId" | "runId" | "opencodeSessionId">,
   ): void {
+    for (const context of listActiveRunContexts()) {
+      if (activeRunMatches(context, input)) recoveryAuthorizationByRun.delete(recoveryAuthorizationKey(context));
+    }
     const sessionId = normalizeAiGatewaySessionId(input.opencodeSessionId);
     if (sessionId) {
       const next = (activeRunsBySession.get(sessionId) ?? [])
@@ -819,6 +845,48 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     return providerStartObservation(input).providerHitCount > 0;
   }
 
+  function recoveryAuthorizationKey(
+    context: Pick<ActiveAiGatewayRunContext, "workspaceId" | "conversationId" | "runId" | "opencodeSessionId">,
+  ): string {
+    return [context.workspaceId, context.conversationId, context.runId, context.opencodeSessionId].join("\0");
+  }
+
+  function isRecoveryAuthorizationPending(context: ActiveAiGatewayRunContext): boolean {
+    return recoveryAuthorizationByRun.get(recoveryAuthorizationKey(context)) === "pending";
+  }
+
+  function beginRecoveryAuthorizationTerminalization(context: ActiveAiGatewayRunContext): boolean {
+    const key = recoveryAuthorizationKey(context);
+    if (recoveryAuthorizationByRun.get(key) !== "pending") return false;
+    recoveryAuthorizationByRun.set(key, "terminalizing");
+    return true;
+  }
+
+  async function waitForRuntimeAuthorization(input: {
+    actorTokenHash?: string | null;
+    orgId?: string | null;
+    recoveryContext?: ActiveAiGatewayRunContext | null;
+    timeoutMs: number;
+  }): Promise<boolean> {
+    const actorTokenHash = input.actorTokenHash?.trim() ?? "";
+    if (!actorTokenHash) return false;
+    const orgId = input.orgId?.trim() ?? "";
+    const recoveryKey = input.recoveryContext
+      ? recoveryAuthorizationKey(input.recoveryContext)
+      : null;
+    const deadline = now() + Math.max(0, input.timeoutMs);
+    do {
+      if (
+        (!recoveryKey || recoveryAuthorizationByRun.get(recoveryKey) === "authorized") &&
+        runtimeAuthorizationRemainingMs({ actorTokenHash, orgId }) !== null
+      ) return true;
+      if (recoveryKey && recoveryAuthorizationByRun.get(recoveryKey) === "terminalizing") return false;
+      const remaining = deadline - now();
+      if (remaining <= 0) return false;
+      await sleep(Math.min(100, remaining));
+    } while (true);
+  }
+
   function providerStartObservation(input: {
     sessionId: string;
     workspaceId: string;
@@ -952,16 +1020,19 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     activeProxyRequests.clear();
     runtimeAuthorizationByActorToken.clear();
     runtimeAuthorizationOrgByActorWorkspace.clear();
+    recoveryAuthorizationByRun.clear();
     clearManagedAiModelCapabilityDescriptors();
   }
 
   return {
     abortActiveProxyRequests,
+    beginRecoveryAuthorizationTerminalization,
     buildResolutionDiagnostics,
     cacheManagedAiModelCapabilityDescriptor,
     clearRuntimeAuthorization,
     getManagedAiModelCapabilityDescriptor,
     hasProviderHitAfter,
+    isRecoveryAuthorizationPending,
     listActiveRunContexts,
     recordSessionHit,
     registerActiveProxyRequest,
@@ -973,6 +1044,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     resolveProviderAuthorization,
     resolveSession,
     syncRuntimeAuthorizationFromAccessBundle,
+    waitForRuntimeAuthorization,
     unregisterActiveProxyRequest,
     unregisterActiveRun,
     waitForProviderStart,

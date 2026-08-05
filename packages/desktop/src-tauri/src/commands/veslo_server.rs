@@ -8,12 +8,16 @@ use crate::types::{
     VesloServerInfo, VesloServerLifecycleReason, VesloServerLifecycleStatus, WorkspaceState,
     WorkspaceType,
 };
-#[cfg(any(test, all(debug_assertions, feature = "e2e")))]
+#[cfg(any(
+    test,
+    all(debug_assertions, feature = "e2e"),
+    all(debug_assertions, feature = "webdriver")
+))]
 use crate::utils::truncate_output;
 use crate::veslo_server::manager::{VesloServerManager, VesloServerState};
-use crate::veslo_server::start_veslo_server;
 #[cfg(test)]
 use crate::veslo_server::HealthIdentity;
+use crate::veslo_server::{start_veslo_server, VesloServerStartInitiator};
 use crate::workspace::state::load_workspace_state;
 
 const ENGINE_URL_REFRESH_TTL: Duration = Duration::from_secs(120);
@@ -306,7 +310,7 @@ pub fn veslo_server_info(_app: AppHandle, manager: State<VesloServerManager>) ->
     sanitized
 }
 
-#[cfg(all(debug_assertions, feature = "e2e"))]
+#[cfg(all(debug_assertions, any(feature = "e2e", feature = "webdriver")))]
 #[tauri::command]
 pub fn veslo_server_e2e_kill_child(
     manager: State<VesloServerManager>,
@@ -435,6 +439,7 @@ pub fn rebind_veslo_server_control_plane(
         opencode_router_health_port,
         lifecycle_config.as_ref().map(|(url, _)| url.as_str()),
         lifecycle_config.as_ref().map(|(_, token)| token.as_str()),
+        VesloServerStartInitiator::ControlPlaneRebind,
         None,
     )
 }

@@ -1,4 +1,4 @@
-import { connectLiveWebDriver } from "../attach-smoke.mjs";
+import { connectIsolatedWebDriver, connectLiveWebDriver } from "../attach-smoke.mjs";
 import { beginConsoleCapture, collectDevConsoleLogs, writeScenarioArtifact } from "./artifacts.mjs";
 import { expectNoVisibleRuntimeError, expectRunCompleted } from "./assertions.mjs";
 import { assertMutationAuthorized } from "./safety.mjs";
@@ -7,7 +7,7 @@ import { createScenarioTimeline } from "./timeline.mjs";
 import { collectSendWorkflowTrace, collectTranscriptTraceSummary } from "./transcript-trace-summary.mjs";
 import { collectDiagnosticLogManifest } from "./diagnostic-log-manifest.mjs";
 
-export async function runLiveScenario({ scenarioName, runtimeInfoPath, mutations = false, execute, env = process.env }) {
+async function runWebDriverScenario({ scenarioName, runtimeInfoPath, mutations = false, execute, env = process.env, connect }) {
   if (mutations) assertMutationAuthorized(env);
   const startedAt = new Date().toISOString();
   let connection;
@@ -22,7 +22,7 @@ export async function runLiveScenario({ scenarioName, runtimeInfoPath, mutations
     return state;
   };
   try {
-    connection = await connectLiveWebDriver(runtimeInfoPath, { env });
+    connection = await connect(runtimeInfoPath, { env });
     await beginConsoleCapture(connection.browser);
     await snapshot("initial");
     result = await execute({
@@ -72,4 +72,12 @@ export async function runLiveScenario({ scenarioName, runtimeInfoPath, mutations
     throw thrown;
   }
   return { ...result, artifactPath };
+}
+
+export async function runLiveScenario(input) {
+  return runWebDriverScenario({ ...input, connect: connectLiveWebDriver });
+}
+
+export async function runIsolatedScenario(input) {
+  return runWebDriverScenario({ ...input, connect: connectIsolatedWebDriver });
 }

@@ -70,6 +70,9 @@ export type RunLifecycleOwner = {
     clientMessageId?: string | null;
     opencodeMessageId?: string | null;
     origin?: string | null;
+    expectsAiGatewayStart?: boolean;
+    runtimeAuthorizationActorTokenHash?: string | null;
+    runtimeAuthorizationOrgId?: string | null;
     directory: string;
     kind: RunKind;
   } & Partial<RunEngineOwner>): Promise<RunRecord>;
@@ -377,6 +380,12 @@ export function createRunRegistry(deps: {
       const clientMessageId = normalizeNullableText(input.clientMessageId);
       const opencodeMessageId = normalizeNullableText(input.opencodeMessageId);
       const origin = normalizeNullableText(input.origin);
+      const expectsAiGatewayStart = input.expectsAiGatewayStart === true;
+      const runtimeAuthorizationActorTokenHash = normalizeNullableText(input.runtimeAuthorizationActorTokenHash);
+      const runtimeAuthorizationOrgId = normalizeNullableText(input.runtimeAuthorizationOrgId);
+      if (expectsAiGatewayStart && (!runtimeAuthorizationActorTokenHash || !runtimeAuthorizationOrgId)) {
+        throw new Error("managed gateway runs require authorization actor and organization bindings");
+      }
       const directory = normalizeText(input.directory);
       if (!workspaceId || !conversationId || !runId || !engineSessionId || !directory) {
         throw new Error("workspaceId, conversationId, runId, engineSessionId and directory are required");
@@ -417,6 +426,9 @@ export function createRunRegistry(deps: {
         clientMessageId,
         opencodeMessageId,
         origin,
+        expectsAiGatewayStart,
+        runtimeAuthorizationActorTokenHash,
+        runtimeAuthorizationOrgId,
         directory,
         kind: input.kind,
         status: "running",

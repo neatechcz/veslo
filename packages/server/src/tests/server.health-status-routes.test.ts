@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createServerLogger } from "../server.js";
 import { matchRoute, type Route } from "../routing.js";
 import { registerHealthStatusRoutes, resolveRuntimeChainPayload } from "../routes/health.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
@@ -50,6 +51,26 @@ function fetchSequence(responses: Array<Response | Error>): typeof fetch {
 }
 
 describe("Health and status routes", () => {
+  test("structured server logs carry the native worker generation", () => {
+    const originalWrite = process.stdout.write;
+    const writes: string[] = [];
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      createServerLogger(config({ instanceId: "worker-generation-test" })).log("info", "worker trace");
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    expect(writes).toHaveLength(1);
+    const record = JSON.parse(writes[0] ?? "{}") as {
+      attributes?: Record<string, unknown>;
+    };
+    expect(record.attributes?.["worker.generation"]).toBe("worker-generation-test");
+  });
+
   test("registers health, toy UI, status, and capability endpoints", () => {
     const routes: Route[] = [];
     const dependencies = {} as Parameters<typeof registerHealthStatusRoutes>[1];

@@ -496,6 +496,26 @@ describe("run registry", () => {
     expect(terminalized.map((item) => [item.runId, item.status])).toEqual([["run-a", "failed"]]);
   });
 
+  test("managed gateway admission requires both durable authorization identities", async () => {
+    const { registry } = createRegistry(() => ({ active: true }));
+
+    await expect(registry.register({
+      ...input,
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: "actor-a",
+    })).rejects.toThrow("actor and organization");
+    await expect(registry.register({
+      ...input,
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: "actor-a",
+      runtimeAuthorizationOrgId: "org-a",
+    })).resolves.toMatchObject({
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: "actor-a",
+      runtimeAuthorizationOrgId: "org-a",
+    });
+  });
+
   test("attachEngineOwner ignores terminal runs", async () => {
     const { registry } = createRegistry(() => ({ active: false, terminalCandidate: true, progressSignature: "terminal" }));
     await registry.register(input);

@@ -179,6 +179,7 @@ export type ManagedAiRuntimeConfigSyncOptions = {
   gatewayVesloServerClient: Accessor<ManagedAiRuntimeGatewayClient | null>;
   vesloServerClient: Accessor<ManagedAiRuntimeConfigVesloClient | null>;
   vesloServerStatus: Accessor<VesloServerStatus>;
+  vesloServerInstanceId?: Accessor<string | null | undefined>;
   vesloServerWorkspaceId: Accessor<string | null | undefined>;
   managedAiConfigAuthority: Accessor<ManagedAiConfigAuthority>;
   resolvedVesloCapabilities: Accessor<ManagedAiRuntimeConfigCapabilities>;
@@ -265,6 +266,95 @@ export type ManagedAiRuntimeConfigSync = {
   clearManagedConfigTracking: () => void;
   clearManagedAiRuntimeAuthorizationPrimeCache: () => void;
 };
+
+export type ManagedAiRuntimeAuthorizationGenerationRecoveryOptions = {
+  effect?: (fn: () => void) => void;
+  isTauriRuntime: Accessor<boolean>;
+  vesloServerStatus: Accessor<VesloServerStatus>;
+  vesloServerInstanceId: Accessor<string | null | undefined>;
+  readWorkerGeneration?: () => Promise<string | null | undefined>;
+  clearPrimeCache: () => void;
+  ensureAuthorization: () => Promise<boolean>;
+  recordTrace: (event: string, payload: Record<string, unknown>) => void;
+};
+
+/**
+ * Re-prime only after a replacement generation is both observed and reachable.
+ * A native state event can precede the first healthy poll, so remembering only
+ * the last observed generation would otherwise lose the required re-prime.
+ */
+export function createManagedAiRuntimeAuthorizationGenerationRecovery(
+  options: ManagedAiRuntimeAuthorizationGenerationRecoveryOptions,
+): void {
+  const effect = options.effect ?? ((fn: () => void) => createEffect(fn));
+  let lastObservedGeneration: string | null = null;
+  let pendingGeneration: string | null = null;
+  let dispatchedGeneration: string | null = null;
+
+  const observeGeneration = (workerGeneration: string | null, connected: boolean) => {
+    if (!workerGeneration) return;
+
+    const previousGeneration = lastObservedGeneration;
+    if (previousGeneration && previousGeneration !== workerGeneration) {
+      pendingGeneration = workerGeneration;
+      dispatchedGeneration = null;
+    }
+    lastObservedGeneration = workerGeneration;
+
+    if (
+      !pendingGeneration ||
+      pendingGeneration !== workerGeneration ||
+      dispatchedGeneration === workerGeneration ||
+      !connected ||
+      !options.isTauriRuntime()
+    ) return;
+
+    dispatchedGeneration = workerGeneration;
+    options.recordTrace("managed-ai-runtime-auth-prime:generation-observed", {
+      previousWorkerGeneration: previousGeneration,
+      workerGeneration,
+      connected,
+    });
+    options.clearPrimeCache();
+    void options.ensureAuthorization();
+  };
+
+  effect(() => {
+    observeGeneration(
+      options.vesloServerInstanceId()?.trim() || null,
+      options.vesloServerStatus() === "connected",
+    );
+  });
+
+  const readWorkerGeneration = options.readWorkerGeneration;
+  if (!readWorkerGeneration || typeof window === "undefined") return;
+
+  // The native event remains the fast path. Polling its in-process descriptor
+  // is a bounded fallback for webviews that miss the replacement event while
+  // the sidecar itself is being restarted; it never reaches the network.
+  let active = true;
+  let polling = false;
+  const poll = async () => {
+    if (!active || polling || !options.isTauriRuntime()) return;
+    polling = true;
+    try {
+      const generation = (await readWorkerGeneration())?.trim() || null;
+      if (active) {
+        observeGeneration(generation, options.vesloServerStatus() === "connected");
+      }
+    } catch {
+      // Connection ownership retains its existing status and retry policy.
+    } finally {
+      polling = false;
+    }
+  };
+  void poll();
+  const interval = window.setInterval(() => void poll(), 3_000);
+  onCleanup(() => {
+    active = false;
+    window.clearInterval(interval);
+  });
+}
 
 type ManagedAiConfigSyncReason = "active-workspace" | "runtime-start" | "send-preflight";
 

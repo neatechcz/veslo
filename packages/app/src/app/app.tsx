@@ -37,7 +37,11 @@ import { createWorkspaceSessionSelection } from "./context/workspace-session-sel
 import type { WorkspaceBusyMap } from "./context/workspace-debug";
 import { createWorkspaceSendTarget, type SendTargetWorkspaceScope } from "./context/workspace-send-target";
 import { createManagedAiAccessStore, type ManagedAiAccessStore } from "./context/managed-ai-access-store";
-import { createManagedAiRuntimeConfigSync, type ManagedAiRuntimeConfigSync } from "./context/managed-ai-runtime-config";
+import {
+  createManagedAiRuntimeAuthorizationGenerationRecovery,
+  createManagedAiRuntimeConfigSync,
+  type ManagedAiRuntimeConfigSync,
+} from "./context/managed-ai-runtime-config";
 import { createConversationService } from "./context/conversation-service";
 import { createLiveTranscriptReadPolicy } from "./context/live-transcript-read-policy";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
@@ -445,6 +449,7 @@ export default function App() {
     vesloServerUrl,
     vesloServerStatus,
     setVesloServerStatus,
+    vesloServerInstanceId,
     vesloServerConnectionSnapshot,
     vesloServerCapabilities,
     setVesloServerCapabilitiesStable,
@@ -2487,6 +2492,7 @@ export default function App() {
     gatewayVesloServerClient,
     vesloServerClient,
     vesloServerStatus,
+    vesloServerInstanceId,
     vesloServerWorkspaceId,
     managedAiConfigAuthority,
     resolvedVesloCapabilities: () => resolvedVesloCapabilities(),
@@ -2534,7 +2540,17 @@ export default function App() {
     syncManagedAiRuntimeConfigForSend,
     prepareManagedAiRuntimeConfigForEngineStart,
     managedAiServerReloadPresentation,
+    clearManagedAiRuntimeAuthorizationPrimeCache,
   } = managedAiRuntimeConfig;
+  createManagedAiRuntimeAuthorizationGenerationRecovery({
+    isTauriRuntime,
+    vesloServerStatus,
+    vesloServerInstanceId,
+    readWorkerGeneration: async () => (await vesloServerInfo())?.instanceId ?? null,
+    clearPrimeCache: clearManagedAiRuntimeAuthorizationPrimeCache,
+    ensureAuthorization: ensureManagedAiRuntimeAuthorizationForSend,
+    recordTrace: recordManagedAiWorkflowTrace,
+  });
   lateManagedAiRuntimeConfig.bind(managedAiRuntimeConfig);
 
   const sendRuntimeReadiness = createSendRuntimeReadiness<Client>({

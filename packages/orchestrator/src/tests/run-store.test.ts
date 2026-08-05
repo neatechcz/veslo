@@ -1,7 +1,7 @@
-import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { createRunStore, type RunRecord } from "../run-store.js";
@@ -254,6 +254,153 @@ describe("run store", () => {
     })).toBeNull();
   });
 
+  test("persists and lists only active managed gateway recovery descriptors", async () => {
+    const store = await createTempStore();
+    store.insert(record({
+      runId: "run-managed",
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      runtimeAuthorizationOrgId: "org-a",
+    }));
+    store.insert(record({
+      runId: "run-unmanaged",
+      conversationId: "conv-unmanaged",
+      engineSessionId: "sess-unmanaged",
+    }));
+
+    expect(store.activeManagedGatewayRuns?.("ws-a")).toMatchObject([{
+      runId: "run-managed",
+      engineSessionId: "sess-a",
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      runtimeAuthorizationOrgId: "org-a",
+      gatewayRecoveryExpiresAt: expect.any(Number),
+      gatewayRecoveryState: "active",
+    }]);
+
+    store.update("ws-a", "run-managed", { status: "failed", completedAt: 2_000 });
+    expect(store.activeManagedGatewayRuns?.("ws-a")).toEqual([]);
+  });
+
+  test("keeps the managed gateway descriptor lifecycle and owner tuple atomic with the run", async () => {
+    const dbPath = await createTempDbPath();
+    const store = createRunStore({ dbPath });
+    store.insert(record({
+      runId: "run-managed-atomic",
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      runtimeAuthorizationOrgId: "org-a",
+    }));
+    store.update("ws-a", "run-managed-atomic", {
+      engineOwnerState: "attached",
+      engineSlotId: "slot-a",
+      engineOwnerId: "owner-a",
+      enginePid: 42,
+      engineStartedAt: 5_000,
+      engineBaseUrl: "http://127.0.0.1:5000",
+    });
+
+    const db = new Database(dbPath, { readonly: true });
+    const active = db.query<{
+      state: string;
+      actor_token_hash: string;
+      organization_id: string;
+      engine_owner_id: string | null;
+    }, []>("SELECT state, actor_token_hash, organization_id, engine_owner_id FROM conversation_run_gateway_recovery WHERE run_id = 'run-managed-atomic'").get();
+    db.close();
+    expect(active).toEqual({
+      state: "active",
+      actor_token_hash: "actor-hash",
+      organization_id: "org-a",
+      engine_owner_id: "owner-a",
+    });
+    const descriptorWriter = new Database(dbPath);
+    descriptorWriter.query(
+      "UPDATE conversation_run_gateway_recovery SET actor_token_hash = ?1 WHERE run_id = ?2",
+    ).run("descriptor-actor-hash", "run-managed-atomic");
+    descriptorWriter.close();
+    expect(store.activeManagedGatewayRuns?.("ws-a")).toMatchObject([{
+      runId: "run-managed-atomic",
+      runtimeAuthorizationActorTokenHash: "descriptor-actor-hash",
+    }]);
+
+    store.update("ws-a", "run-managed-atomic", { status: "failed", completedAt: 2_000 });
+    const terminalDb = new Database(dbPath, { readonly: true });
+    const state = terminalDb.query<{ state: string }, []>("SELECT state FROM conversation_run_gateway_recovery WHERE run_id = 'run-managed-atomic'").get()?.state;
+    terminalDb.close();
+    expect(state).toBe("terminal");
+  });
+
+  test("does not recreate a removed gateway recovery descriptor after its one-time migration", async () => {
+    const dbPath = await createTempDbPath();
+    const store = createRunStore({ dbPath });
+    store.insert(record({
+      runId: "run-managed-removed-descriptor",
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      runtimeAuthorizationOrgId: "org-a",
+    }));
+    const writer = new Database(dbPath);
+    writer.query(
+      "DELETE FROM conversation_run_gateway_recovery WHERE workspace_id = ?1 AND run_id = ?2",
+    ).run("ws-a", "run-managed-removed-descriptor");
+    writer.close();
+
+    expect(store.activeManagedGatewayRuns?.("ws-a")).toMatchObject([{
+      runId: "run-managed-removed-descriptor",
+      gatewayRecoveryState: null,
+    }]);
+    const reader = new Database(dbPath, { readonly: true });
+    const recovered = reader.query<{ count: number }, []>(
+      "SELECT COUNT(*) AS count FROM conversation_run_gateway_recovery WHERE workspace_id = 'ws-a' AND run_id = 'run-managed-removed-descriptor'",
+    ).get()?.count;
+    reader.close();
+    expect(recovered).toBe(0);
+  });
+
+  test("backfills one recovery descriptor for a pre-descriptor managed gateway run", async () => {
+    const dbPath = await createTempDbPath();
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE conversation_run (
+        workspace_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        engine_session_id TEXT NOT NULL,
+        expects_ai_gateway_start INTEGER NOT NULL DEFAULT 0,
+        runtime_authorization_actor_token_hash TEXT,
+        runtime_authorization_org_id TEXT,
+        directory TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        abort_requested INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        error TEXT,
+        PRIMARY KEY (workspace_id, run_id)
+      );
+      INSERT INTO conversation_run (
+        workspace_id, conversation_id, run_id, engine_session_id,
+        expects_ai_gateway_start, runtime_authorization_actor_token_hash,
+        runtime_authorization_org_id, directory, kind, status, abort_requested,
+        created_at, started_at, completed_at, error
+      ) VALUES (
+        'ws-a', 'conv-legacy-managed', 'run-legacy-managed', 'sess-legacy-managed',
+        1, 'actor-hash', 'org-a', '/tmp/workspace-a', 'prompt', 'running', 0,
+        1000, 1000, NULL, NULL
+      );
+    `);
+    legacy.close();
+
+    const store = createRunStore({ dbPath });
+    expect(store.activeManagedGatewayRuns?.("ws-a")).toMatchObject([{
+      runId: "run-legacy-managed",
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      runtimeAuthorizationOrgId: "org-a",
+      gatewayRecoveryState: "active",
+    }]);
+  });
+
   test("migrates legacy workspace run records to a server-owned workspace id", async () => {
     const store = await createTempStore();
     store.insert(record({
@@ -262,6 +409,9 @@ describe("run store", () => {
       conversationId: "conv-legacy",
       engineSessionId: "sess-legacy",
       engineOwnerId: "app-ws",
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      runtimeAuthorizationOrgId: "org-a",
     }));
 
     const result = store.migrateWorkspaceId("app-ws", "server-ws");
@@ -279,6 +429,14 @@ describe("run store", () => {
       engineOwnerId: "server-ws",
     });
     expect(store.latestForConversation("server-ws", "conv-legacy")?.runId).toBe("run-legacy");
+    expect(store.activeManagedGatewayRuns?.("server-ws")).toMatchObject([{
+      runId: "run-legacy",
+      workspaceId: "server-ws",
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      runtimeAuthorizationOrgId: "org-a",
+      gatewayRecoveryExpiresAt: expect.any(Number),
+    }]);
+    expect(store.activeManagedGatewayRuns?.("app-ws")).toEqual([]);
   });
 
   test("does not migrate legacy run records when the target already has history", async () => {

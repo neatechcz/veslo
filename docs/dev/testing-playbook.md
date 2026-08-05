@@ -291,10 +291,27 @@ Preflight and run a focused WebDriverIO recovery scenario against the emitted
 `runtime-info.json`. The former `pnpm check:desktop-recovery` command depends
 on legacy Tauri Pilot coverage and must not be used.
 
+For managed-AI authorization continuity, prefer the owned controlled-provider
+desktop gate: `pnpm --filter @neatech/veslo-webdriver-live
+test:managed-ai-worker-replacement:isolated`. It starts an isolated Tauri
+profile, loopback managed-AI provider, and a disposable workspace; it refuses
+to start if another Veslo dev/test runtime is active. The scenario warms the
+real provider path, holds the next upstream response, replaces only the local
+Veslo server worker through the native debug-WebDriver control, requires a new
+worker generation and fresh desktop authorization prime, then releases the
+provider response and proves one visible recovery output without an assistant
+or runtime error. It uses native WebDriverIO only; it does not enable or invoke
+Tauri Pilot.
+
+The attach-only signed-in command remains useful for a real-account smoke:
+`pnpm --filter @neatech/veslo-webdriver-live test:managed-ai-worker-replacement -- <runtime-info.json> --workspace <exact disposable workspace label> --message <single-line prompt>` with `WEBDRIVER_ALLOW_MUTATION=1`.
+
+Before that opt-in desktop step, the isolated headless daemon gate gives deterministic support evidence for the two authorization-recovery branches without using a user profile: `node --test --test-name-pattern "restores one managed-AI run across a server worker replacement|fences a recovered managed-AI run without a fresh prime" scripts/headless-services.integration.test.mjs`. It replaces only the local server worker, retains the daemon's durable run data, and proves both fresh-prime release and no-prime fencing. It is not a substitute for the real desktop scenario.
+
 `pnpm check:desktop-recovery` currently invokes legacy Tauri Pilot tooling and
-must not be used. Add a focused owned WebDriverIO recovery scenario before
-claiming desktop recovery coverage; meanwhile use the headless lifecycle and
-workspace-engine gates for recovery changes.
+must not be used. The owned WebDriverIO gate above is the supported desktop
+recovery lane; keep the headless lifecycle and workspace-engine gates as
+supporting evidence rather than replacing it.
 
 ### Windows production-shaped packaged smoke
 

@@ -217,7 +217,13 @@ export type ReloadOpencodeEngineResult =
   | { kind: "not-running" }
   | { kind: "starting" };
 
-function unavailableReloadResult(body: unknown): ReloadOpencodeEngineResult | null {
+function unavailableReloadResult(status: number, body: unknown): ReloadOpencodeEngineResult | null {
+  // OpenCode returns its explicit availability envelope where available. A
+  // workspace instance that has never been created can instead answer the
+  // instance reload route with a bare 404. This function is called only for
+  // the explicit `ifRunning` operation, whose contract is to skip rather than
+  // start an absent engine, so that 404 is equally a not-running result.
+  if (status === 404) return { kind: "not-running" };
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const error = (body as Record<string, unknown>).error;
   if (error === "engine_not_running") return { kind: "not-running" };
@@ -280,7 +286,7 @@ export async function reloadOpencodeEngine(
       const response = await fetch(targetUrl, { method: "POST", headers, signal: controller.signal });
       if (response.ok) return { kind: "reloaded" };
       const body = parseOpencodeErrorBody(await readResponseTextWithLimit(response, OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES));
-      const unavailable = options.ifRunning ? unavailableReloadResult(body) : null;
+      const unavailable = options.ifRunning ? unavailableReloadResult(response.status, body) : null;
       if (unavailable && baseUrl === baseUrls[baseUrls.length - 1]) return unavailable;
       const error = new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
         status: response.status,

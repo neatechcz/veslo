@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +20,10 @@ export const OWNED_BACKGROUND_COMMAND_LINE_PATTERN = [
   "veslo-server(?:\\.exe)?",
   "veslo-code(?:\\.exe)?",
   "veslo-code-router(?:\\.exe)?",
+  // Tauri's CLI can orphan this debug desktop child on Windows. Restrict the
+  // match to Cargo's debug output so an installed user application is never
+  // treated as harness-owned.
+  "target[\\\\/]debug[\\\\/]veslo\\.exe",
 ].join("|");
 
 export function ownedDiagnosticEnvironment(env = process.env) {
@@ -52,10 +57,23 @@ export function isLiveWebDriverRuntimeInfo(value) {
   return value?.schema === "veslo-dev-runtime/v1" && value?.mode === "live-dev-webdriver";
 }
 
+export function isIsolatedWebDriverRuntimeInfo(value) {
+  return value?.schema === "veslo-dev-runtime/v1" && value?.mode === "isolated-dev-webdriver";
+}
+
 async function readLiveRuntimeInfo(path) {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8"));
     return isLiveWebDriverRuntimeInfo(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readIsolatedRuntimeInfo(path) {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8"));
+    return isIsolatedWebDriverRuntimeInfo(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -69,20 +87,161 @@ async function hasNativeWebDriverDescriptor(runtimeInfo, runtimeInfoPath) {
     : resolve(dirname(runtimeInfoPath), descriptorPath);
   try {
     const descriptor = JSON.parse(await readFile(resolvedDescriptorPath, "utf8"));
-    return descriptor?.schema === "veslo-native-webdriver/v1" && descriptor?.mode === "live-dev-webdriver";
+    return descriptor?.schema === "veslo-native-webdriver/v1" && descriptor?.mode === runtimeInfo?.mode;
   } catch {
     return false;
   }
 }
 
-function desktopDevLaunchCommand() {
+function desktopDevLaunchCommand(mode = "live") {
   return {
     command: process.execPath,
     // This is the exact implementation invoked by `pnpm dev:webdriver`.
     // Running it directly makes the harness the unambiguous process-tree
     // owner on Windows, where pnpm.cmd otherwise detaches nested children.
-    args: [join(repoRoot, "packages", "desktop", "scripts", "tauri-dev.mjs"), "--webdriver"],
+    args: [join(repoRoot, "packages", "desktop", "scripts", "tauri-dev.mjs"), mode === "isolated" ? "--webdriver-isolated" : "--webdriver"],
     cwd: join(repoRoot, "packages", "desktop"),
+  };
+}
+
+function captureOwnedRuntimeOutput(child, runDirectory) {
+  const outputPath = join(runDirectory, "desktop-runtime-output.log");
+  const output = createWriteStream(outputPath, { flags: "a" });
+  let tail = "";
+  const append = (channel, chunk) => {
+    const text = String(chunk);
+    output.write(`[${channel}] ${text}`);
+    tail = `${tail}[${channel}] ${text}`.slice(-8_000);
+  };
+  child.stdout?.on("data", (chunk) => append("stdout", chunk));
+  child.stderr?.on("data", (chunk) => append("stderr", chunk));
+  child.once("exit", () => output.end());
+  child.once("error", () => output.end());
+  return { outputPath, tail: () => tail };
+}
+
+async function waitForOwnedRuntime({ child, runtimeInfoPath, readRuntimeInfo, preexistingBackgroundPids, platform, timeoutMs, output }) {
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        const diagnostic = output?.tail().trim();
+        throw new Error(
+          "The owned Veslo development runtime exited before WebDriver became ready "
+          + `(code=${child.exitCode ?? "null"}, signal=${child.signalCode ?? "none"}). `
+          + `See ${output?.outputPath ?? "the owned runtime output"}.`
+          + (diagnostic ? `\n${diagnostic}` : ""),
+        );
+      }
+      const runtimeInfo = await readRuntimeInfo(runtimeInfoPath);
+      if (runtimeInfo && await hasNativeWebDriverDescriptor(runtimeInfo, runtimeInfoPath)) {
+        return { child, runtimeInfoPath, runtimeInfo, preexistingBackgroundPids };
+      }
+      await pause(250);
+    }
+    throw new Error("Timed out waiting for the owned Veslo WebDriver runtime.");
+  } catch (error) {
+    await stopOwnedDevRuntime(child, { platform }).catch(() => {});
+    const currentBackgroundPids = await ownedBackgroundProcessIds(platform);
+    await stopOwnedBackgroundProcesses(
+      currentBackgroundPids.filter((pid) => !preexistingBackgroundPids.includes(pid)),
+      platform,
+    );
+    throw error;
+  }
+}
+
+function isolatedProfilePaths(runDirectory) {
+  const profileRoot = join(runDirectory, "profile");
+  const opencodeHome = join(profileRoot, "opencode-home");
+  const dataRoot = join(opencodeHome, ".veslo");
+  return {
+    profileRoot,
+    opencodeHome,
+    dataRoot,
+    appConfigDir: join(dataRoot, "app-config"),
+    appDataDir: join(dataRoot, "app-data"),
+    appLocalDataDir: join(dataRoot, "app-local-data"),
+    authSnapshotPath: join(dataRoot, "den-auth.json"),
+    workspacePath: join(profileRoot, "workspace"),
+  };
+}
+
+async function prepareIsolatedProfile({ runDirectory, gatewayBaseUrl, workspaceName }) {
+  const paths = isolatedProfilePaths(runDirectory);
+  await Promise.all([
+    mkdir(paths.opencodeHome, { recursive: true }),
+    mkdir(paths.appConfigDir, { recursive: true }),
+    mkdir(paths.appDataDir, { recursive: true }),
+    mkdir(paths.appLocalDataDir, { recursive: true }),
+    mkdir(join(paths.workspacePath, ".opencode"), { recursive: true }),
+  ]);
+  const auth = {
+    denApiBase: gatewayBaseUrl,
+    token: "webdriver-managed-ai-token",
+    orgId: "org_webdriver_managed_ai",
+    user: { id: "user_webdriver_managed_ai", email: "webdriver-managed-ai@example.test" },
+    org: { id: "org_webdriver_managed_ai", slug: "webdriver-managed-ai" },
+  };
+  await writeFile(paths.authSnapshotPath, `${JSON.stringify({
+    version: 1,
+    authJson: JSON.stringify(auth),
+    keepSignedIn: true,
+    language: "en",
+    onboardingComplete: true,
+    updatedAt: Date.now(),
+    source: "webdriver-isolated-managed-ai",
+  }, null, 2)}\n`, "utf8");
+  const workspaceState = {
+    version: 4,
+    activeId: "webdriver-managed-ai-workspace",
+    workspaces: [{
+      id: "webdriver-managed-ai-workspace",
+      name: workspaceName,
+      path: paths.workspacePath,
+      preset: "starter",
+      workspaceType: "local",
+      remoteType: "opencode",
+      baseUrl: null,
+      directory: null,
+      displayName: workspaceName,
+    }],
+  };
+  await writeFile(join(paths.appDataDir, "veslo-workspaces.json"), `${JSON.stringify(workspaceState, null, 2)}\n`, "utf8");
+  return paths;
+}
+
+function isolatedRuntimeEnvironment(env, paths, gatewayBaseUrl, runDirectory) {
+  // The desktop profile must be isolated, but Tauri's Cargo invocation is a
+  // build tool and still needs the host-installed Rust toolchain.  Rustup
+  // otherwise derives its home from the isolated USERPROFILE and fails before
+  // the desktop executable is even built.
+  const hostUserProfile = typeof env.USERPROFILE === "string" && env.USERPROFILE.trim()
+    ? env.USERPROFILE
+    : null;
+  const rustupHome = env.RUSTUP_HOME || (hostUserProfile ? join(hostUserProfile, ".rustup") : undefined);
+  const cargoHome = env.CARGO_HOME || (hostUserProfile ? join(hostUserProfile, ".cargo") : undefined);
+  return {
+    ...ownedDiagnosticEnvironment(env),
+    VESLO_DEV_CLEANUP: "0",
+    VESLO_DEV_CAPTURE_CHILD_OUTPUT: "1",
+    VESLO_DEV_RUNTIME_DIR: runDirectory,
+    VESLO_WEBDRIVER_ISOLATED_PROFILE: "1",
+    OPENCODE_HOME: paths.opencodeHome,
+    VESLO_DATA_DIR: paths.dataRoot,
+    VESLO_APP_CONFIG_DIR: paths.appConfigDir,
+    VESLO_APP_DATA_DIR: paths.appDataDir,
+    VESLO_APP_LOCAL_DATA_DIR: paths.appLocalDataDir,
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: paths.authSnapshotPath,
+    VESLO_AI_GATEWAY_BASE_URL: gatewayBaseUrl,
+    VESLO_MANAGED_AI_BASE_URL: gatewayBaseUrl,
+    HOME: paths.profileRoot,
+    USERPROFILE: paths.profileRoot,
+    APPDATA: join(paths.profileRoot, "AppData", "Roaming"),
+    LOCALAPPDATA: join(paths.profileRoot, "AppData", "Local"),
+    WEBVIEW2_USER_DATA_FOLDER: join(paths.profileRoot, "webview2"),
+    ...(rustupHome ? { RUSTUP_HOME: rustupHome } : {}),
+    ...(cargoHome ? { CARGO_HOME: cargoHome } : {}),
   };
 }
 
@@ -126,7 +285,7 @@ async function ownedBackgroundProcessIds(platform = process.platform) {
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match '${OWNED_BACKGROUND_COMMAND_LINE_PATTERN}' } | ForEach-Object { $_.ProcessId }`,
+    `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '${OWNED_BACKGROUND_COMMAND_LINE_PATTERN}' } | ForEach-Object { $_.ProcessId }`,
   ]);
   return output.split(/\s+/).map(Number).filter((pid) => Number.isInteger(pid) && pid > 0);
 }
@@ -191,7 +350,7 @@ export async function startOwnedLiveWebDriverRuntime({
       ...ownedDiagnosticEnvironment(env),
       VESLO_DEV_RUNTIME_DIR: resolvedRunDirectory,
     },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
   const deadline = Date.now() + startTimeoutMs;
@@ -218,8 +377,86 @@ export async function startOwnedLiveWebDriverRuntime({
   }
 }
 
+/**
+ * Starts a fully isolated native WebDriver desktop runtime. It refuses to run
+ * beside an existing Veslo development/test process instead of relying on the
+ * desktop dev script's broad cleanup, so it cannot touch a user's runtime.
+ */
+export async function startOwnedIsolatedWebDriverRuntime({
+  runDirectory,
+  gatewayBaseUrl,
+  workspaceName = "WebDriver Managed AI Workspace",
+  env = process.env,
+  startTimeoutMs = START_TIMEOUT_MS,
+  platform = process.platform,
+} = {}) {
+  const normalizedGatewayBaseUrl = String(gatewayBaseUrl ?? "").trim().replace(/\/+$/, "");
+  if (!normalizedGatewayBaseUrl.startsWith("http://127.0.0.1:")) {
+    throw new Error("The isolated WebDriver runtime requires a loopback managed-AI gateway fixture.");
+  }
+  const resolvedRunDirectory = resolve(runDirectory);
+  const runtimeInfoPath = ownedRuntimeInfoPath(resolvedRunDirectory);
+  const preexistingBackgroundPids = await ownedBackgroundProcessIds(platform);
+  if (preexistingBackgroundPids.length > 0) {
+    throw new Error(
+      "Refusing to start the isolated desktop runtime while another Veslo dev/test runtime is active. "
+      + "Stop or explicitly attach to that runtime first; this scenario will not terminate it.",
+    );
+  }
+  await mkdir(resolvedRunDirectory, { recursive: true });
+  const paths = await prepareIsolatedProfile({
+    runDirectory: resolvedRunDirectory,
+    gatewayBaseUrl: normalizedGatewayBaseUrl,
+    workspaceName,
+  });
+  const launch = desktopDevLaunchCommand("isolated");
+  const child = spawn(launch.command, launch.args, {
+    cwd: launch.cwd,
+    env: isolatedRuntimeEnvironment(env, paths, normalizedGatewayBaseUrl, resolvedRunDirectory),
+    // Keep the wrapper's diagnostics attached to this owned process.  The
+    // scenario otherwise has no useful fault evidence when Tauri fails before
+    // the native WebDriver descriptor exists.
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  const output = captureOwnedRuntimeOutput(child, resolvedRunDirectory);
+  const runtime = await waitForOwnedRuntime({
+    child,
+    runtimeInfoPath,
+    readRuntimeInfo: readIsolatedRuntimeInfo,
+    preexistingBackgroundPids,
+    platform,
+    timeoutMs: startTimeoutMs,
+    output,
+  });
+  return { ...runtime, runDirectory: resolvedRunDirectory, profile: paths, workspaceName, outputPath: output.outputPath };
+}
+
 export async function withOwnedLiveWebDriverRuntime({ runDirectory, execute, ...options }) {
   const runtime = await startOwnedLiveWebDriverRuntime({ runDirectory, ...options });
+  let result;
+  let thrown;
+  let shutdown = "unknown";
+  try {
+    result = await execute(runtime);
+  } catch (error) {
+    thrown = error instanceof Error ? error : new Error(String(error));
+  } finally {
+    shutdown = await stopOwnedLiveWebDriverRuntime(runtime, options).catch((error) => {
+      if (!thrown) thrown = error instanceof Error ? error : new Error(String(error));
+      return "failed";
+    });
+  }
+  if (thrown) {
+    thrown.runtimeInfoPath = runtime.runtimeInfoPath;
+    thrown.shutdown = shutdown;
+    throw thrown;
+  }
+  return { ...result, runtimeInfoPath: runtime.runtimeInfoPath, shutdown };
+}
+
+export async function withOwnedIsolatedWebDriverRuntime({ runDirectory, execute, ...options }) {
+  const runtime = await startOwnedIsolatedWebDriverRuntime({ runDirectory, ...options });
   let result;
   let thrown;
   let shutdown = "unknown";

@@ -48,18 +48,22 @@ test("tauri-dev attributes the child exit before forwarding its result", () => {
   );
 });
 
-test("tauri-dev keeps the native WebDriver endpoint opt-in and live-profile scoped", () => {
+test("tauri-dev keeps native WebDriver explicit and separates live from harness-owned profiles", () => {
   const source = readFileSync(scriptPath, "utf8");
 
   assert.match(source, /devCliArgs\.includes\("--webdriver"\)/);
+  assert.match(source, /devCliArgs\.includes\("--webdriver-isolated"\)/);
   assert.match(source, /TAURI_WEBDRIVER_PORT/);
   assert.match(source, /VESLO_WEBDRIVER_DESCRIPTOR_PATH/);
   assert.match(source, /wdio-webdriver:default/);
   assert.match(source, /"webdriver"/);
   assert.match(source, /E2E_USE_EXISTING_PROFILE/);
   assert.match(source, /E2E_MANAGED_AI_GATEWAY_FIXTURE/);
-  assert.match(source, /kind: webdriverRuntime \? "existing-development" : "development"/);
-  assert.match(source, /isolated: false/);
+  assert.match(source, /ISOLATED_WEBDRIVER_MODE/);
+  assert.match(source, /VESLO_WEBDRIVER_ISOLATED_PROFILE/);
+  assert.match(source, /VESLO_DEV_CAPTURE_CHILD_OUTPUT/);
+  assert.match(source, /!webdriverRequested && shouldEnableManualPilotRuntime/);
+  assert.match(source, /isolated-test/);
   assert.match(source, /tauriCliArgs/);
 });
 

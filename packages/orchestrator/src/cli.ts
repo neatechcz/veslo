@@ -5759,6 +5759,17 @@ async function runRouterDaemon(args: ParsedArgs) {
           .slice(0, 300)
         : null;
     };
+    const failureClassification = (record: RunRecord): string | null => {
+      if (record.status !== "failed") return null;
+      const error = record.error?.trim() ?? "";
+      if (error === "gateway_runtime_authorization_recovery_timeout") {
+        return "runtime_authorization_recovery_unavailable";
+      }
+      if (error === "gateway_runtime_authorization_recovery_identity_mismatch") {
+        return "runtime_authorization_recovery_mismatch";
+      }
+      return null;
+    };
     const parseRunKind = (value: unknown): RunKind | null => {
       if (value === "prompt" || value === "command" || value === "shell" || value === "summarize") {
         return value;
@@ -5775,11 +5786,28 @@ async function runRouterDaemon(args: ParsedArgs) {
         unavailableHttpStatus?: number | null;
         sessionStatusObserved?: "busy" | "retry" | "explicit_idle" | "absent" | "unknown" | null;
       } = {},
+      options: { includeGatewayRecoveryDescriptor?: boolean } = {},
     ) => {
-      const { lastProgressSignature: _lastProgressSignature, ...publicRecord } = record;
+      const {
+        lastProgressSignature: _lastProgressSignature,
+        expectsAiGatewayStart: _expectsAiGatewayStart,
+        runtimeAuthorizationActorTokenHash: _runtimeAuthorizationActorTokenHash,
+        runtimeAuthorizationOrgId: _runtimeAuthorizationOrgId,
+        ...publicRecord
+      } = record;
       return {
         ok: true,
         ...publicRecord,
+        ...(options.includeGatewayRecoveryDescriptor
+          ? {
+              expectsAiGatewayStart: _expectsAiGatewayStart === true,
+              runtimeAuthorizationActorTokenHash: _runtimeAuthorizationActorTokenHash ?? null,
+              runtimeAuthorizationOrgId: _runtimeAuthorizationOrgId ?? null,
+              gatewayRecoveryExpiresAt: record.gatewayRecoveryExpiresAt ?? null,
+              gatewayRecoveryState: record.gatewayRecoveryState ?? null,
+            }
+          : {}),
+        ...(failureClassification(record) ? { failureClassification: failureClassification(record) } : {}),
         ...extra,
       };
     };
@@ -6370,6 +6398,9 @@ async function runRouterDaemon(args: ParsedArgs) {
               clientMessageId: bodyString(body, "clientMessageId") || null,
               opencodeMessageId: bodyString(body, "opencodeMessageId") || null,
               origin: bodyString(body, "origin") || null,
+              expectsAiGatewayStart: body.expectsAiGatewayStart === true,
+              runtimeAuthorizationActorTokenHash: bodyString(body, "runtimeAuthorizationActorTokenHash") || null,
+              runtimeAuthorizationOrgId: bodyString(body, "runtimeAuthorizationOrgId") || null,
               directory: bodyString(body, "directory"),
               kind,
               ...resolveLifecycleRunEngineOwner(workspace.id),
@@ -6387,6 +6418,32 @@ async function runRouterDaemon(args: ParsedArgs) {
             send(400, { error: error instanceof Error ? error.message : String(error) });
             return;
           }
+        }
+
+        if (req.method === "GET" && parts.length === 4 && parts[3] === "active-gateway-recovery") {
+          const records = await Promise.all(
+            (runStore.activeManagedGatewayRuns?.(workspace.id) ?? [])
+              .map(async (descriptor): Promise<RunRecord | null> => {
+                const reconciled = await runRegistry.get(workspace.id, descriptor.runId);
+                return reconciled
+                  ? {
+                      ...reconciled.record,
+                      expectsAiGatewayStart: descriptor.expectsAiGatewayStart,
+                      runtimeAuthorizationActorTokenHash: descriptor.runtimeAuthorizationActorTokenHash,
+                      runtimeAuthorizationOrgId: descriptor.runtimeAuthorizationOrgId,
+                      gatewayRecoveryExpiresAt: descriptor.gatewayRecoveryExpiresAt,
+                      gatewayRecoveryState: descriptor.gatewayRecoveryState,
+                    } as RunRecord
+                  : null;
+              }),
+          );
+          send(200, {
+            ok: true,
+            items: records
+              .filter((record): record is RunRecord => record !== null)
+              .map((record) => lifecycleRunPayload(record, {}, { includeGatewayRecoveryDescriptor: true })),
+          });
+          return;
         }
 
         if (req.method === "POST" && parts.length === 5) {
@@ -6580,6 +6637,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               runId: active.record.runId,
               status: active.record.status,
               terminalError: redactTerminalErrorForTrace(active.record.error),
+              failureClassification: failureClassification(active.record),
               engineOwnerId: active.record.engineOwnerId,
               enginePid: active.record.enginePid,
               activityKind: active.record.activityKind,
@@ -6610,7 +6668,8 @@ async function runRouterDaemon(args: ParsedArgs) {
             conversationId,
             runId: reconciled.record.runId,
             status: reconciled.record.status,
-            terminalError: redactTerminalErrorForTrace(reconciled.record.error),
+              terminalError: redactTerminalErrorForTrace(reconciled.record.error),
+              failureClassification: failureClassification(reconciled.record),
             engineOwnerId: reconciled.record.engineOwnerId,
             enginePid: reconciled.record.enginePid,
             activityKind: reconciled.record.activityKind,

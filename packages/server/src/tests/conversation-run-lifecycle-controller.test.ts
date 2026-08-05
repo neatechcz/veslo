@@ -4237,6 +4237,47 @@ test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, a
   });
 });
 
+test("recovery abort keeps the run fenced until exact terminal evidence permits its failed state", async () => {
+  const { controller, lifecycle, workspaces } = controllerHarness();
+
+  await controller.abortRun({
+    workspace: workspaces[0]!,
+    target: {
+      directory: "/repo",
+      binding: null,
+      opencodeSessionId: "sess-a",
+      conversationId: "conv-a",
+    },
+    runId: "run-recovery-timeout",
+    terminalFailureReason: "gateway_runtime_authorization_recovery_timeout",
+  });
+
+  expect(lifecycle.calls).toContain("markAbortRequested:ws_1:run-recovery-timeout");
+  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:ws_1:run-recovery-timeout:"))).toBe(false);
+  expect(lifecycle.calls.some((call) => call.startsWith("markAborted:ws_1:run-recovery-timeout:"))).toBe(false);
+
+  lifecycle.statusResult = {
+    runId: "run-recovery-timeout",
+    status: "failed",
+    stale: false,
+    runtimeReadyForSuccessor: true,
+  };
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-recovery-timeout",
+    directory: "/repo",
+    opencodeSessionId: "sess-a",
+    reason: "abort-requested",
+    abortRequested: true,
+    terminalFailureReason: "gateway_runtime_authorization_recovery_timeout",
+    delayMs: 0,
+  });
+
+  expect(lifecycle.calls).toContain("markFailed:ws_1:run-recovery-timeout:gateway_runtime_authorization_recovery_timeout");
+  expect(lifecycle.calls.some((call) => call.startsWith("markAborted:ws_1:run-recovery-timeout:"))).toBe(false);
+});
+
 test("abortRun records lifecycle intent when OpenCode abort fails", async () => {
   const { controller, lifecycle, workspaces, behavior, activeProxyAbortCalls, abortCalls, reconcileCalls } = controllerHarness();
   behavior.abortError = new Error("opencode abort failed");

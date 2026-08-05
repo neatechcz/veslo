@@ -225,11 +225,14 @@ async function startFakeAiGateway(profile) {
   };
 }
 
+const HEADLESS_MANAGED_AI_ORG_ID = "org-service-managed-ai";
+
 async function primeManagedAi(runtime, workspace, gateway) {
   const access = await requestJson(runtime, `/workspace/${encodeURIComponent(workspace.id)}/ai-gateway/me/ai-access`, {
     headers: {
       Authorization: `Bearer ${runtime.token}`,
       "x-veslo-gateway-authorization": `Bearer ${gateway.callerToken}`,
+      "x-veslo-den-org-id": HEADLESS_MANAGED_AI_ORG_ID,
     },
   });
   assert.equal(access.response.status, 200);
@@ -1617,6 +1620,107 @@ test("headless services retain managed-AI run correlation until the gateway prov
   } catch (error) {
     if (runtime) throw preservedRuntimeError(runtime, error);
     throw new Error(`Headless services managed-AI test failed; preserved diagnostics at ${profile.root}`, { cause: error });
+  } finally {
+    await runtime?.close({ preserve: true });
+    await gateway.close();
+    if (!preserve) await profile.cleanup();
+  }
+});
+
+test("headless daemon restores one managed-AI run across a server worker replacement only after a fresh prime", { timeout: 90_000 }, async () => {
+  const profile = await createHeadlessServicesProfile();
+  const gateway = await startFakeAiGateway(profile);
+  let runtime;
+  let preserve = true;
+  try {
+    runtime = await startHeadlessDaemonServices({ profile, aiGatewayBaseUrl: gateway.baseUrl });
+    const workspace = await activeWorkspace(runtime);
+    await primeManagedAi(runtime, workspace, gateway);
+    const submitted = await submitManagedAi(runtime, workspace, "service-gate-worker-replacement");
+
+    const replacement = await runtime.restartServerWorker();
+    assert.notEqual(replacement.workerGeneration, replacement.previousWorkerGeneration);
+
+    const pendingProvider = providerRequest(runtime, workspace, {
+      sessionId: submitted.body.opencodeSessionId,
+      traceId: "service-gate-worker-replacement-provider",
+    });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    assert.equal(
+      gatewayProviderRequests(gateway).length,
+      0,
+      "the replacement worker must hold provider traffic until it receives a new authorization prime",
+    );
+
+    await primeManagedAi(runtime, workspace, gateway);
+    const recovered = await pendingProvider;
+    assert.equal(recovered.response.status, 200);
+    assert.equal(recovered.body?.id, "gateway-test-completion");
+
+    const providerRequests = gatewayProviderRequests(gateway);
+    assert.equal(providerRequests.length, 1, "recovery must not replay or duplicate the provider request");
+    assertCleanGatewayProviderRequest(providerRequests[0], submitted.body.opencodeSessionId);
+    assert.equal(gateway.requests.filter((request) => request.path === "/api/me/ai-access").length, 2);
+
+    const serverTrace = await readFile(runtime.logs.serverTrace, "utf8");
+    assert.match(serverTrace, new RegExp(`"workerGeneration":"${replacement.previousWorkerGeneration}"`));
+    assert.match(serverTrace, new RegExp(`"workerGeneration":"${replacement.workerGeneration}"`));
+    assert.match(serverTrace, /server:ai-gateway-recovery:hydrated/);
+    preserve = false;
+  } catch (error) {
+    if (runtime) throw preservedRuntimeError(runtime, error);
+    throw new Error(`Headless managed-AI worker replacement test failed; preserved diagnostics at ${profile.root}`, { cause: error });
+  } finally {
+    await runtime?.close({ preserve: true });
+    await gateway.close();
+    if (!preserve) await profile.cleanup();
+  }
+});
+
+test("headless daemon fences a recovered managed-AI run without a fresh prime instead of returning a generic authorization error", { timeout: 90_000 }, async () => {
+  const profile = await createHeadlessServicesProfile();
+  const gateway = await startFakeAiGateway(profile);
+  let runtime;
+  let preserve = true;
+  try {
+    runtime = await startHeadlessDaemonServices({ profile, aiGatewayBaseUrl: gateway.baseUrl });
+    const workspace = await activeWorkspace(runtime);
+    await primeManagedAi(runtime, workspace, gateway);
+    const submitted = await submitManagedAi(runtime, workspace, "service-gate-worker-replacement-no-prime");
+    await runtime.restartServerWorker();
+
+    const rejected = await providerRequest(runtime, workspace, {
+      sessionId: submitted.body.opencodeSessionId,
+      traceId: "service-gate-worker-replacement-no-prime-provider",
+    });
+    assert.equal(rejected.response.status, 409);
+    assert.equal(rejected.body?.code, "gateway_runtime_authorization_recovery_terminalized");
+    assert.equal(gatewayProviderRequests(gateway).length, 0);
+
+    const successorBody = submitBody(runtime, "service-gate-worker-replacement-no-prime-successor");
+    successorBody.target = {
+      directory: runtime.workspace,
+      conversationId: submitted.body.conversationId,
+    };
+    successorBody.options = { expectAiGatewayStart: true, submitQueuePolicy: "server-queue-only" };
+    const successor = await submitFirstMessage(
+      runtime,
+      workspace,
+      "service-gate-worker-replacement-no-prime-successor",
+      successorBody,
+    );
+    assert.equal(successor.response.status, 202);
+    assert.equal(successor.body?.status, "queued");
+    assert.equal(gatewayProviderRequests(gateway).length, 0);
+
+    const serverTrace = await readFile(runtime.logs.serverTrace, "utf8");
+    assert.match(serverTrace, /server:ai-gateway-recovery:terminalized/);
+    assert.match(serverTrace, /gateway_runtime_authorization_recovery_timeout/);
+    assert.match(serverTrace, /"abortRequested":true/);
+    preserve = false;
+  } catch (error) {
+    if (runtime) throw preservedRuntimeError(runtime, error);
+    throw new Error(`Headless managed-AI no-prime replacement test failed; preserved diagnostics at ${profile.root}`, { cause: error });
   } finally {
     await runtime?.close({ preserve: true });
     await gateway.close();

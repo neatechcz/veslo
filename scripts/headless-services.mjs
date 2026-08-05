@@ -318,9 +318,9 @@ export async function startHeadlessDaemonServices({
   daemonChild.stderr.pipe(daemonOutput, { end: false });
 
   let serverChild;
-  try {
-    await waitForServer(daemonUrl, daemonChild, daemonLog);
-    serverChild = spawn(
+  let serverWorkerGeneration = `${runId}-worker-${randomUUID()}`;
+  const startServerWorker = async (workerGeneration) => {
+    const child = spawn(
       serverBinary,
       [
         "--host", "127.0.0.1",
@@ -338,14 +338,32 @@ export async function startHeadlessDaemonServices({
       ],
       {
         cwd: repoRoot,
-        env: { ...sharedEnvironment, VESLO_DATA_DIR: serverDataDir },
+        env: {
+          ...sharedEnvironment,
+          VESLO_DATA_DIR: serverDataDir,
+          // The desktop supervisor supplies this opaque generation before
+          // spawning a worker. The headless topology needs the same boundary
+          // to prove recovery never relies on a reused PID.
+          VESLO_INSTANCE_ID: workerGeneration,
+        },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       },
     );
-    serverChild.stdout.pipe(serverOutput, { end: false });
-    serverChild.stderr.pipe(serverOutput, { end: false });
-    await waitForServer(serverUrl, serverChild, serverLog);
+    child.stdout.pipe(serverOutput, { end: false });
+    child.stderr.pipe(serverOutput, { end: false });
+    const health = await waitForServer(serverUrl, child, serverLog);
+    if (health?.workerGeneration !== workerGeneration) {
+      await stopChild(child).catch(() => undefined);
+      throw new Error(
+        `Headless server worker reported ${String(health?.workerGeneration ?? "no generation")} instead of ${workerGeneration}`,
+      );
+    }
+    return child;
+  };
+  try {
+    await waitForServer(daemonUrl, daemonChild, daemonLog);
+    serverChild = await startServerWorker(serverWorkerGeneration);
   } catch (error) {
     await stopChild(serverChild ?? daemonChild).catch(() => undefined);
     if (serverChild) await stopChild(daemonChild).catch(() => undefined);
@@ -363,6 +381,13 @@ export async function startHeadlessDaemonServices({
     workspaceId,
     lifecycleToken,
     root,
+    async restartServerWorker() {
+      const previousWorkerGeneration = serverWorkerGeneration;
+      await stopChild(serverChild);
+      serverWorkerGeneration = `${runId}-worker-${randomUUID()}`;
+      serverChild = await startServerWorker(serverWorkerGeneration);
+      return { previousWorkerGeneration, workerGeneration: serverWorkerGeneration };
+    },
     logs: {
       orchestratorLog: daemonLog,
       daemonLog,

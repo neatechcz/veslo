@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 
 export const LIVE_MODE = "live-dev-webdriver";
+export const ISOLATED_MODE = "isolated-dev-webdriver";
 const RUNTIME_SCHEMA = "veslo-dev-runtime/v1";
 const WEBDRIVER_SCHEMA = "veslo-native-webdriver/v1";
 
@@ -41,15 +42,21 @@ async function readJson(path, label) {
   }
 }
 
-function assertLiveRuntime(runtimeInfo) {
-  if (runtimeInfo?.schema !== RUNTIME_SCHEMA || runtimeInfo.mode !== LIVE_MODE) {
+function assertWebDriverRuntime(runtimeInfo, expectedMode) {
+  if (runtimeInfo?.schema !== RUNTIME_SCHEMA || runtimeInfo.mode !== expectedMode) {
     fail("Runtime info is not from `pnpm dev:webdriver`.");
   }
-  if (runtimeInfo?.profile?.kind !== "existing-development" || runtimeInfo.profile?.isolated !== false) {
+  if (expectedMode === LIVE_MODE &&
+    (runtimeInfo?.profile?.kind !== "existing-development" || runtimeInfo.profile?.isolated !== false)) {
     fail("Runtime info does not prove use of the existing development profile.");
   }
-  if (runtimeInfo?.env?.VESLO_DEN_AUTH_SNAPSHOT_PATH) {
+  if (expectedMode === LIVE_MODE && runtimeInfo?.env?.VESLO_DEN_AUTH_SNAPSHOT_PATH) {
     fail("Runtime was started with an authentication snapshot override.");
+  }
+  if (expectedMode === ISOLATED_MODE &&
+    (runtimeInfo?.profile?.kind !== "isolated-test" || runtimeInfo.profile?.isolated !== true ||
+      !runtimeInfo?.env?.VESLO_DEN_AUTH_SNAPSHOT_PATH)) {
+    fail("Runtime info does not prove the harness-owned isolated profile.");
   }
   const descriptorPath = runtimeInfo?.webdriver?.descriptorPath;
   if (typeof descriptorPath !== "string" || !descriptorPath.trim()) {
@@ -58,8 +65,8 @@ function assertLiveRuntime(runtimeInfo) {
   return descriptorPath;
 }
 
-function assertNativeDescriptor(descriptor, expectedEndpoint) {
-  if (descriptor?.schema !== WEBDRIVER_SCHEMA || descriptor.mode !== LIVE_MODE) {
+function assertNativeDescriptor(descriptor, expectedEndpoint, expectedMode) {
+  if (descriptor?.schema !== WEBDRIVER_SCHEMA || descriptor.mode !== expectedMode) {
     fail("Native WebDriver descriptor has an unexpected schema or mode.");
   }
   if (!Number.isInteger(descriptor.appPid) || descriptor.appPid <= 0) {
@@ -104,15 +111,15 @@ async function assertWebDriverReady(endpoint) {
   }
 }
 
-export async function connectLiveWebDriver(runtimeInfoPath, { env = process.env } = {}) {
-  assertSafeClientEnvironment(env);
+export async function connectWebDriverRuntime(runtimeInfoPath, { env = process.env, mode = LIVE_MODE } = {}) {
+  if (mode === LIVE_MODE) assertSafeClientEnvironment(env);
   const runtimeInfo = await readJson(runtimeInfoPath, "runtime info");
-  const descriptorPath = assertLiveRuntime(runtimeInfo);
+  const descriptorPath = assertWebDriverRuntime(runtimeInfo, mode);
   const nativeDescriptorPath = isAbsolute(descriptorPath)
     ? descriptorPath
     : resolve(dirname(runtimeInfoPath), descriptorPath);
   const nativeDescriptor = await readJson(nativeDescriptorPath, "native WebDriver descriptor");
-  assertNativeDescriptor(nativeDescriptor, runtimeInfo.webdriver.endpoint);
+  assertNativeDescriptor(nativeDescriptor, runtimeInfo.webdriver.endpoint, mode);
   const port = parseLoopbackEndpoint(nativeDescriptor.endpoint);
   await assertWebDriverReady(nativeDescriptor.endpoint);
   const browser = await remote({
@@ -125,6 +132,14 @@ export async function connectLiveWebDriver(runtimeInfoPath, { env = process.env 
     },
   });
   return { browser, runtimeInfo, nativeDescriptor };
+}
+
+export async function connectLiveWebDriver(runtimeInfoPath, options = {}) {
+  return connectWebDriverRuntime(runtimeInfoPath, { ...options, mode: LIVE_MODE });
+}
+
+export async function connectIsolatedWebDriver(runtimeInfoPath, options = {}) {
+  return connectWebDriverRuntime(runtimeInfoPath, { ...options, mode: ISOLATED_MODE });
 }
 
 async function main() {

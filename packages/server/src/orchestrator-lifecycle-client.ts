@@ -15,11 +15,17 @@ export type LifecycleRunUnavailableReason =
   | "request_timeout"
   | "request_transport_error";
 export type LifecycleRunSessionStatusObservation = "busy" | "retry" | "explicit_idle" | "absent" | "unknown";
+export type LifecycleRunFailureClassification =
+  | "runtime_authorization_recovery_unavailable"
+  | "runtime_authorization_recovery_mismatch";
 
 export const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER = "X-Veslo-Orchestrator-Token";
 
 export type LifecycleRunStatusResult = {
   runId: string;
+  workspaceId?: string | null;
+  conversationId?: string | null;
+  engineSessionId?: string | null;
   status: LifecycleRunStatus;
   stale: boolean;
   /**
@@ -35,9 +41,16 @@ export type LifecycleRunStatusResult = {
   engineStartedAt?: number | null;
   engineBaseUrl?: string | null;
   error?: string | null;
+  failureClassification?: LifecycleRunFailureClassification | null;
   clientMessageId?: string | null;
   opencodeMessageId?: string | null;
   origin?: string | null;
+  directory?: string | null;
+  expectsAiGatewayStart?: boolean;
+  runtimeAuthorizationActorTokenHash?: string | null;
+  runtimeAuthorizationOrgId?: string | null;
+  gatewayRecoveryExpiresAt?: number | null;
+  gatewayRecoveryState?: "active" | "terminal" | null;
   activityKind?: LifecycleRunActivityKind | null;
   waitReason?: LifecycleRunWaitReason | null;
   lastUsefulProgressAt?: number | null;
@@ -141,6 +154,9 @@ export type OrchestratorLifecycleClient = {
     clientMessageId?: string | null;
     opencodeMessageId?: string | null;
     origin?: string | null;
+    expectsAiGatewayStart?: boolean;
+    runtimeAuthorizationActorTokenHash?: string | null;
+    runtimeAuthorizationOrgId?: string | null;
     directory: string;
     kind: string;
   }): Promise<LifecycleRunStatusResult | null>;
@@ -164,6 +180,7 @@ export type OrchestratorLifecycleClient = {
     runIdOrLatest: string,
   ): Promise<LifecycleRunStatusResult | null>;
   active(workspaceId: string, conversationId: string): Promise<LifecycleRunStatusResult | null>;
+  activeGatewayRecovery?(workspaceId: string): Promise<LifecycleRunStatusResult[]>;
 };
 
 async function readJsonSafely(response: Response): Promise<unknown> {
@@ -265,6 +282,12 @@ export function createOrchestratorLifecycleClient(options: {
       status: record.status as LifecycleRunStatus,
       stale: record.stale === true,
     };
+    if (typeof record.workspaceId === "string") result.workspaceId = record.workspaceId;
+    else if (record.workspaceId === null) result.workspaceId = null;
+    if (typeof record.conversationId === "string") result.conversationId = record.conversationId;
+    else if (record.conversationId === null) result.conversationId = null;
+    if (typeof record.engineSessionId === "string") result.engineSessionId = record.engineSessionId;
+    else if (record.engineSessionId === null) result.engineSessionId = null;
     if (record.runtimeReadyForSuccessor === true || record.runtimeReadyForSuccessor === false) {
       result.runtimeReadyForSuccessor = record.runtimeReadyForSuccessor;
     } else if (record.runtimeReadyForSuccessor === null) {
@@ -286,12 +309,40 @@ export function createOrchestratorLifecycleClient(options: {
     if (typeof record.engineBaseUrl === "string") result.engineBaseUrl = record.engineBaseUrl;
     else if (record.engineBaseUrl === null) result.engineBaseUrl = null;
     if ("error" in record) result.error = typeof record.error === "string" ? record.error : null;
+    if (
+      record.failureClassification === "runtime_authorization_recovery_unavailable" ||
+      record.failureClassification === "runtime_authorization_recovery_mismatch"
+    ) {
+      result.failureClassification = record.failureClassification;
+    } else if (record.failureClassification === null) {
+      result.failureClassification = null;
+    }
     if (typeof record.clientMessageId === "string") result.clientMessageId = record.clientMessageId;
     else if (record.clientMessageId === null) result.clientMessageId = null;
     if (typeof record.opencodeMessageId === "string") result.opencodeMessageId = record.opencodeMessageId;
     else if (record.opencodeMessageId === null) result.opencodeMessageId = null;
     if (typeof record.origin === "string") result.origin = record.origin;
     else if (record.origin === null) result.origin = null;
+    if (typeof record.directory === "string") result.directory = record.directory;
+    else if (record.directory === null) result.directory = null;
+    if (record.expectsAiGatewayStart === true || record.expectsAiGatewayStart === false) {
+      result.expectsAiGatewayStart = record.expectsAiGatewayStart;
+    }
+    if (typeof record.runtimeAuthorizationActorTokenHash === "string") {
+      result.runtimeAuthorizationActorTokenHash = record.runtimeAuthorizationActorTokenHash;
+    } else if (record.runtimeAuthorizationActorTokenHash === null) {
+      result.runtimeAuthorizationActorTokenHash = null;
+    }
+    if (typeof record.runtimeAuthorizationOrgId === "string") result.runtimeAuthorizationOrgId = record.runtimeAuthorizationOrgId;
+    else if (record.runtimeAuthorizationOrgId === null) result.runtimeAuthorizationOrgId = null;
+    const gatewayRecoveryExpiresAt = optionalNumber(record.gatewayRecoveryExpiresAt);
+    if (gatewayRecoveryExpiresAt !== null) result.gatewayRecoveryExpiresAt = gatewayRecoveryExpiresAt;
+    else if (record.gatewayRecoveryExpiresAt === null) result.gatewayRecoveryExpiresAt = null;
+    if (record.gatewayRecoveryState === "active" || record.gatewayRecoveryState === "terminal") {
+      result.gatewayRecoveryState = record.gatewayRecoveryState;
+    } else if (record.gatewayRecoveryState === null) {
+      result.gatewayRecoveryState = null;
+    }
     const activityKind = optionalActivityKind(record.activityKind);
     const waitReason = optionalWaitReason(record.waitReason);
     const lastUsefulProgressAt = optionalNumber(record.lastUsefulProgressAt);
@@ -352,6 +403,24 @@ export function createOrchestratorLifecycleClient(options: {
     return result;
   };
 
+  const activeGatewayRecovery = async (workspaceId: string): Promise<LifecycleRunStatusResult[]> => {
+    const path = `/workspace/${encodeURIComponent(workspaceId)}/runs/active-gateway-recovery`;
+    const response = await request(path, { headers });
+    if (!response.ok) {
+      throw new OrchestratorLifecycleRequestError(path, response.status, await readJsonSafely(response));
+    }
+    const payload = await readJsonSafely(response);
+    const items = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as { items?: unknown }).items
+      : null;
+    if (!Array.isArray(items)) throw new OrchestratorLifecycleRequestError(path, 502, payload);
+    return items.map((item) => {
+      const parsed = parseLifecycleRunPayload(path, item);
+      if (!parsed) throw new OrchestratorLifecycleRequestError(path, 502, item);
+      return parsed;
+    });
+  };
+
   return {
     async register(input) {
       const path = `/workspace/${encodeURIComponent(input.workspaceId)}/runs/register`;
@@ -362,6 +431,11 @@ export function createOrchestratorLifecycleClient(options: {
         ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
         ...(input.opencodeMessageId ? { opencodeMessageId: input.opencodeMessageId } : {}),
         ...(input.origin ? { origin: input.origin } : {}),
+        ...(input.expectsAiGatewayStart === true ? { expectsAiGatewayStart: true } : {}),
+        ...(input.runtimeAuthorizationActorTokenHash
+          ? { runtimeAuthorizationActorTokenHash: input.runtimeAuthorizationActorTokenHash }
+          : {}),
+        ...(input.runtimeAuthorizationOrgId ? { runtimeAuthorizationOrgId: input.runtimeAuthorizationOrgId } : {}),
         directory: input.directory,
         kind: input.kind,
       }));
@@ -387,6 +461,8 @@ export function createOrchestratorLifecycleClient(options: {
         {},
       );
     },
+
+    activeGatewayRecovery,
 
     async recoverProviderStartTimeout(workspaceId, runId) {
       const path = `/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}/recover-provider-start-timeout`;

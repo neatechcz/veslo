@@ -774,6 +774,139 @@ describe("createAiGatewayRuntimeOwner", () => {
     })).toBe(true);
   });
 
+  test("waits only for the exact recovered authorization binding", async () => {
+    let now = 1_000;
+    let owner: ReturnType<typeof createAiGatewayRuntimeOwner>;
+    owner = createAiGatewayRuntimeOwner({
+      now: () => now,
+      sleep: async () => {
+        now += 10;
+        owner.registerRuntimeAuthorization({
+          actor,
+          authorization: "Bearer recovered-proof",
+          orgId: "org-a",
+          source: "ai-access-token",
+        });
+      },
+    });
+
+    expect(await owner.waitForRuntimeAuthorization({
+      actorTokenHash: actor.tokenHash,
+      orgId: "org-a",
+      timeoutMs: 100,
+    })).toBe(true);
+    expect(await owner.waitForRuntimeAuthorization({
+      actorTokenHash: "other-actor",
+      orgId: "org-a",
+      timeoutMs: 0,
+    })).toBe(false);
+  });
+
+  test("releases only the recovered run whose exact workspace authorization was primed", async () => {
+    const owner = createAiGatewayRuntimeOwner();
+    const recovered = {
+      traceId: null,
+      workspaceId: "workspace-1",
+      conversationId: "conversation-1",
+      runId: "run-1",
+      opencodeSessionId: "session-1",
+      clientMessageId: null,
+      origin: null,
+      runtimeAuthorizationActorTokenHash: actor.tokenHash!,
+      runtimeAuthorizationOrgId: "org-a",
+      recoveryAuthorizationPending: true,
+    };
+    owner.registerActiveRun(recovered);
+    const context = owner.resolveSession({ incomingSessionId: "session-1" }).activeRunContext;
+    expect(context).not.toBeNull();
+    expect(owner.isRecoveryAuthorizationPending(context!)).toBe(true);
+
+    owner.registerRuntimeAuthorization({
+      actor,
+      authorization: "Bearer recovered-proof",
+      orgId: "org-a",
+      workspaceId: "workspace-2",
+      source: "ai-access-token",
+    });
+    expect(owner.isRecoveryAuthorizationPending(context!)).toBe(true);
+    expect(await owner.waitForRuntimeAuthorization({
+      actorTokenHash: actor.tokenHash,
+      orgId: "org-a",
+      recoveryContext: context,
+      timeoutMs: 0,
+    })).toBe(false);
+
+    owner.registerRuntimeAuthorization({
+      actor,
+      authorization: "Bearer recovered-proof",
+      orgId: "org-a",
+      workspaceId: "workspace-1",
+      source: "ai-access-token",
+    });
+    expect(owner.isRecoveryAuthorizationPending(context!)).toBe(false);
+    expect(await owner.waitForRuntimeAuthorization({
+      actorTokenHash: actor.tokenHash,
+      orgId: "org-a",
+      recoveryContext: context,
+      timeoutMs: 0,
+    })).toBe(true);
+  });
+
+  test("keeps concurrent recovered contexts pending until each exact workspace and organization prime arrives", async () => {
+    const owner = createAiGatewayRuntimeOwner();
+    const recoveredA = {
+      traceId: null,
+      workspaceId: "workspace-a",
+      conversationId: "conversation-a",
+      runId: "run-a",
+      opencodeSessionId: "session-a",
+      clientMessageId: null,
+      origin: null,
+      runtimeAuthorizationActorTokenHash: actor.tokenHash!,
+      runtimeAuthorizationOrgId: "org-a",
+      recoveryAuthorizationPending: true,
+    };
+    const recoveredB = {
+      ...recoveredA,
+      workspaceId: "workspace-b",
+      conversationId: "conversation-b",
+      runId: "run-b",
+      opencodeSessionId: "session-b",
+      runtimeAuthorizationOrgId: "org-b",
+    };
+    owner.registerActiveRun(recoveredA);
+    owner.registerActiveRun(recoveredB);
+    const contextA = owner.resolveSession({ incomingSessionId: "session-a" }).activeRunContext;
+    const contextB = owner.resolveSession({ incomingSessionId: "session-b" }).activeRunContext;
+    expect(contextA).not.toBeNull();
+    expect(contextB).not.toBeNull();
+
+    owner.registerRuntimeAuthorization({
+      actor,
+      authorization: "Bearer recovered-a",
+      orgId: "org-a",
+      workspaceId: "workspace-a",
+      source: "ai-access-token",
+    });
+    expect(owner.isRecoveryAuthorizationPending(contextA!)).toBe(false);
+    expect(owner.isRecoveryAuthorizationPending(contextB!)).toBe(true);
+    expect(await owner.waitForRuntimeAuthorization({
+      actorTokenHash: actor.tokenHash,
+      orgId: "org-b",
+      recoveryContext: contextB,
+      timeoutMs: 0,
+    })).toBe(false);
+
+    owner.registerRuntimeAuthorization({
+      actor,
+      authorization: "Bearer recovered-b",
+      orgId: "org-b",
+      workspaceId: "workspace-b",
+      source: "ai-access-token",
+    });
+    expect(owner.isRecoveryAuthorizationPending(contextB!)).toBe(false);
+  });
+
   test("provider-start observation distinguishes no gateway request from a session-correlated hit", async () => {
     let now = 1_000;
     const owner = createAiGatewayRuntimeOwner({

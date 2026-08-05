@@ -83,6 +83,44 @@ describe("orchestrator lifecycle client", () => {
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ error: "user abort reconciled" });
   });
 
+  test("reads only durable active managed gateway recovery descriptors", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = mockFetch(async (input, init) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({
+        ok: true,
+        items: [{
+          runId: "run-a",
+          status: "running",
+          conversationId: "conv-a",
+          engineSessionId: "sess-a",
+          expectsAiGatewayStart: true,
+          runtimeAuthorizationActorTokenHash: "actor-hash",
+          runtimeAuthorizationOrgId: "org-a",
+          gatewayRecoveryExpiresAt: 2_000,
+          gatewayRecoveryState: "active",
+        }],
+      }), { status: 200 });
+    });
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    const result = await client.activeGatewayRecovery?.("ws-a");
+
+    expect(calls[0]?.url).toBe("http://127.0.0.1:1234/workspace/ws-a/runs/active-gateway-recovery");
+    expect(calls[0]?.init?.method).toBeUndefined();
+    expect(result).toMatchObject([{
+      runId: "run-a",
+      engineSessionId: "sess-a",
+      runtimeAuthorizationActorTokenHash: "actor-hash",
+      gatewayRecoveryExpiresAt: 2_000,
+      gatewayRecoveryState: "active",
+    }]);
+  });
+
   test("provider-start handoff recovery targets one exact lifecycle run", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl = mockFetch(async (input, init) => {
@@ -272,6 +310,7 @@ describe("orchestrator lifecycle client", () => {
         opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
         origin: "session:send",
         error: "upstream request failed",
+        failureClassification: "runtime_authorization_recovery_unavailable",
       }), { status: 200 }));
     const client = createOrchestratorLifecycleClient({
       daemonUrl: "http://127.0.0.1:1234",
@@ -287,6 +326,7 @@ describe("orchestrator lifecycle client", () => {
       opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
       origin: "session:send",
       error: "upstream request failed",
+      failureClassification: "runtime_authorization_recovery_unavailable",
     });
   });
 

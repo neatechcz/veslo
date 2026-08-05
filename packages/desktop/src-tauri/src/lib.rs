@@ -27,9 +27,8 @@ mod workspace;
 
 #[cfg(all(debug_assertions, feature = "webdriver"))]
 fn write_live_webdriver_descriptor(app: &tauri::App) -> tauri::Result<()> {
-    const MODE: &str = "live-dev-webdriver";
     let mode = std::env::var("VESLO_DEV_RUNTIME_MODE").unwrap_or_default();
-    if mode != MODE {
+    if mode != "live-dev-webdriver" && mode != "isolated-dev-webdriver" {
         return Ok(());
     }
 
@@ -60,7 +59,7 @@ fn write_live_webdriver_descriptor(app: &tauri::App) -> tauri::Result<()> {
 
     let payload = serde_json::json!({
         "schema": "veslo-native-webdriver/v1",
-        "mode": MODE,
+        "mode": mode,
         "appPid": std::process::id(),
         "appIdentifier": app.config().identifier,
         "endpoint": format!("http://127.0.0.1:{port}"),
@@ -77,6 +76,82 @@ fn write_live_webdriver_descriptor(app: &tauri::App) -> tauri::Result<()> {
         std::process::id()
     );
     Ok(())
+}
+
+#[cfg(all(debug_assertions, feature = "webdriver"))]
+fn record_webdriver_startup_failure(error: &impl std::fmt::Display) {
+    let mode = std::env::var("VESLO_DEV_RUNTIME_MODE").unwrap_or_default();
+    if mode != "live-dev-webdriver" && mode != "isolated-dev-webdriver" {
+        return;
+    }
+    let Ok(descriptor_path) = std::env::var("VESLO_WEBDRIVER_DESCRIPTOR_PATH") else {
+        return;
+    };
+    let descriptor_path = std::path::PathBuf::from(descriptor_path);
+    let Some(parent) = descriptor_path.parent() else {
+        return;
+    };
+    let diagnostic_path = parent.join("native-webdriver-startup-error.log");
+    let _ = std::fs::write(&diagnostic_path, format!("{error}\n"));
+    eprintln!(
+        "[veslo:native-webdriver] startup failed; diagnostic={}",
+        diagnostic_path.display()
+    );
+}
+
+#[cfg(all(debug_assertions, feature = "webdriver"))]
+fn install_webdriver_panic_diagnostic() {
+    let mode = std::env::var("VESLO_DEV_RUNTIME_MODE").unwrap_or_default();
+    if mode != "live-dev-webdriver" && mode != "isolated-dev-webdriver" {
+        return;
+    }
+    let Ok(descriptor_path) = std::env::var("VESLO_WEBDRIVER_DESCRIPTOR_PATH") else {
+        return;
+    };
+    let descriptor_path = std::path::PathBuf::from(descriptor_path);
+    let Some(parent) = descriptor_path.parent().map(std::path::Path::to_owned) else {
+        return;
+    };
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        let payload = panic
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|value| (*value).to_string())
+            .or_else(|| panic.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_string());
+        let location = panic
+            .location()
+            .map(|value| format!("{}:{}:{}", value.file(), value.line(), value.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        let diagnostic = format!(
+            "panic={payload}\nlocation={location}\nbacktrace={}\n",
+            std::backtrace::Backtrace::force_capture()
+        );
+        let _ = std::fs::write(parent.join("native-webdriver-panic.log"), diagnostic);
+        previous(panic);
+    }));
+}
+
+#[cfg(all(debug_assertions, feature = "webdriver"))]
+fn record_webdriver_startup_stage(stage: &str) {
+    let mode = std::env::var("VESLO_DEV_RUNTIME_MODE").unwrap_or_default();
+    if mode != "live-dev-webdriver" && mode != "isolated-dev-webdriver" {
+        return;
+    }
+    let Ok(descriptor_path) = std::env::var("VESLO_WEBDRIVER_DESCRIPTOR_PATH") else {
+        return;
+    };
+    let descriptor_path = std::path::PathBuf::from(descriptor_path);
+    let Some(parent) = descriptor_path.parent() else {
+        return;
+    };
+    let managed_ai_base_url =
+        std::env::var("VESLO_MANAGED_AI_BASE_URL").unwrap_or_else(|_| "<unset>".to_string());
+    let _ = std::fs::write(
+        parent.join("native-webdriver-startup-stage.log"),
+        format!("{stage} managed-ai-base-url={managed_ai_base_url}\n"),
+    );
 }
 
 pub use types::*;
@@ -134,7 +209,7 @@ use commands::skills::{
 use commands::updater::{
     updater_environment, updater_prepare_install, updater_relaunch_after_install,
 };
-#[cfg(all(debug_assertions, feature = "e2e"))]
+#[cfg(all(debug_assertions, any(feature = "e2e", feature = "webdriver")))]
 use commands::veslo_server::veslo_server_e2e_kill_child;
 use commands::veslo_server::{veslo_server_info, veslo_server_restart};
 #[cfg(all(debug_assertions, feature = "e2e"))]
@@ -301,6 +376,11 @@ fn kill_orphan_sidecars() {
 fn kill_orphan_sidecars() {}
 
 pub fn run() {
+    #[cfg(all(debug_assertions, feature = "webdriver"))]
+    {
+        install_webdriver_panic_diagnostic();
+        record_webdriver_startup_stage("run:start");
+    }
     kill_orphan_sidecars();
     let _sentry_guard = error_monitoring::init_error_monitoring();
     let builder = tauri::Builder::default()
@@ -403,7 +483,7 @@ pub fn run() {
             // sandbox_cleanup_veslo_containers IPC commands SMAZÁNY.
             veslo_server_info,
             veslo_server_restart,
-            #[cfg(all(debug_assertions, feature = "e2e"))]
+            #[cfg(all(debug_assertions, any(feature = "e2e", feature = "webdriver")))]
             veslo_server_e2e_kill_child,
             opencodeRouter_info,
             opencodeRouter_start,
@@ -487,7 +567,14 @@ pub fn run() {
             set_window_decorations
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Veslo");
+        .unwrap_or_else(|error| {
+            #[cfg(all(debug_assertions, feature = "webdriver"))]
+            record_webdriver_startup_failure(&error);
+            panic!("error while building Veslo: {error}");
+        });
+
+    #[cfg(all(debug_assertions, feature = "webdriver"))]
+    record_webdriver_startup_stage("app:built");
 
     register_debug_logs_forwarder(app.handle());
 
@@ -501,6 +588,8 @@ pub fn run() {
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple
     // orchestrator/veslo-code/veslo-server processes and stale ports.
+    #[cfg(all(debug_assertions, feature = "webdriver"))]
+    record_webdriver_startup_stage("app:run");
     app.run(|app_handle, event| match event {
         tauri::RunEvent::ExitRequested { .. } => {
             stop_managed_services_for_exit(app_handle, "exit_requested");

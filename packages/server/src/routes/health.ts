@@ -257,6 +257,9 @@ export function registerHealthStatusRoutes(
     uptimeMs: Date.now() - ctx.config.startedAt,
     pid: process.pid,
     instanceId: ctx.config.instanceId ?? null,
+    // `instanceId` is retained for compatibility; this names its lifecycle
+    // meaning for generation-aware clients.
+    workerGeneration: ctx.config.instanceId ?? null,
   });
 
   addRoute(routes, "GET", "/health", "none", async (ctx) => {

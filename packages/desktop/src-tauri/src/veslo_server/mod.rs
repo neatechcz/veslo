@@ -1345,6 +1345,21 @@ fn launch_decision_payload(
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VesloServerStartInitiator {
+    EngineLifecycle,
+    ControlPlaneRebind,
+}
+
+impl VesloServerStartInitiator {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EngineLifecycle => "engine_lifecycle",
+            Self::ControlPlaneRebind => "control_plane_rebind",
+        }
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "The desktop server owner keeps explicit launch inputs at its process boundary."
@@ -1359,6 +1374,7 @@ pub fn start_veslo_server(
     opencode_router_health_port: Option<u16>,
     orchestrator_daemon_url: Option<&str>,
     orchestrator_lifecycle_token: Option<&str>,
+    requested_initiator: VesloServerStartInitiator,
     veslo_server_client_token: Option<&str>,
 ) -> Result<VesloServerInfo, String> {
     let _start_queue = manager
@@ -1539,6 +1555,23 @@ pub fn start_veslo_server(
     );
     let previous_client_token = state.client_token.clone();
     let previous_host_token = state.host_token.clone();
+    let previous_pid = state.child.as_ref().map(|child| child.pid());
+    let previous_instance_id = state.instance_id.clone();
+    let previous_stderr = state.last_stderr.clone();
+    let previous_stderr_observed = previous_stderr
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let replacement_classification = if state.child_exited
+        || state.lifecycle_reason == VesloServerLifecycleReason::ChildExited
+    {
+        "unexpected_child_exit"
+    } else if state.child.is_some()
+        && requested_initiator == VesloServerStartInitiator::ControlPlaneRebind
+    {
+        "explicit_control_plane_rebind"
+    } else {
+        "unknown"
+    };
     VesloServerManager::stop_locked(&mut state);
     state.lifecycle_status = VesloServerLifecycleStatus::Starting;
     state.lifecycle_reason = VesloServerLifecycleReason::SpawnPending;
@@ -1722,6 +1755,25 @@ pub fn start_veslo_server(
     state.last_stderr = None;
     state.lifecycle_status = VesloServerLifecycleStatus::WaitingReady;
     state.lifecycle_reason = VesloServerLifecycleReason::SpawnPending;
+    append_veslo_server_launch_diagnostic(
+        app,
+        "veslo-server-launch:replacement-boundary",
+        serde_json::json!({
+            "classification": replacement_classification,
+            "requestedInitiator": requested_initiator.as_str(),
+            "previousPid": previous_pid,
+            "previousInstanceId": previous_instance_id,
+            "nextPid": state.child.as_ref().map(|child| child.pid()),
+            "nextInstanceId": instance_id,
+            "observedExitStatus": if replacement_classification == "unexpected_child_exit" {
+                "child_exited"
+            } else {
+                "not_observed"
+            },
+            "hasStderr": previous_stderr_observed,
+            "stderrTail": previous_stderr,
+        }),
+    );
     let _ = snapshot_and_emit_veslo_server_state(app, &mut state);
 
     let forwarder = app

@@ -24,7 +24,7 @@ use crate::types::{
 use crate::utils::truncate_output;
 use crate::veslo_server::{
     control_plane_binding_matches, control_plane_binding_reason, manager::VesloServerManager,
-    persisted_veslo_server_plugin_state_path, start_veslo_server,
+    persisted_veslo_server_plugin_state_path, start_veslo_server, VesloServerStartInitiator,
 };
 use crate::workspace::server_client::reconcile_server_workspaces;
 use crate::workspace::validation::{validate_workspace_path, ValidationMode};
@@ -1851,6 +1851,7 @@ fn engine_start_reserved(
             opencode_router_health_port,
             Some(orchestrator_daemon_url.as_str()),
             Some(lifecycle_token.as_str()),
+            VesloServerStartInitiator::EngineLifecycle,
             Some(veslo_client_token.as_str()),
         );
         match &veslo_started {
@@ -2116,6 +2117,7 @@ fn engine_start_reserved(
         opencode_router_health_port,
         None,
         None,
+        VesloServerStartInitiator::EngineLifecycle,
         Some(veslo_client_token.as_str()),
     ) {
         state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -154,7 +155,233 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+async function waitForCondition(
+  predicate: () => boolean,
+  message: string,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await delay(10);
+  }
+}
+
 describe("ai gateway proxy routes", () => {
+  test("a replacement worker gates a recovered OpenCode session until its exact workspace prime arrives", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-recovery-workspace-"));
+    const gatewayRequests: string[] = [];
+    const actorTokenHash = createHash("sha256").update("client-token").digest("hex");
+    const recoveryRecord = {
+      ok: true,
+      workspaceId: "ws_1",
+      conversationId: "conv-recovery",
+      runId: "run-recovery",
+      engineSessionId: "sess-recovery",
+      status: "running",
+      stale: false,
+      directory: workspaceRoot,
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: actorTokenHash,
+      runtimeAuthorizationOrgId: "org-recovery",
+      gatewayRecoveryExpiresAt: Date.now() + 60_000,
+      gatewayRecoveryState: "active",
+      engineSlotId: "slot-recovery",
+      engineOwnerId: "owner-recovery",
+      engineOwnerState: "attached",
+      enginePid: 4242,
+      engineStartedAt: 1_000,
+      engineBaseUrl: "http://127.0.0.1:5400",
+    };
+    const lifecycle = createServer((req, res) => {
+      if (req.headers["x-veslo-orchestrator-token"] !== "lifecycle-token") {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
+      res.setHeader("content-type", "application/json");
+      if (req.method === "GET" && req.url === "/workspace/ws_1/runs/active-gateway-recovery") {
+        res.end(JSON.stringify({ ok: true, items: [recoveryRecord] }));
+        return;
+      }
+      if (req.method === "GET" && req.url === "/workspace/ws_1/conversations/conv-recovery/runs/run-recovery") {
+        res.end(JSON.stringify(recoveryRecord));
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: "not found" }));
+    });
+    const gateway = createServer(async (req, res) => {
+      if (isManagedAiAccessRequest(req)) {
+        writeManagedAiAccessBundle(res, "fresh-recovery-proof");
+        return;
+      }
+      gatewayRequests.push(req.url ?? "");
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ id: "chatcmpl-recovery", object: "chat.completion", model: "gpt-5.5" }));
+    });
+    const lifecyclePort = await listenTestServer(lifecycle);
+    const gatewayPort = await listenTestServer(gateway);
+
+    try {
+      await withManagedAiEnv({ managedAiBaseUrl: `http://127.0.0.1:${gatewayPort}` }, async () => {
+        const server = startServer({
+          ...createTestConfig(),
+          instanceId: "worker-recovery",
+          workspaces: [{ id: "ws_1", path: workspaceRoot, name: "Workspace 1", workspaceType: "local" as const }],
+          authorizedRoots: [workspaceRoot],
+          orchestratorDaemonUrl: `http://127.0.0.1:${lifecyclePort}`,
+          orchestratorLifecycleToken: "lifecycle-token",
+        });
+        try {
+          const providerResponse = fetch(
+            `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "stale-token-that-must-not-authorize",
+                "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+                "x-session-id": "sess-recovery",
+              },
+              body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "recover" }] }),
+            },
+          );
+          await delay(50);
+          expect(gatewayRequests).toEqual([]);
+
+          const prime = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/ai-gateway/me/ai-access`, {
+            headers: {
+              authorization: "Bearer client-token",
+              "x-veslo-gateway-authorization": "Bearer current-den-proof",
+              "x-veslo-den-org-id": "org-recovery",
+            },
+          });
+          expect(prime.status).toBe(200);
+
+          const provider = await providerResponse;
+          expect(provider.status).toBe(200);
+          expect(gatewayRequests).toEqual(["/providers/codex_oauth/v1/chat/completions"]);
+        } finally {
+          stopTestServer(server);
+        }
+      });
+    } finally {
+      await new Promise<void>((resolve) => lifecycle.close(() => resolve()));
+      await new Promise<void>((resolve) => gateway.close(() => resolve()));
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("an expired recovery descriptor returns a dedicated terminal recovery outcome without gateway authorization", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-expired-recovery-workspace-"));
+    const actorTokenHash = createHash("sha256").update("client-token").digest("hex");
+    const lifecycleRequests: string[] = [];
+    const recoveryRecord = {
+      ok: true,
+      workspaceId: "ws_1",
+      conversationId: "conv-expired-recovery",
+      runId: "run-expired-recovery",
+      engineSessionId: "sess-expired-recovery",
+      status: "running",
+      stale: false,
+      directory: workspaceRoot,
+      expectsAiGatewayStart: true,
+      runtimeAuthorizationActorTokenHash: actorTokenHash,
+      runtimeAuthorizationOrgId: "org-recovery",
+      gatewayRecoveryExpiresAt: Date.now() - 1,
+      gatewayRecoveryState: "active",
+      engineSlotId: "slot-recovery",
+      engineOwnerId: "owner-recovery",
+      engineOwnerState: "attached",
+      enginePid: 4242,
+      engineStartedAt: 1_000,
+      engineBaseUrl: "http://127.0.0.1:5400",
+    };
+    const lifecycle = createServer(async (req, res) => {
+      lifecycleRequests.push(`${req.method} ${req.url}`);
+      if (req.headers["x-veslo-orchestrator-token"] !== "lifecycle-token") {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
+      res.setHeader("content-type", "application/json");
+      if (req.method === "GET" && req.url === "/workspace/ws_1/runs/active-gateway-recovery") {
+        res.end(JSON.stringify({ ok: true, items: [recoveryRecord] }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/workspace/ws_1/runs/run-expired-recovery/abort-requested") {
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: "not found" }));
+    });
+    const lifecyclePort = await listenTestServer(lifecycle);
+
+    try {
+      const server = startServer({
+        ...createTestConfig(),
+        instanceId: "worker-expired-recovery",
+        workspaces: [{ id: "ws_1", path: workspaceRoot, name: "Workspace 1", workspaceType: "local" as const }],
+        authorizedRoots: [workspaceRoot],
+        orchestratorDaemonUrl: `http://127.0.0.1:${lifecyclePort}`,
+        orchestratorLifecycleToken: "lifecycle-token",
+      });
+      try {
+        await waitForCondition(
+          () => lifecycleRequests.includes("POST /workspace/ws_1/runs/run-expired-recovery/abort-requested"),
+          `The expired descriptor did not enter its owner-fenced terminal handoff during worker bootstrap: ${JSON.stringify(lifecycleRequests)}`,
+        );
+        const provider = await fetch(
+          `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+          {
+            method: "POST",
+            headers: {
+              authorization: "Bearer client-token",
+              "content-type": "application/json",
+              "x-veslo-gateway-token": "stale-token-that-must-not-authorize",
+              "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+              "x-session-id": "sess-expired-recovery",
+            },
+            body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "recover" }] }),
+          },
+        );
+        expect(provider.status).toBe(409);
+        expect(await provider.json()).toMatchObject({
+          code: "gateway_runtime_authorization_recovery_terminalized",
+        });
+        const foreignWorkspace = await fetch(
+          `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+          {
+            method: "POST",
+            headers: {
+              authorization: "Bearer client-token",
+              "content-type": "application/json",
+              "x-veslo-gateway-token": "stale-token-that-must-not-authorize",
+              "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+              "x-session-id": "sess-expired-recovery",
+              "x-veslo-workspace-id": "ws_other",
+            },
+            body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "foreign" }] }),
+          },
+        );
+        expect(foreignWorkspace.status).toBe(401);
+        expect(lifecycleRequests.filter((request) =>
+          request === "POST /workspace/ws_1/runs/run-expired-recovery/abort-requested",
+        )).toHaveLength(1);
+        expect(lifecycleRequests).not.toContain("POST /workspace/ws_1/runs/run-expired-recovery/failed");
+      } finally {
+        stopTestServer(server);
+      }
+    } finally {
+      await new Promise<void>((resolve) => lifecycle.close(() => resolve()));
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   test("server proxies ai-gateway provider routes to the managed ai base url with gateway token and session id", async () => {
     const requests: Array<{
       method: string;
@@ -650,7 +877,7 @@ describe("ai gateway proxy routes", () => {
 
     try {
       await withEnvVar("VESLO_SEND_WORKFLOW_TRACE_FILE", traceFile, async () => {
-        const server = startServer(createTestConfig());
+        const server = startServer({ ...createTestConfig(), instanceId: "worker-auth-trace-test" });
 
         try {
           const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
@@ -687,6 +914,7 @@ describe("ai gateway proxy routes", () => {
           expect(authFailed.status).toBe(401);
           expect(authFailed.code).toBe("unauthorized");
           expect(authFailed.traceId).toBe("trace-auth-failed");
+          expect(authFailed.workerGeneration).toBe("worker-auth-trace-test");
           expect(authFailed.sessionId).toBe("ses_1");
           expect(authFailed.workspaceId).toBe("ws_1");
           expect(authFailed.incomingHeaders).toContain("authorization");

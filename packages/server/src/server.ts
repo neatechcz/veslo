@@ -419,6 +419,8 @@ function appendSendWorkflowTraceFile(file: string, line: string): void {
   appendFileSync(file, line, "utf8");
 }
 
+let sendWorkflowTraceWorkerGeneration = process.env.VESLO_INSTANCE_ID?.trim() || null;
+
 function recordSendWorkflowTrace(
   source: string,
   event: string,
@@ -433,6 +435,9 @@ function recordSendWorkflowTrace(
     event,
     processPid: process.pid,
     processRunId: process.env.VESLO_RUN_ID?.trim() || null,
+    // Native assigns a fresh UUID before the worker can report health. Unlike
+    // PID, this remains an unambiguous replacement boundary in dev-watch.
+    workerGeneration: sendWorkflowTraceWorkerGeneration,
     ...(sanitizeRuntimeTracePayload(payload) as Record<string, unknown>),
   };
   try {
@@ -460,6 +465,80 @@ const aiGatewayRuntimeOwner = createAiGatewayRuntimeOwner({
   recordTrace: (event, payload) =>
     recordSendWorkflowTrace("server", event, payload),
 });
+
+/**
+ * Installed by the current server instance. Recovery only restores the
+ * non-secret run correlation; desktop must still re-prime the bearer proof.
+ */
+let hydrateAiGatewayRecoveryWorkspace: ((input: {
+  workspaceId?: string | null;
+  opencodeSessionId?: string | null;
+}) => Promise<void>) | null = null;
+const aiGatewayRecoveryHydrations = new Map<string, Promise<void>>();
+let aiGatewayRecoveryBootstrap: Promise<void> | null = null;
+// A just-terminalized descriptor is no longer an active authorization context,
+// but a retried OpenCode provider request still needs the dedicated recovery
+// outcome rather than falling through to an unrelated generic 401. This is
+// deliberately short-lived and contains only the already durable identity.
+const AI_GATEWAY_TERMINAL_RECOVERY_OUTCOME_TTL_MS = 60_000;
+const terminalAiGatewayRecoveryContextsBySession = new Map<string, Array<{
+  context: ActiveAiGatewayRunContext;
+  expiresAt: number;
+}>>();
+
+function rememberTerminalAiGatewayRecoveryContext(context: ActiveAiGatewayRunContext): void {
+  const sessionId = normalizeAiGatewaySessionId(context.opencodeSessionId);
+  if (!sessionId) return;
+  const now = Date.now();
+  const existing = terminalAiGatewayRecoveryContextsBySession.get(sessionId) ?? [];
+  const retained = existing.filter((entry) => entry.expiresAt > now && entry.context.runId !== context.runId);
+  retained.push({ context, expiresAt: now + AI_GATEWAY_TERMINAL_RECOVERY_OUTCOME_TTL_MS });
+  terminalAiGatewayRecoveryContextsBySession.set(sessionId, retained);
+}
+
+function clearTerminalAiGatewayRecoveryContext(context: Pick<ActiveAiGatewayRunContext, "opencodeSessionId">): void {
+  const sessionId = normalizeAiGatewaySessionId(context.opencodeSessionId);
+  if (sessionId) terminalAiGatewayRecoveryContextsBySession.delete(sessionId);
+}
+
+function resolveTerminalAiGatewayRecoveryContext(input: {
+  sessionId?: string | null;
+  workspaceId?: string | null;
+}): ActiveAiGatewayRunContext | null {
+  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
+  if (!sessionId) return null;
+  const now = Date.now();
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  const entries = (terminalAiGatewayRecoveryContextsBySession.get(sessionId) ?? [])
+    .filter((entry) => entry.expiresAt > now)
+    .filter((entry) => !workspaceId || entry.context.workspaceId === workspaceId);
+  if (entries.length) terminalAiGatewayRecoveryContextsBySession.set(sessionId, entries);
+  else terminalAiGatewayRecoveryContextsBySession.delete(sessionId);
+  return entries.length === 1 ? entries[0]!.context : null;
+}
+
+async function hydrateAiGatewayRecoverySingleFlight(input: {
+  workspaceId?: string | null;
+  opencodeSessionId?: string | null;
+}): Promise<void> {
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  const sessionId = normalizeAiGatewaySessionId(input.opencodeSessionId) ?? "";
+  const key = sessionId ? `session:${sessionId}` : `workspace:${workspaceId}`;
+  const existing = aiGatewayRecoveryHydrations.get(key);
+  if (existing) return existing;
+  const hydration = Promise.resolve()
+    .then(() => hydrateAiGatewayRecoveryWorkspace?.({ workspaceId, opencodeSessionId: sessionId }))
+    .then(() => undefined)
+    .finally(() => aiGatewayRecoveryHydrations.delete(key));
+  aiGatewayRecoveryHydrations.set(key, hydration);
+  return hydration;
+}
+let terminalizeAiGatewayRecoveryAuthorization: ((input: {
+  context: ActiveAiGatewayRunContext;
+  reason:
+    | "gateway_runtime_authorization_recovery_timeout"
+    | "gateway_runtime_authorization_recovery_identity_mismatch";
+}) => Promise<void>) | null = null;
 const soulController = createSoulController();
 
 type ServerLogger = {
@@ -580,6 +659,10 @@ export function createServerLogger(config: ServerConfig): ServerLogger {
   const baseAttributes: LogAttributes = {
     "run.id": runId,
     "process.pid": process.pid,
+    // A PID can be reused. Keep the native-assigned server generation on
+    // every structured server record so an exported trace can be assigned to
+    // the exact replacement boundary without relying on process metadata.
+    "worker.generation": config.instanceId?.trim() || null,
   };
 
   const emit = (
@@ -766,6 +849,16 @@ export function startServer(config: ServerConfig) {
   // The gateway runtime owner is module-scoped; every server instance must start
   // without active runs, proxy requests, or runtime auth from a previous instance.
   aiGatewayRuntimeOwner.resetForTests();
+  hydrateAiGatewayRecoveryWorkspace = null;
+  aiGatewayRecoveryHydrations.clear();
+  terminalAiGatewayRecoveryContextsBySession.clear();
+  aiGatewayRecoveryBootstrap = null;
+  terminalizeAiGatewayRecoveryAuthorization = null;
+  sendWorkflowTraceWorkerGeneration = config.instanceId?.trim() || null;
+  recordSendWorkflowTrace("server", "server:worker-start", {
+    workerGeneration: config.instanceId,
+    workerPid: process.pid,
+  });
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -781,6 +874,20 @@ export function startServer(config: ServerConfig) {
     execute: createOpenCodeAutomationExecutor(config),
   });
   const routeBundle = createRoutes(config, approvals, tokens, automationRunner);
+  // Do the durable correlation read at boot. This does not authorize any
+  // gateway request: the proxy still awaits this single flight and then the
+  // exact desktop access-prime before it can forward provider traffic.
+  // All real worker launches receive an instance id from configuration. Keep
+  // lightweight embedders that do not participate in the desktop worker
+  // lifecycle from probing an internal orchestrator endpoint they do not own.
+  aiGatewayRecoveryBootstrap = config.instanceId?.trim()
+    ? Promise.all(
+        config.workspaces
+          .map((workspace) => workspace.id.trim())
+          .filter(Boolean)
+          .map((workspaceId) => hydrateAiGatewayRecoverySingleFlight({ workspaceId })),
+      ).then(() => undefined)
+    : null;
   const routes = routeBundle.routes;
   const conversationRunLifecycleController =
     routeBundle.conversationRunLifecycleController;
@@ -1630,6 +1737,11 @@ export function startServer(config: ServerConfig) {
   const originalStop = server.stop.bind(server);
   const stopBridge = bridgeServer ? bridgeServer.stop.bind(bridgeServer) : null;
   server.stop = (closeActiveConnections?: boolean) => {
+    recordSendWorkflowTrace("server", "server:worker-stop", {
+      workerGeneration: config.instanceId,
+      workerPid: process.pid,
+      closeActiveConnections: closeActiveConnections === true,
+    });
     watcherReloadsStopped = true;
     for (const timer of watcherReloadTimers.values()) clearTimeout(timer);
     watcherReloadTimers.clear();
@@ -3146,6 +3258,7 @@ function unregisterActiveAiGatewayRun(
 function registerActiveAiGatewayRun(
   input: Omit<ActiveAiGatewayRunContext, "at">,
 ): void {
+  clearTerminalAiGatewayRecoveryContext(input);
   aiGatewayRuntimeOwner.registerActiveRun(input);
 }
 
@@ -3561,6 +3674,35 @@ async function proxyAiGatewayRequest(input: {
   preserveAiAccessToken?: boolean;
   runtimeWorkspaceId?: string;
 }) {
+  if (input.requireSessionId && aiGatewayRecoveryBootstrap) {
+    try {
+      await aiGatewayRecoveryBootstrap;
+    } catch (error) {
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:bootstrap-error", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      // A failed bootstrap means correlation for a live run may be missing, and
+      // proceeding would surface that as an unrelated generic 401 - the exact
+      // outcome this recovery path exists to prevent. Re-attempt the workspace
+      // hydration for this request before deciding anything about the run.
+      const workspaceId = input.runtimeWorkspaceId?.trim();
+      if (workspaceId) {
+        try {
+          await hydrateAiGatewayRecoverySingleFlight({ workspaceId });
+        } catch (retryError) {
+          recordSendWorkflowTrace("server", "server:ai-gateway-recovery:bootstrap-unrecovered", {
+            workspaceId,
+            message: retryError instanceof Error ? retryError.message : String(retryError),
+          });
+        }
+      } else {
+        recordSendWorkflowTrace("server", "server:ai-gateway-recovery:bootstrap-unrecovered", {
+          workspaceId: null,
+          message: "no runtime workspace scope on the request",
+        });
+      }
+    }
+  }
   const startedAt = perfMs();
   let headersPreparedAt = startedAt;
   let modelDiagnosticStartedAt: number | undefined;
@@ -3598,7 +3740,7 @@ async function proxyAiGatewayRequest(input: {
     null;
   const provider = resolveAiGatewayProvider(input.gatewayPath) ?? null;
   const incomingHeaderNames = headerNamesForTrace(input.request.headers);
-  const sessionResolution = input.requireSessionId
+  let sessionResolution = input.requireSessionId
     ? resolveAiGatewaySession({
         ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
         ...(incomingOpenCodeSessionId !== undefined
@@ -3609,6 +3751,53 @@ async function proxyAiGatewayRequest(input: {
           : {}),
       })
     : null;
+  const terminalRecoveryContext = input.requireSessionId
+    ? resolveTerminalAiGatewayRecoveryContext({
+        sessionId: incomingOpenCodeSessionId ?? incomingSessionId,
+        workspaceId: incomingWorkspaceId,
+      })
+    : null;
+  if (terminalRecoveryContext) {
+    throw new ApiError(
+      409,
+      "gateway_runtime_authorization_recovery_terminalized",
+      "Managed AI run was ended because this server worker could not recover its authorization proof",
+    );
+  }
+  if (
+    input.requireSessionId &&
+    !sessionResolution?.activeRunContext &&
+    (incomingWorkspaceId || normalizeAiGatewaySessionId(incomingSessionId ?? incomingOpenCodeSessionId))
+  ) {
+    try {
+      await hydrateAiGatewayRecoverySingleFlight({
+        workspaceId: incomingWorkspaceId,
+        opencodeSessionId: incomingSessionId ?? incomingOpenCodeSessionId,
+      });
+    } catch (error) {
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:lookup-error", {
+        workspaceId: incomingWorkspaceId ?? null,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    sessionResolution = resolveAiGatewaySession({
+      ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
+      ...(incomingOpenCodeSessionId !== undefined
+        ? { openCodeSessionId: incomingOpenCodeSessionId }
+        : {}),
+      ...(incomingWorkspaceId !== undefined ? { workspaceId: incomingWorkspaceId } : {}),
+    });
+    if (input.requireSessionId && resolveTerminalAiGatewayRecoveryContext({
+      sessionId: incomingOpenCodeSessionId ?? incomingSessionId,
+      workspaceId: incomingWorkspaceId,
+    })) {
+      throw new ApiError(
+        409,
+        "gateway_runtime_authorization_recovery_terminalized",
+        "Managed AI run was ended because this server worker could not recover its authorization proof",
+      );
+    }
+  }
   const activeRunContext = sessionResolution?.activeRunContext ?? null;
   const traceId =
     activeRunContext?.traceId ??
@@ -3623,6 +3812,32 @@ async function proxyAiGatewayRequest(input: {
   const isSessionlessFallback =
     input.requireSessionId &&
     sessionResolution?.source === "sessionless-fallback";
+  if (
+    input.auth === "gateway-token" &&
+    activeRunContext?.runtimeAuthorizationActorTokenHash &&
+    aiGatewayRuntimeOwner.isRecoveryAuthorizationPending(activeRunContext)
+  ) {
+    const authorized = await aiGatewayRuntimeOwner.waitForRuntimeAuthorization({
+      actorTokenHash: activeRunContext.runtimeAuthorizationActorTokenHash,
+      orgId: activeRunContext.runtimeAuthorizationOrgId,
+      recoveryContext: activeRunContext,
+      // This bound is intentionally below the upstream headers timeout.
+      timeoutMs: 8_000,
+    });
+    if (!authorized) {
+      if (aiGatewayRuntimeOwner.beginRecoveryAuthorizationTerminalization(activeRunContext)) {
+        await terminalizeAiGatewayRecoveryAuthorization?.({
+          context: activeRunContext,
+          reason: "gateway_runtime_authorization_recovery_timeout",
+        });
+      }
+      throw new ApiError(
+        409,
+        "gateway_runtime_authorization_recovery_terminalized",
+        "Managed AI run was ended because this server worker could not recover its authorization proof",
+      );
+    }
+  }
   const providerAuthorization =
     input.auth === "gateway-token"
       ? resolveAiGatewayProviderAuthorization({
@@ -5825,6 +6040,158 @@ function createRoutes(
       }
     : null;
 
+  hydrateAiGatewayRecoveryWorkspace = async (input) => {
+    const normalizedWorkspaceId = input.workspaceId?.trim() ?? "";
+    const normalizedSessionId = normalizeAiGatewaySessionId(input.opencodeSessionId);
+    if (!lifecycleClient?.activeGatewayRecovery) return;
+    if (!normalizedWorkspaceId && !normalizedSessionId) {
+      await Promise.all(config.workspaces
+        .map((workspace) => workspace.id)
+        .filter(Boolean)
+        .map((workspaceId) => hydrateAiGatewayRecoveryWorkspace?.({ workspaceId })));
+      return;
+    }
+    if (
+      (normalizedWorkspaceId && listActiveAiGatewayRunContexts().some((context) => context.workspaceId === normalizedWorkspaceId)) ||
+      (normalizedSessionId && listActiveAiGatewayRunContexts().some((context) => context.opencodeSessionId === normalizedSessionId))
+    ) return;
+    const workspaceIds = normalizedWorkspaceId
+      ? [normalizedWorkspaceId]
+      : normalizedSessionId
+        ? config.workspaces.map((workspace) => workspace.id).filter(Boolean)
+        : [];
+    const candidates = (await Promise.all(workspaceIds.map(async (workspaceId) => {
+      try {
+        return await lifecycleClient.activeGatewayRecovery!(workspaceId);
+      } catch (error) {
+        // Recovery cannot grant authority. Older orchestrator versions and a
+        // temporarily unavailable daemon simply leave this worker with no
+        // recovered context; the normal proxy path remains fail-closed.
+        recordSendWorkflowTrace("server", "server:ai-gateway-recovery:descriptor-read-unavailable", {
+          workspaceId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }
+    }))).flat().filter((candidate) =>
+      !normalizedSessionId || candidate.engineSessionId?.trim() === normalizedSessionId,
+    );
+    // A workspace fallback is safe only for the exact single active durable
+    // run. Anything else must remain unavailable rather than guessed.
+    if (candidates.length !== 1) {
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:ambiguous-or-missing", {
+        workspaceId: normalizedWorkspaceId || null,
+        candidateCount: candidates.length,
+      });
+      return;
+    }
+    const candidate = candidates[0];
+    const sessionId = candidate.engineSessionId?.trim() ?? "";
+    const actorTokenHash = candidate.runtimeAuthorizationActorTokenHash?.trim() ?? "";
+    const directory = candidate.directory?.trim() ?? "";
+    const recoveryContext: ActiveAiGatewayRunContext = {
+      at: Date.now(),
+      traceId: null,
+      workspaceId: candidate.workspaceId ?? normalizedWorkspaceId,
+      conversationId: candidate.conversationId ?? "",
+      runId: candidate.runId,
+      opencodeSessionId: sessionId,
+      clientMessageId: candidate.clientMessageId ?? null,
+      origin: candidate.origin ?? null,
+      directory,
+      recoveryAuthorizationPending: true,
+      runtimeAuthorizationActorTokenHash: actorTokenHash || null,
+      runtimeAuthorizationOrgId: candidate.runtimeAuthorizationOrgId ?? null,
+    };
+    const failClosedRecovery = async (
+      reason:
+        | "gateway_runtime_authorization_recovery_timeout"
+        | "gateway_runtime_authorization_recovery_identity_mismatch",
+    ) => {
+      if (terminalizeAiGatewayRecoveryAuthorization && sessionId && directory) {
+        await terminalizeAiGatewayRecoveryAuthorization({ context: recoveryContext, reason });
+        rememberTerminalAiGatewayRecoveryContext(recoveryContext);
+        return;
+      }
+      // Without the exact runtime handoff port this worker cannot prove that
+      // the recorded owner exited. Leave the durable active descriptor as the
+      // successor fence; a later worker/reconciler may obtain that proof.
+      rememberTerminalAiGatewayRecoveryContext(recoveryContext);
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:fenced-without-runtime-context", {
+        workspaceId: recoveryContext.workspaceId,
+        runId: recoveryContext.runId,
+        reason,
+        hasSessionId: Boolean(sessionId),
+        hasDirectory: Boolean(directory),
+      });
+    };
+    if (candidate.gatewayRecoveryState !== "active") {
+      await failClosedRecovery("gateway_runtime_authorization_recovery_identity_mismatch");
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:descriptor-missing-or-terminal", {
+        workspaceId: recoveryContext.workspaceId,
+        runId: recoveryContext.runId,
+        descriptorState: candidate.gatewayRecoveryState ?? null,
+      });
+      return;
+    }
+    const descriptorExpiresAt = candidate.gatewayRecoveryExpiresAt ?? null;
+    if (descriptorExpiresAt !== null && descriptorExpiresAt <= Date.now()) {
+      await failClosedRecovery("gateway_runtime_authorization_recovery_timeout");
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:expired", {
+        workspaceId: recoveryContext.workspaceId,
+        runId: recoveryContext.runId,
+        descriptorExpiresAt,
+      });
+      return;
+    }
+    const ownerAttached = candidate.engineOwnerState === "attached" &&
+      Boolean(candidate.engineOwnerId) &&
+      candidate.enginePid !== null && candidate.enginePid !== undefined &&
+      candidate.engineStartedAt !== null && candidate.engineStartedAt !== undefined &&
+      Boolean(candidate.engineBaseUrl);
+    if (!sessionId || !actorTokenHash || !directory || !ownerAttached || candidate.expectsAiGatewayStart !== true) {
+      await failClosedRecovery("gateway_runtime_authorization_recovery_identity_mismatch");
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:incomplete-descriptor", {
+        workspaceId: normalizedWorkspaceId || null,
+        runId: candidate.runId,
+        hasSessionId: Boolean(sessionId),
+        hasActorTokenHash: Boolean(actorTokenHash),
+        hasDirectory: Boolean(directory),
+        ownerAttached,
+      });
+      return;
+    }
+    const current = await lifecycleClient.status(
+      candidate.workspaceId ?? normalizedWorkspaceId,
+      candidate.conversationId ?? "",
+      candidate.runId,
+    );
+    const active = current?.status === "submitted" || current?.status === "running" || current?.status === "blocked";
+    const exactOwner = current !== null &&
+      current.engineOwnerState === "attached" &&
+      current.engineSlotId === candidate.engineSlotId &&
+      current.engineOwnerId === candidate.engineOwnerId &&
+      current.enginePid === candidate.enginePid &&
+      current.engineStartedAt === candidate.engineStartedAt &&
+      current.engineBaseUrl === candidate.engineBaseUrl &&
+      current.engineSessionId === sessionId;
+    if (!active || !exactOwner) {
+      await failClosedRecovery("gateway_runtime_authorization_recovery_identity_mismatch");
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:owner-not-current", {
+        workspaceId: candidate.workspaceId ?? normalizedWorkspaceId,
+        runId: candidate.runId,
+        active,
+        exactOwner,
+      });
+      return;
+    }
+    registerActiveAiGatewayRun(recoveryContext);
+    recordSendWorkflowTrace("server", "server:ai-gateway-recovery:hydrated", {
+      workspaceId: candidate.workspaceId ?? normalizedWorkspaceId,
+      runId: candidate.runId,
+      conversationId: candidate.conversationId ?? null,
+    });
+  };
   if (process.env.VESLO_E2E_FAULT_INJECTION === "1") {
     addRoute(routes, "POST", "/e2e/fail-next-lifecycle-mark-failed", "client", async (ctx) => {
       const rawBody = await readJsonBody(ctx.request);
@@ -6348,6 +6715,48 @@ function createRoutes(
       },
     });
 
+  terminalizeAiGatewayRecoveryAuthorization = async ({ context, reason }) => {
+    const workspace = config.workspaces.find((candidate) => candidate.id === context.workspaceId) ?? null;
+    const directory = context.directory?.trim() ?? "";
+    if (!workspace || !directory) {
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:terminalization-fenced", {
+        workspaceId: context.workspaceId,
+        conversationId: context.conversationId,
+        runId: context.runId,
+        reason,
+        workspacePresent: Boolean(workspace),
+        directoryPresent: Boolean(directory),
+      });
+      return;
+    }
+    try {
+      await conversationRunLifecycleController.abortRun({
+        workspace,
+        target: {
+          directory,
+          conversationId: context.conversationId,
+          opencodeSessionId: context.opencodeSessionId,
+        },
+        runId: context.runId,
+        terminalFailureReason: reason,
+      });
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:terminalization-requested", {
+        workspaceId: context.workspaceId,
+        conversationId: context.conversationId,
+        runId: context.runId,
+        reason,
+      });
+    } catch (error) {
+      recordSendWorkflowTrace("server", "server:ai-gateway-recovery:terminalization-error", {
+        workspaceId: context.workspaceId,
+        conversationId: context.conversationId,
+        runId: context.runId,
+        reason,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   const serializeFileSession = (session: {
     id: string;
     workspaceId: string;
@@ -6618,7 +7027,11 @@ function createRoutes(
     soulVersionId,
     parseInteger,
   });
-  return { routes, conversationRunLifecycleController, conversationRunDeliverySnapshotStore };
+  return {
+    routes,
+    conversationRunLifecycleController,
+    conversationRunDeliverySnapshotStore,
+  };
 }
 
 function parseInteger(value: string | undefined): number | null {

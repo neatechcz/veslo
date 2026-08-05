@@ -61,6 +61,10 @@ function isAuthenticatedVesloServerStatus(status: VesloServerStatus) {
   return status === "connected";
 }
 
+// Native state events are the fast path. This local IPC snapshot is the
+// bounded fallback when an event is lost while a desktop webview is reloading.
+const LOCAL_SERVER_SNAPSHOT_WATCHDOG_MS = 5_000;
+
 export type VesloServerConnectionHostInfo = {
   baseUrl?: string | null;
   connectUrl?: string | null;
@@ -155,6 +159,8 @@ export type EnsureLocalVesloServerRunningOptions = {
 export type VesloServerProbeResult = {
   status: VesloServerStatus;
   capabilities: VesloServerCapabilities | null;
+  serverInstanceId?: string | null;
+  workerGeneration?: string | null;
   runtimeReadiness?: VesloRuntimeReadiness;
   failureReason?: string;
 };
@@ -420,6 +426,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   const [vesloServerUrl, setVesloServerUrl] = createSignal("");
   const [vesloServerStatus, setVesloServerStatus] =
     createSignal<VesloServerStatus>("disconnected");
+  const [vesloServerInstanceId, setVesloServerInstanceId] = createSignal<string | null>(null);
   const [vesloRuntimeReadiness, setVesloRuntimeReadiness] =
     createSignal<VesloRuntimeReadiness>("unknown");
   const [vesloServerCapabilities, setVesloServerCapabilities] =
@@ -583,12 +590,20 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     setVesloServerHostInfo((current) =>
       stateKey(current) === nextKey ? current : next,
     );
+    const workerGeneration = next?.instanceId?.trim() || null;
+    if (workerGeneration) setVesloServerInstanceId(workerGeneration);
   };
 
   const setVesloServerHostInfoFromEvent = (next: VesloServerInfo | null) => {
     setVesloServerHostInfoStable(
       mergeVesloServerDescriptorEvent(vesloServerHostInfo(), next),
     );
+    // The native supervisor publishes this descriptor as soon as its child is
+    // replaced.  Its base URL and client token commonly stay stable, so the
+    // routing memo deliberately does not react to them; the worker generation
+    // must nevertheless reach the managed-AI prime owner immediately.
+    const workerGeneration = next?.instanceId?.trim() || null;
+    if (workerGeneration) setVesloServerInstanceId(workerGeneration);
   };
 
   const activeVesloServerHostInfo = createMemo(() =>
@@ -754,8 +769,16 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     });
     const requireRuntimeChainReady =
       options?.requireRuntimeChainReady !== false && localRuntimeContract;
+    let serverInstanceId: string | null = null;
     try {
-      await client.health();
+      const health = await client.health();
+      serverInstanceId = health && typeof health === "object" && !Array.isArray(health)
+        ? typeof (health as { workerGeneration?: unknown }).workerGeneration === "string"
+          ? (health as { workerGeneration: string }).workerGeneration.trim() || null
+          : typeof (health as { instanceId?: unknown }).instanceId === "string"
+            ? (health as { instanceId: string }).instanceId.trim() || null
+            : null
+        : null;
     } catch (error) {
       const authStatus = resolveVesloServerAuthFailureStatus(error, {
         token,
@@ -809,12 +832,16 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
             diagnostics,
           }),
           failureReason,
+          ...(serverInstanceId ? { serverInstanceId } : {}),
+          ...(serverInstanceId ? { workerGeneration: serverInstanceId } : {}),
         };
       }
       const result: VesloServerProbeResult = {
         status: "connected" as VesloServerStatus,
         capabilities: caps,
         runtimeReadiness: localRuntimeContract ? undefined : "not-applicable",
+        ...(serverInstanceId ? { serverInstanceId } : {}),
+        ...(serverInstanceId ? { workerGeneration: serverInstanceId } : {}),
       };
       markVesloServerReachable(result.status);
       return result;
@@ -846,6 +873,11 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     source = "unspecified",
   ) => {
     setVesloServerStatus(result.status);
+    if (result.serverInstanceId !== undefined) {
+      setVesloServerInstanceId(result.serverInstanceId);
+    } else if (!isReachableVesloServerStatus(result.status)) {
+      setVesloServerInstanceId(null);
+    }
     if (result.status === "connected") {
       setManagedAiProjectFallbackConfirmed(false);
     }
@@ -1194,6 +1226,16 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
                 ? undefined
                 : "unknown",
             failureReason: result.failureReason,
+            // A server worker can be replaced without changing its loopback
+            // URL or visible reachability. Preserve the generation observed by
+            // this poll so managed-AI authorization can invalidate its
+            // process-local proof and issue one fresh desktop prime.
+            ...(result.serverInstanceId !== undefined
+              ? {
+                  serverInstanceId: result.serverInstanceId,
+                  workerGeneration: result.workerGeneration,
+                }
+              : {}),
           },
           "status-poll",
         );
@@ -1268,7 +1310,6 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
 
   createEffect(() => {
     if (!deps.isTauriRuntime()) return;
-    if (!deps.documentVisible()) return;
     let active = true;
     let unlisten: UnlistenFn | null = null;
     let timeoutId: number | undefined;
@@ -1276,7 +1317,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
 
     const scheduleSnapshotWatchdog = () => {
       if (!active || !timerApi) return;
-      timeoutId = timerApi.setTimeout(refreshSnapshot, 30_000);
+      timeoutId = timerApi.setTimeout(
+        refreshSnapshot,
+        LOCAL_SERVER_SNAPSHOT_WATCHDOG_MS,
+      );
     };
 
     const refreshSnapshot = async () => {
@@ -1536,6 +1580,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     setVesloServerUrl,
     vesloServerStatus,
     setVesloServerStatus,
+    vesloServerInstanceId,
     vesloServerConnectionSnapshot,
     vesloServerCapabilities,
     setVesloServerCapabilitiesStable,

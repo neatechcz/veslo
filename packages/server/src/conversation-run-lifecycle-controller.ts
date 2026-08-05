@@ -152,6 +152,11 @@ export type ConversationRunLifecycleScheduleReconcileInput = {
   opencodeSessionId?: string | null;
   reason: string;
   abortRequested?: boolean;
+  /**
+   * A server-owned failure reason that may be written only after the exact
+   * engine owner is observed terminal. It is never a timeout-based assertion.
+   */
+  terminalFailureReason?: string | null;
   delayMs?: number;
   attempt?: number;
   /**
@@ -195,6 +200,8 @@ export type ConversationRunLifecycleAbortInput = {
   workspace: WorkspaceInfo;
   target: ConversationRunLifecycleTarget;
   runId: string;
+  /** A server-owned fail-closed reason; unlike an interactive abort it records failed. */
+  terminalFailureReason?: string | null;
 };
 
 export type ConversationRunLifecycleAbortResult = {
@@ -483,6 +490,7 @@ function lifecycleStatusTraceFields(
     : null;
   return {
     terminalError,
+    failureClassification: status?.failureClassification ?? null,
     runtimeReadyForSuccessor: status?.runtimeReadyForSuccessor ?? null,
     clientMessageId: status?.clientMessageId ?? null,
     origin: status?.origin ?? null,
@@ -2282,7 +2290,7 @@ export function createConversationRunLifecycleController(
     const attempt = input.attempt ?? 0;
     const scheduleNextAttempt = async (status?: LifecycleRunStatusResult | null) => {
       const nextAttempt = attempt + 1;
-      if (nextAttempt >= maxAttempts) {
+        if (nextAttempt >= maxAttempts) {
         recordTrace("server:conversation-run:lifecycle-reconcile-exhausted", {
           workspaceId: input.workspace.id,
           conversationId,
@@ -2294,6 +2302,22 @@ export function createConversationRunLifecycleController(
           stale: status?.stale ?? null,
           ...lifecycleStatusTraceFields(status),
         });
+        if (input.terminalFailureReason) {
+          // This recovery path may not manufacture a terminal state just
+          // because its observation budget ran out. The durable active run and
+          // its reservation remain the fence until an exact owner-loss or
+          // terminal lifecycle observation arrives.
+          recordTrace("server:conversation-run:lifecycle-reconcile-recovery-fenced", {
+            workspaceId: input.workspace.id,
+            conversationId,
+            runId,
+            reason: input.reason,
+            terminalFailureReason: input.terminalFailureReason,
+            attempts: nextAttempt,
+            ...lifecycleStatusTraceFields(status),
+          });
+          return;
+        }
         if (
           status?.stale === true &&
           !isActiveLifecycleStatus(status.status) &&
@@ -2431,6 +2455,16 @@ export function createConversationRunLifecycleController(
       }
 
       if (evidence.kind === "authoritative-absence") {
+        if (input.terminalFailureReason) {
+          recordTrace("server:conversation-run:lifecycle-reconcile-recovery-owner-unconfirmed", {
+            workspaceId: input.workspace.id,
+            conversationId,
+            runId,
+            reason: input.reason,
+            terminalFailureReason: input.terminalFailureReason,
+          });
+          return;
+        }
         unregisterScheduledAiGatewayRun(input);
         const queuedStarting = options.queueStore?.getForReservedRun(
           input.workspace.id,
@@ -2816,16 +2850,26 @@ export function createConversationRunLifecycleController(
           input.reason !== PROVIDER_START_ABORT_RETRY_REASON &&
           status.status !== "aborted"
         ) {
-          await lifecycleOwner.markAborted(
-            input.workspace.id,
-            runId,
-            "user abort reconciled after engine became inactive",
-          ).catch((error) => {
-            recordTrace("server:conversation-run:lifecycle-mark-aborted-error", {
+          const terminalize = input.terminalFailureReason
+            ? lifecycleOwner.markFailed(
+                input.workspace.id,
+                runId,
+                input.terminalFailureReason,
+              )
+            : lifecycleOwner.markAborted(
+                input.workspace.id,
+                runId,
+                "user abort reconciled after engine became inactive",
+              );
+          await terminalize.catch((error) => {
+            recordTrace(input.terminalFailureReason
+              ? "server:conversation-run:lifecycle-mark-failed-error"
+              : "server:conversation-run:lifecycle-mark-aborted-error", {
               workspaceId: input.workspace.id,
               conversationId,
               runId,
               reason: input.reason,
+              terminalFailureReason: input.terminalFailureReason ?? null,
               status: status.status,
               message: error instanceof Error ? error.message : String(error),
             });
@@ -3271,9 +3315,12 @@ export function createConversationRunLifecycleController(
                 runId: queuedItem.reservedRunId,
                 opencodeSessionId: queuedItem.opencodeSessionId,
                 clientMessageId: queuedItem.clientMessageId,
-                opencodeMessageId: queuedSubmitInput.opencodeMessageId ?? null,
-                origin: queuedItem.origin,
-                directory: queuedItem.directory,
+            opencodeMessageId: queuedSubmitInput.opencodeMessageId ?? null,
+            origin: queuedItem.origin,
+            expectsAiGatewayStart: queuedSubmitInput.expectAiGatewayStart,
+            runtimeAuthorizationActorTokenHash: queuedSubmitInput.runtimeAuthorizationActorTokenHash ?? null,
+            runtimeAuthorizationOrgId: queuedSubmitInput.runtimeAuthorizationOrgId ?? null,
+            directory: queuedItem.directory,
                 kind: lifecycleRunKind(kind),
               }),
               {
@@ -3402,6 +3449,7 @@ export function createConversationRunLifecycleController(
         opencodeSessionId: input.target.opencodeSessionId,
         reason: "abort-requested",
         abortRequested: true,
+        terminalFailureReason: input.terminalFailureReason,
         delayMs: 0,
       });
     }
@@ -3414,13 +3462,18 @@ export function createConversationRunLifecycleController(
         target: input.target,
         runId: input.runId,
       });
-      if (lifecycleOwner) {
-        const markedAborted = await lifecycleOwner.markAborted(
-          input.workspace.id,
-          input.runId,
-          "user abort reconciled after OpenCode abort",
+      if (lifecycleOwner && !input.terminalFailureReason) {
+        const markedAborted = await (input.terminalFailureReason
+          ? lifecycleOwner.markFailed(input.workspace.id, input.runId, input.terminalFailureReason)
+          : lifecycleOwner.markAborted(
+              input.workspace.id,
+              input.runId,
+              "user abort reconciled after OpenCode abort",
+            )
         ).then(() => true).catch((error) => {
-          recordTrace("server:conversation-run:lifecycle-mark-aborted-error", {
+          recordTrace(input.terminalFailureReason
+            ? "server:conversation-run:lifecycle-mark-failed-error"
+            : "server:conversation-run:lifecycle-mark-aborted-error", {
             workspaceId: input.workspace.id,
             conversationId: input.target.conversationId,
             runId: input.runId,
@@ -3719,6 +3772,9 @@ export function createConversationRunLifecycleController(
             clientMessageId: input.clientMessageId,
             opencodeMessageId: admittedInput.opencodeMessageId ?? null,
             origin: input.origin,
+            expectsAiGatewayStart: input.expectAiGatewayStart,
+            runtimeAuthorizationActorTokenHash: input.runtimeAuthorizationActorTokenHash ?? null,
+            runtimeAuthorizationOrgId: input.runtimeAuthorizationOrgId ?? null,
             directory: input.target.directory,
             kind: lifecycleRunKind(input.kind),
           }),

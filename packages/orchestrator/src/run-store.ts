@@ -33,6 +33,13 @@ export type RunRecord = {
   clientMessageId: string | null;
   opencodeMessageId?: string | null;
   origin: string | null;
+  /** Non-secret binding required to recover a managed gateway run after a server worker replacement. */
+  expectsAiGatewayStart?: boolean;
+  runtimeAuthorizationActorTokenHash?: string | null;
+  runtimeAuthorizationOrgId?: string | null;
+  /** Present only while reading the authenticated recovery descriptor. */
+  gatewayRecoveryExpiresAt?: number | null;
+  gatewayRecoveryState?: "active" | "terminal" | null;
   directory: string;
   kind: RunKind;
   status: RunStatus;
@@ -73,6 +80,7 @@ export type RunStore = {
     engineBaseUrl: string;
   }): RunRecord | null;
   activeForEngineOwner(engineOwnerId: string): RunRecord[];
+  activeManagedGatewayRuns?(workspaceId: string): RunRecord[];
   /** Terminal records that still claim an exact engine owner after restart. */
   terminalAttachedWithEngineOwner(limit?: number): RunRecord[];
   activeCreatedBefore(createdBefore: number, limit?: number): RunRecord[];
@@ -121,10 +129,19 @@ type RunRow = {
   last_useful_progress_at: number | null;
   retry_since: number | null;
   last_progress_signature: string | null;
+  expects_ai_gateway_start: number | null;
+  runtime_authorization_actor_token_hash: string | null;
+  runtime_authorization_org_id: string | null;
+  gateway_recovery_actor_token_hash?: string | null;
+  gateway_recovery_organization_id?: string | null;
+  gateway_recovery_expires_at?: number | null;
+  gateway_recovery_state?: string | null;
 };
 
 const ACTIVE_RUN_STATUS_SQL_LIST = ACTIVE_RUN_STATUSES.map((status) => `'${status}'`).join(", ");
 const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set(["completed", "failed", "aborted"]);
+const GATEWAY_RECOVERY_DESCRIPTOR_TTL_MS = 2 * 60 * 60_000;
+const GATEWAY_RECOVERY_DESCRIPTOR_BACKFILL_MIGRATION = "conversation_run_gateway_recovery_backfill_v1";
 
 export const isActiveRunStatus = (status: RunStatus): boolean =>
   (ACTIVE_RUN_STATUSES as readonly RunStatus[]).includes(status);
@@ -143,6 +160,15 @@ function rowToRecord(row: RunRow): RunRecord {
     clientMessageId: row.client_message_id ?? null,
     opencodeMessageId: row.opencode_message_id ?? null,
     origin: row.origin ?? null,
+    expectsAiGatewayStart: row.expects_ai_gateway_start === 1,
+    runtimeAuthorizationActorTokenHash: row.gateway_recovery_actor_token_hash ?? row.runtime_authorization_actor_token_hash ?? null,
+    runtimeAuthorizationOrgId: row.gateway_recovery_organization_id ?? row.runtime_authorization_org_id ?? null,
+    gatewayRecoveryExpiresAt: row.gateway_recovery_expires_at === null || row.gateway_recovery_expires_at === undefined
+      ? null
+      : Number(row.gateway_recovery_expires_at),
+    gatewayRecoveryState: row.gateway_recovery_state === "active" || row.gateway_recovery_state === "terminal"
+      ? row.gateway_recovery_state
+      : null,
     directory: row.directory,
     kind: row.kind as RunKind,
     status: row.status as RunStatus,
@@ -195,6 +221,9 @@ function openDb(dbPath: string): Database {
       client_message_id TEXT,
       opencode_message_id TEXT,
       origin TEXT,
+      expects_ai_gateway_start INTEGER NOT NULL DEFAULT 0,
+      runtime_authorization_actor_token_hash TEXT,
+      runtime_authorization_org_id TEXT,
       directory TEXT NOT NULL,
       kind TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -223,10 +252,36 @@ function openDb(dbPath: string): Database {
     CREATE UNIQUE INDEX IF NOT EXISTS conversation_run_active_conversation_uidx
       ON conversation_run (workspace_id, conversation_id)
       WHERE status IN (${ACTIVE_RUN_STATUS_SQL_LIST});
+    CREATE TABLE IF NOT EXISTS conversation_run_gateway_recovery (
+      workspace_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      engine_session_id TEXT NOT NULL,
+      actor_token_hash TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
+      issued_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('active', 'terminal')),
+      engine_slot_id TEXT,
+      engine_owner_id TEXT,
+      engine_pid INTEGER,
+      engine_started_at INTEGER,
+      engine_base_url TEXT,
+      PRIMARY KEY (workspace_id, run_id)
+    );
+    CREATE INDEX IF NOT EXISTS conversation_run_gateway_recovery_active_idx
+      ON conversation_run_gateway_recovery (workspace_id, state, expires_at DESC);
+    CREATE TABLE IF NOT EXISTS conversation_run_schema_migration (
+      name TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    );
   `);
   ensureColumn(db, "conversation_run", "client_message_id", "client_message_id TEXT");
   ensureColumn(db, "conversation_run", "opencode_message_id", "opencode_message_id TEXT");
   ensureColumn(db, "conversation_run", "origin", "origin TEXT");
+  ensureColumn(db, "conversation_run", "expects_ai_gateway_start", "expects_ai_gateway_start INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "conversation_run", "runtime_authorization_actor_token_hash", "runtime_authorization_actor_token_hash TEXT");
+  ensureColumn(db, "conversation_run", "runtime_authorization_org_id", "runtime_authorization_org_id TEXT");
   ensureColumn(db, "conversation_run", "engine_slot_id", "engine_slot_id TEXT");
   ensureColumn(db, "conversation_run", "engine_owner_id", "engine_owner_id TEXT");
   ensureColumn(db, "conversation_run", "engine_owner_state", "engine_owner_state TEXT NOT NULL DEFAULT 'pending'");
@@ -241,7 +296,66 @@ function openDb(dbPath: string): Database {
   db.exec(`
     CREATE INDEX IF NOT EXISTS conversation_run_engine_owner_idx
       ON conversation_run (engine_owner_id, status, engine_started_at);
+    CREATE TRIGGER IF NOT EXISTS conversation_run_gateway_recovery_terminalize
+      AFTER UPDATE OF status ON conversation_run
+      WHEN NEW.status IN ('completed', 'failed', 'aborted')
+      BEGIN
+        UPDATE conversation_run_gateway_recovery
+        SET state = 'terminal'
+        WHERE workspace_id = NEW.workspace_id AND run_id = NEW.run_id;
+      END;
+    CREATE TRIGGER IF NOT EXISTS conversation_run_gateway_recovery_owner_update
+      AFTER UPDATE OF engine_slot_id, engine_owner_id, engine_pid, engine_started_at, engine_base_url ON conversation_run
+      BEGIN
+        UPDATE conversation_run_gateway_recovery
+        SET engine_slot_id = NEW.engine_slot_id,
+            engine_owner_id = NEW.engine_owner_id,
+            engine_pid = NEW.engine_pid,
+            engine_started_at = NEW.engine_started_at,
+            engine_base_url = NEW.engine_base_url
+        WHERE workspace_id = NEW.workspace_id
+          AND run_id = NEW.run_id
+          AND state = 'active';
+      END;
   `);
+  const backfilled = db.query<{ name: string }, [string]>(
+    "SELECT name FROM conversation_run_schema_migration WHERE name = ?1",
+  ).get(GATEWAY_RECOVERY_DESCRIPTOR_BACKFILL_MIGRATION);
+  if (!backfilled) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const backfilledInsideTransaction = db.query<{ name: string }, [string]>(
+        "SELECT name FROM conversation_run_schema_migration WHERE name = ?1",
+      ).get(GATEWAY_RECOVERY_DESCRIPTOR_BACKFILL_MIGRATION);
+      if (!backfilledInsideTransaction) {
+        db.exec(`
+          INSERT OR IGNORE INTO conversation_run_gateway_recovery (
+            workspace_id, run_id, conversation_id, engine_session_id,
+            actor_token_hash, organization_id, issued_at, expires_at, state,
+            engine_slot_id, engine_owner_id, engine_pid, engine_started_at, engine_base_url
+          )
+          SELECT workspace_id, run_id, conversation_id, engine_session_id,
+                 runtime_authorization_actor_token_hash,
+                 runtime_authorization_org_id,
+                 created_at,
+                 created_at + ${GATEWAY_RECOVERY_DESCRIPTOR_TTL_MS},
+                 CASE WHEN status IN (${ACTIVE_RUN_STATUS_SQL_LIST}) THEN 'active' ELSE 'terminal' END,
+                 engine_slot_id, engine_owner_id, engine_pid, engine_started_at, engine_base_url
+          FROM conversation_run
+          WHERE expects_ai_gateway_start = 1
+            AND runtime_authorization_actor_token_hash IS NOT NULL
+            AND runtime_authorization_org_id IS NOT NULL;
+        `);
+        db.query(
+          "INSERT INTO conversation_run_schema_migration (name, applied_at) VALUES (?1, ?2)",
+        ).run(GATEWAY_RECOVERY_DESCRIPTOR_BACKFILL_MIGRATION, Date.now());
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw error;
+    }
+  }
   return db;
 }
 
@@ -267,6 +381,8 @@ export function createRunStore(options: { dbPath: string }): RunStore {
   return {
     insert(record) {
       withDb((db) => {
+        db.exec("BEGIN IMMEDIATE");
+        try {
         db.query(
           `INSERT INTO conversation_run (
             workspace_id,
@@ -276,6 +392,9 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             client_message_id,
             opencode_message_id,
             origin,
+            expects_ai_gateway_start,
+            runtime_authorization_actor_token_hash,
+            runtime_authorization_org_id,
             directory,
             kind,
             status,
@@ -295,7 +414,7 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             last_useful_progress_at,
             retry_since,
             last_progress_signature
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
           `,
         ).run(
           record.workspaceId,
@@ -305,6 +424,9 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           record.clientMessageId,
           record.opencodeMessageId ?? null,
           record.origin,
+          record.expectsAiGatewayStart === true ? 1 : 0,
+          record.runtimeAuthorizationActorTokenHash ?? null,
+          record.runtimeAuthorizationOrgId ?? null,
           record.directory,
           record.kind,
           record.status,
@@ -325,6 +447,38 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           record.retrySince,
           record.lastProgressSignature,
         );
+        if (
+          record.expectsAiGatewayStart === true &&
+          record.runtimeAuthorizationActorTokenHash?.trim() &&
+          record.runtimeAuthorizationOrgId?.trim()
+        ) {
+          db.query(
+            `INSERT INTO conversation_run_gateway_recovery (
+              workspace_id, run_id, conversation_id, engine_session_id,
+              actor_token_hash, organization_id, issued_at, expires_at, state,
+              engine_slot_id, engine_owner_id, engine_pid, engine_started_at, engine_base_url
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?10, ?11, ?12, ?13)`,
+          ).run(
+            record.workspaceId,
+            record.runId,
+            record.conversationId,
+            record.engineSessionId,
+            record.runtimeAuthorizationActorTokenHash.trim(),
+            record.runtimeAuthorizationOrgId.trim(),
+            record.createdAt,
+            record.createdAt + GATEWAY_RECOVERY_DESCRIPTOR_TTL_MS,
+            record.engineSlotId,
+            record.engineOwnerId,
+            record.enginePid,
+            record.engineStartedAt,
+            record.engineBaseUrl,
+          );
+        }
+        db.exec("COMMIT");
+        } catch (error) {
+          try { db.exec("ROLLBACK"); } catch {}
+          throw error;
+        }
       });
     },
 
@@ -340,25 +494,28 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             client_message_id = ?5,
             opencode_message_id = ?6,
             origin = ?7,
-            directory = ?8,
-            kind = ?9,
-            status = ?10,
-            abort_requested = ?11,
-            created_at = ?12,
-            started_at = ?13,
-            completed_at = ?14,
-            error = ?15,
-            engine_slot_id = ?16,
-            engine_owner_id = ?17,
-            engine_owner_state = ?18,
-            engine_pid = ?19,
-            engine_started_at = ?20,
-            engine_base_url = ?21,
-            activity_kind = ?22,
-            wait_reason = ?23,
-            last_useful_progress_at = ?24,
-            retry_since = ?25,
-            last_progress_signature = ?26
+            expects_ai_gateway_start = ?8,
+            runtime_authorization_actor_token_hash = ?9,
+            runtime_authorization_org_id = ?10,
+            directory = ?11,
+            kind = ?12,
+            status = ?13,
+            abort_requested = ?14,
+            created_at = ?15,
+            started_at = ?16,
+            completed_at = ?17,
+            error = ?18,
+            engine_slot_id = ?19,
+            engine_owner_id = ?20,
+            engine_owner_state = ?21,
+            engine_pid = ?22,
+            engine_started_at = ?23,
+            engine_base_url = ?24,
+            activity_kind = ?25,
+            wait_reason = ?26,
+            last_useful_progress_at = ?27,
+            retry_since = ?28,
+            last_progress_signature = ?29
            WHERE workspace_id = ?1 AND run_id = ?2`,
         ).run(
           workspaceId,
@@ -368,6 +525,9 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           next.clientMessageId,
           next.opencodeMessageId ?? null,
           next.origin,
+          next.expectsAiGatewayStart === true ? 1 : 0,
+          next.runtimeAuthorizationActorTokenHash ?? null,
+          next.runtimeAuthorizationOrgId ?? null,
           next.directory,
           next.kind,
           next.status,
@@ -461,6 +621,26 @@ export function createRunStore(options: { dbPath: string }): RunStore {
       });
     },
 
+    activeManagedGatewayRuns(workspaceId) {
+      return withDb((db) => {
+        const rows = db.query<RunRow, [string]>(
+          `SELECT run.*,
+                  recovery.actor_token_hash AS gateway_recovery_actor_token_hash,
+                  recovery.organization_id AS gateway_recovery_organization_id,
+                  recovery.expires_at AS gateway_recovery_expires_at,
+                  recovery.state AS gateway_recovery_state
+           FROM conversation_run AS run
+           LEFT JOIN conversation_run_gateway_recovery AS recovery
+             ON recovery.workspace_id = run.workspace_id AND recovery.run_id = run.run_id
+           WHERE run.workspace_id = ?1
+             AND run.status IN (${ACTIVE_RUN_STATUS_SQL_LIST})
+             AND run.expects_ai_gateway_start = 1
+           ORDER BY run.created_at DESC`,
+        ).all(workspaceId);
+        return rows.map(rowToRecord);
+      });
+    },
+
     terminalAttachedWithEngineOwner(limit = 500) {
       const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5_000) : 500;
       return withDb((db) => {
@@ -522,21 +702,33 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           return { ...base, migrated: false, reason: "target_has_records" };
         }
 
-        const result = db.query(
-          `UPDATE conversation_run
-           SET workspace_id = ?1,
-               engine_owner_id = CASE
-                 WHEN engine_owner_id = ?2 THEN ?1
-                 ELSE engine_owner_id
-               END
-           WHERE workspace_id = ?2`,
-        ).run(target, source);
-        return {
-          ...base,
-          migrated: true,
-          updated: Number(result.changes ?? sourceCount),
-          reason: "migrated",
-        };
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          const result = db.query(
+            `UPDATE conversation_run
+             SET workspace_id = ?1,
+                 engine_owner_id = CASE
+                   WHEN engine_owner_id = ?2 THEN ?1
+                   ELSE engine_owner_id
+                 END
+             WHERE workspace_id = ?2`,
+          ).run(target, source);
+          db.query(
+            `UPDATE conversation_run_gateway_recovery
+             SET workspace_id = ?1
+             WHERE workspace_id = ?2`,
+          ).run(target, source);
+          db.exec("COMMIT");
+          return {
+            ...base,
+            migrated: true,
+            updated: Number(result.changes ?? sourceCount),
+            reason: "migrated",
+          };
+        } catch (error) {
+          try { db.exec("ROLLBACK"); } catch {}
+          throw error;
+        }
       });
     },
 

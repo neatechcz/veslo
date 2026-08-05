@@ -1,7 +1,8 @@
 ---
 title: Runtime Authorization Continuity Across Server Worker Replacement Implementation Plan
 date: 2026-08-04
-status: proposed
+updated: 2026-08-05
+status: in_progress
 done: false
 scope: preserve managed-AI authorization across local Veslo server worker replacement without persisting bearer credentials; make the recovered state observable and verify it in the real desktop runtime
 related:
@@ -41,8 +42,10 @@ worker replacement
   -> exact identity match releases the pending gateway request
 
 missing / expired / mismatched proof
-  -> exact run is terminalized through the normal owner-fenced handoff
-  -> no generic late authorization 401, no replay, no successor race
+  -> request one exact owner-fenced handoff through the normal lifecycle path
+  -> mark the run terminal only after its engine exit is observed
+  -> otherwise keep it fenced and reject a successor rather than asserting death
+  -> no generic late authorization 401 and no replay
 ```
 
 ## Non-negotiable invariants
@@ -56,7 +59,9 @@ missing / expired / mismatched proof
 3. The descriptor is non-secret. It may identify an authorization subject but
    never stores a bearer or data sufficient to recreate one.
 4. Ambiguity, expiry, actor mismatch, organization mismatch, stale owner, or
-   missing desktop proof always fails closed with one recorded terminal reason.
+   missing desktop proof always fails closed. A terminal state is recorded only
+   after the owner-fenced handoff proves the engine exited; an unconfirmed
+   handoff remains explicitly fenced and blocks a successor.
 5. An authorization recovery wait is bounded and shorter than the gateway
    proxy header timeout. It is not a longer model timeout or an automatic
    submit retry.
@@ -161,8 +166,11 @@ the exact descriptor; a terminal run has no recoverable descriptor.
    its pending request.
 6. If the descriptor is stale, a matching prime cannot arrive before the
    recovery deadline, or the authorization is expired, transition the gate once
-   to `terminalizing`. Request terminalization and stop only the matching
-   OpenCode session through the existing owner-fenced lifecycle handoff.
+   to `terminalizing`. Stop only the matching OpenCode session through the
+   existing owner-fenced lifecycle handoff. Write a terminal run state only if
+   that handoff observes process exit. If exit cannot be observed, retain a
+   durable owner fence and reject a successor; never manufacture
+   `exited_confirmed` from a timeout or an ignored stop result.
 7. Return a dedicated safe recovery outcome for that request path, never
    `gateway_runtime_authorization_required`. Do not replay the original prompt
    and do not release a queued successor until terminal handoff is proven.
@@ -171,8 +179,9 @@ the exact descriptor; a terminal run has no recoverable descriptor.
 
 **Acceptance criteria:** a restored run can process a later placeholder-session
 gateway request only after a matching fresh prime. A missing or mismatched
-prime produces one deliberate terminal outcome and cannot authorize another
-run.
+prime produces one deliberate fenced outcome. A successor is admitted only
+after the owner-fenced handoff proves the old engine exited; otherwise neither
+run is authorized.
 
 ## Slice 3 -- desktop generation-aware re-prime
 
@@ -241,9 +250,10 @@ proof.
    next request, replace only the server worker, and release the request after
    desktop re-prime. Assert one run, one user turn, no duplicate provider
    request, and successful completion without a generic 401.
-2. Repeat while the desktop cannot re-prime. Assert one controlled terminal
-   state, a fenced exact engine handoff, and no admitted successor before that
-   terminal result.
+2. Repeat while the desktop cannot re-prime. Assert one controlled fenced
+   outcome and an exact engine handoff. Admit a successor only after observed
+   old-engine exit; if the stop result is ambiguous, assert that the successor
+   remains blocked rather than treating the run as terminal.
 3. Repeat with two active managed-AI contexts using different workspace and/or
    organization bindings. Prime one and prove that the other remains pending
    until its own matching prime arrives.
@@ -266,16 +276,31 @@ proof.
 - Combining this implementation with the independent orphan-assistant or
   missing-terminalization investigations.
 
-## Delivery order
+## Implementation sequence
 
-1. Slice 1: durable descriptor and internal lifecycle API.
-2. Slice 2: server bootstrap, recovery gate, and controlled terminal path.
-3. Slice 3: desktop generation-aware re-prime.
-4. Slice 4: worker attribution, in parallel with Slices 1--3.
-5. Slice 5: safe failure projection.
-6. Real desktop replacement scenario, then focused support tests and normal
-   quality gate.
+This is the execution order. Each item has one owner, one concrete output, and
+one completion condition; it is not an investigation checklist.
 
-Each slice is independently reversible. Do not ship Slice 2 without Slice 1,
-and do not claim recovery works until the desktop scenario in Verification
-passes.
+| Step | Owner | Implementation output | Done when |
+| --- | --- | --- | --- |
+| 1 | Lifecycle persistence | Non-secret recovery descriptor, migration, atomic registration and terminal cleanup, plus a redacted internal bootstrap response. | Direct and queue-drained runs persist the same exact descriptor; completed/failed/aborted runs are not recoverable. |
+| 2 | Server recovery boundary | Fresh worker generation, pre-proxy hydration, exact session-to-run correlation, and one recovery gate per durable run. | A recovered placeholder request cannot fall through to workspace-only or generic authorization. |
+| 3 | Server failure path | Matching-prime release and one owner-fenced deadline path with safe recovery outcomes and trace classification. | A matching fresh prime releases only its own run; a missing/mismatched prime neither replays nor authorizes a run, and an unobserved stop blocks successors. |
+| 4 | Desktop runtime config | Generation-aware authorization-prime cache and one re-prime per active affected workspace. | A changed worker generation produces a new authenticated prime even inside the old cache interval and does not present as a connection outage. |
+| 5 | Native supervisor and diagnostics | Replacement record and worker generation on server trace/health surfaces. | Diagnostics identify the replacement boundary and evidence-backed initiator without credentials. |
+| 6 | Focused support tests | Lifecycle, server, orchestrator, and isolated daemon replacement tests for direct/queued descriptors, mismatch, expiry, redaction, and cross-workspace isolation. | All focused tests pass, including the no-prime fence and two-context isolation cases. |
+| 7 | Desktop WebDriverIO | An isolated, controlled-provider Tauri runtime that holds a provider request across server-worker replacement. It must use native WebDriverIO, not Tauri Pilot and not a UI-only server. | It proves one direct run/turn/request, fresh re-prime after replacement, successful release after a matching prime, and a no-prime case that keeps a successor fenced until observed exit. |
+| 8 | Regression gate | Standard changed-surface type, lint, Rust, server, app, orchestrator, and WebDriver checks. | All selected gates are green; the desktop proof is reported separately, not inferred from support tests. |
+
+### Current implementation boundary
+
+Steps 1--6 are implemented and have focused automated coverage. Step 7 is the
+remaining release-blocking proof: the current live WebDriver scenario exercises
+a real signed-in desktop runtime and worker restart, but cannot deterministically
+hold or count provider requests. Implement its isolated controlled-provider
+runtime before marking this plan complete. Do not substitute a headless daemon
+test, a trace counter, or a successful later submit for that proof.
+
+Step 8 may run in parallel with Step 7, but it does not turn Step 7 into an
+optional check. No slice is claimed complete merely because its support tests
+are green.

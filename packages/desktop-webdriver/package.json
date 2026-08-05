@@ -17,7 +17,9 @@
     "test:existing-session-document-follow-up": "node ./src/existing-session-document-follow-up.mjs",
     "test:sidebar-flicker": "node ./src/sidebar-workspace-accordion-flicker.mjs",
     "test:skill-sidebar-refresh": "node ./src/skill-sidebar-refresh.mjs",
-    "test:skill-sidebar-refresh:owned": "node ./src/skill-sidebar-refresh-owned.mjs"
+    "test:skill-sidebar-refresh:owned": "node ./src/skill-sidebar-refresh-owned.mjs",
+    "test:managed-ai-worker-replacement": "node ./src/managed-ai-worker-replacement.mjs",
+    "test:managed-ai-worker-replacement:isolated": "node ./src/managed-ai-worker-replacement-isolated.mjs"
   },
   "dependencies": {
     "webdriverio": "^9.30.0"
