@@ -1,11 +1,17 @@
 import express from "express"
 
 import { GoogleWorkspaceConnectors, getGoogleWorkspaceConnector } from "../google-workspace/connectors.js"
+import {
+  downloadGmailAttachment,
+  GoogleGmailAttachmentError,
+} from "../google-workspace/gmail-attachments.js"
 import type { GoogleWorkspaceOAuthClient } from "../google-workspace/oauth.js"
 import type { GoogleWorkspaceConnectionStore } from "../google-workspace/store.js"
 import {
+  createSignedGoogleWorkspaceAttachmentToken,
   createSignedGoogleWorkspaceRuntimeToken,
   createSignedGoogleWorkspaceOAuthState,
+  verifySignedGoogleWorkspaceAttachmentToken,
   verifySignedGoogleWorkspaceRuntimeToken,
   verifySignedGoogleWorkspaceOAuthState,
 } from "../google-workspace/state.js"
@@ -13,6 +19,36 @@ import { asyncRoute } from "./errors.js"
 import { requireOrganizationAccess } from "./org-auth.js"
 
 type GoogleWorkspaceAuthorize = typeof requireOrganizationAccess
+
+const GMAIL_ATTACHMENT_TOOL_NAME = "download_attachment"
+const GMAIL_ATTACHMENT_DOWNLOAD_PATH = "/v1/integrations/google/gmail/attachment-download"
+
+const GMAIL_ATTACHMENT_TOOL = {
+  name: GMAIL_ATTACHMENT_TOOL_NAME,
+  description: [
+    "Download the original bytes of one Gmail message attachment.",
+    "Call get_message or get_thread first to obtain the message id and attachment metadata.",
+    "Then use the returned short-lived downloadUrl with a shell or HTTP downloader to save the file into the current workspace.",
+    "Do not ask the user to re-upload the attachment when this tool is available.",
+  ].join(" "),
+  annotations: {
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+    readOnlyHint: true,
+    title: "Download Gmail attachment",
+  },
+  inputSchema: {
+    type: "object",
+    properties: {
+      messageId: { type: "string", description: "Gmail message id containing the attachment." },
+      attachmentId: { type: "string", description: "Attachment id returned by Gmail message metadata." },
+      filename: { type: "string", description: "Original attachment filename returned by Gmail." },
+      mimeType: { type: "string", description: "Attachment MIME type returned by Gmail." },
+    },
+    required: ["messageId", "attachmentId", "filename", "mimeType"],
+  },
+}
 
 export type GoogleWorkspaceRouterOptions = {
   authorize?: GoogleWorkspaceAuthorize
@@ -23,6 +59,7 @@ export type GoogleWorkspaceRouterOptions = {
   successRedirectUrl: string
   now?: () => number
   runtimeTokenTtlMs?: number
+  attachmentDownloadTtlMs?: number
   fetchImpl?: typeof fetch
 }
 
@@ -160,6 +197,60 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
     }))
   }))
 
+  router.get("/integrations/google/gmail/attachment-download", asyncRoute(async (req, res) => {
+    const token = firstQueryValue(req.query.token)?.trim() || ""
+    const verified = verifySignedGoogleWorkspaceAttachmentToken(token, {
+      secret: options.stateSecret,
+      now: options.now,
+    })
+    if (!verified) {
+      res.status(401).json({ error: "google_gmail_attachment_token_invalid" })
+      return
+    }
+
+    const connector = getGoogleWorkspaceConnector(verified.connectorId)
+    if (!connector) {
+      res.status(400).json({ error: "unknown_google_workspace_connector" })
+      return
+    }
+    const grant = await resolveUsableGrant({
+      store: options.store,
+      oauth: options.oauth,
+      orgId: verified.orgId,
+      userId: verified.userId,
+      connectorId: verified.connectorId,
+      scopes: connector.scopes,
+      now: options.now,
+    })
+    if (!grant?.accessToken) {
+      res.status(401).json({ error: "google_workspace_connection_required", connectorId: connector.id })
+      return
+    }
+
+    try {
+      const attachment = await downloadGmailAttachment({
+        accessToken: grant.accessToken,
+        messageId: verified.messageId,
+        attachmentId: verified.attachmentId,
+        fetchImpl: options.fetchImpl,
+      })
+      res.setHeader("cache-control", "private, no-store")
+      res.setHeader("content-type", safeAttachmentContentType(verified.mimeType))
+      res.setHeader("content-disposition", contentDispositionAttachment(verified.filename))
+      res.setHeader("content-length", String(attachment.size))
+      res.send(Buffer.from(attachment.bytes))
+    } catch (error) {
+      if (error instanceof GoogleGmailAttachmentError) {
+        res.status(error.status).json({
+          error: error.code,
+          ...(error.maxBytes === null ? {} : { maxBytes: error.maxBytes }),
+        })
+        return
+      }
+      throw error
+    }
+  }))
+
   router.get("/orgs/:orgId/integrations/google/connections", asyncRoute(async (req, res) => {
     const context = await authorize(req, res, {
       orgId: req.params.orgId,
@@ -270,6 +361,47 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       return
     }
 
+    const mcpRequest = parseMcpRequest(req.body)
+    if (
+      connector.id === "google-gmail" &&
+      mcpRequest?.method === "tools/call" &&
+      mcpToolName(mcpRequest.params) === GMAIL_ATTACHMENT_TOOL_NAME
+    ) {
+      const args = gmailAttachmentToolArguments(mcpRequest.params)
+      if (!args.ok) {
+        res.json(jsonRpcError(mcpRequest.id, -32602, "invalid_params", { invalid: args.invalid }))
+        return
+      }
+
+      const issuedAt = options.now?.() ?? Date.now()
+      const ttlMs = options.attachmentDownloadTtlMs ?? 5 * 60 * 1000
+      const token = createSignedGoogleWorkspaceAttachmentToken({
+        orgId: verified.orgId,
+        userId: verified.userId,
+        messageId: args.value.messageId,
+        attachmentId: args.value.attachmentId,
+        filename: args.value.filename,
+        mimeType: args.value.mimeType,
+        secret: options.stateSecret,
+        ttlMs,
+        now: () => issuedAt,
+      })
+      const download = {
+        downloadUrl: buildRedirectUrl(`${resolvePublicBaseUrl(req)}${GMAIL_ATTACHMENT_DOWNLOAD_PATH}`, { token }),
+        filename: args.value.filename,
+        mimeType: args.value.mimeType,
+        expiresAt: new Date(issuedAt + ttlMs).toISOString(),
+      }
+      res.json(jsonRpcResult(mcpRequest.id, {
+        content: [{
+          type: "text",
+          text: `Use the downloadUrl to save ${args.value.filename} into the current workspace. The URL expires at ${download.expiresAt}.`,
+        }],
+        structuredContent: download,
+      }))
+      return
+    }
+
     const upstreamUrl = new URL(connector.mcpUrl)
     const requestUrl = new URL(req.originalUrl, "http://localhost")
     upstreamUrl.search = requestUrl.search
@@ -286,11 +418,158 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
         res.setHeader(key, value)
       }
     })
-    const body = Buffer.from(await upstreamResponse.arrayBuffer())
+    const upstreamBody = Buffer.from(await upstreamResponse.arrayBuffer())
+    const body = connector.id === "google-gmail" && mcpRequest?.method === "tools/list"
+      ? augmentGmailToolsList(upstreamBody)
+      : upstreamBody
     res.send(body)
   }))
 
   return router
+}
+
+type JsonRpcId = string | number | null
+
+type McpRequest = {
+  jsonrpc: "2.0"
+  method: string
+  params: unknown
+  id: JsonRpcId
+}
+
+type GmailAttachmentToolArguments = {
+  messageId: string
+  attachmentId: string
+  filename: string
+  mimeType: string
+}
+
+function parseMcpRequest(body: unknown): McpRequest | null {
+  const request = asRecord(body)
+  if (!request || request.jsonrpc !== "2.0" || typeof request.method !== "string") {
+    return null
+  }
+  return {
+    jsonrpc: "2.0",
+    method: request.method,
+    params: request.params,
+    id: jsonRpcId(request.id),
+  }
+}
+
+function mcpToolName(params: unknown) {
+  const payload = asRecord(params)
+  return typeof payload?.name === "string" ? payload.name : ""
+}
+
+function gmailAttachmentToolArguments(params: unknown):
+  | { ok: true; value: GmailAttachmentToolArguments }
+  | { ok: false; invalid: keyof GmailAttachmentToolArguments } {
+  const payload = asRecord(params)
+  const args = asRecord(payload?.arguments)
+  const limits: Record<keyof GmailAttachmentToolArguments, number> = {
+    messageId: 512,
+    attachmentId: 4096,
+    filename: 512,
+    mimeType: 255,
+  }
+
+  for (const field of ["messageId", "attachmentId", "filename", "mimeType"] as const) {
+    const value = args?.[field]
+    if (typeof value !== "string" || !value.trim() || value.length > limits[field]) {
+      return { ok: false, invalid: field }
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      messageId: args?.messageId as string,
+      attachmentId: args?.attachmentId as string,
+      filename: args?.filename as string,
+      mimeType: args?.mimeType as string,
+    },
+  }
+}
+
+function augmentGmailToolsList(body: Buffer) {
+  try {
+    const payload = JSON.parse(body.toString("utf8")) as Record<string, unknown>
+    const result = asRecord(payload.result)
+    if (!result || !Array.isArray(result.tools)) {
+      return body
+    }
+    const hasDownloadTool = result.tools.some((tool) => asRecord(tool)?.name === GMAIL_ATTACHMENT_TOOL_NAME)
+    if (!hasDownloadTool) {
+      result.tools = [...result.tools, GMAIL_ATTACHMENT_TOOL]
+    }
+    return Buffer.from(JSON.stringify(payload), "utf8")
+  } catch {
+    return body
+  }
+}
+
+function jsonRpcResult(id: JsonRpcId, result: unknown) {
+  return {
+    jsonrpc: "2.0" as const,
+    result,
+    id,
+  }
+}
+
+function jsonRpcError(id: JsonRpcId, code: number, message: string, data?: unknown) {
+  return {
+    jsonrpc: "2.0" as const,
+    error: {
+      code,
+      message,
+      ...(data === undefined ? {} : { data }),
+    },
+    id,
+  }
+}
+
+function jsonRpcId(value: unknown): JsonRpcId {
+  if (typeof value === "string" || typeof value === "number" || value === null) {
+    return value
+  }
+  return null
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function safeAttachmentContentType(value: string) {
+  const normalized = value.trim()
+  return /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(normalized)
+    ? normalized
+    : "application/octet-stream"
+}
+
+function contentDispositionAttachment(value: string) {
+  const safeFilename = safeAttachmentFilename(value)
+  const asciiFilename = safeFilename
+    .replace(/[^\x20-\x7e]/g, "_")
+    .replace(/["\\]/g, "_")
+  if (asciiFilename === safeFilename) {
+    return `attachment; filename="${asciiFilename}"`
+  }
+  return `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`
+}
+
+function safeAttachmentFilename(value: string) {
+  const basename = value.replace(/\\/g, "/").split("/").at(-1) ?? ""
+  const normalized = basename
+    .replace(/[\x00-\x1f\x7f]/g, "")
+    .replace(/"/g, "_")
+    .trim()
+    .slice(0, 255)
+  return normalized && normalized !== "." && normalized !== ".."
+    ? normalized
+    : "gmail-attachment.bin"
 }
 
 async function resolveUsableGrant(input: {
