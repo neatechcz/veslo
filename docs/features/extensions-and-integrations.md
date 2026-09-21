@@ -198,6 +198,21 @@ Keep these states distinct in product behavior and docs:
 Catalog visibility and installed config are not proof that Google OAuth has
 completed or that the live runtime is connected.
 
+The hosted Google Gmail MCP server exposes message bodies and attachment
+metadata, but not a dedicated attachment-byte tool. Veslo therefore augments
+only the `google-gmail` MCP tool list with `download_attachment`. The tool uses
+the message id plus attachment metadata returned by Gmail and gives the agent a
+short-lived URL for saving the original bytes into the active workspace. This
+supports binary files such as ZIP archives without putting their base64 content
+into the model context or asking the user to upload the file again.
+
+The download URL is signed for one organization, user, Gmail message, and
+attachment and expires after five minutes. Den retrieves the bytes with the
+server-managed Google grant and the existing `gmail.readonly` scope. Google
+access and refresh tokens remain outside OpenCode config, workspace files, MCP
+results, and conversation transcripts. Calendar and Drive MCP tool lists remain
+unmodified pass-through responses.
+
 ### Platform Microsoft SharePoint MCP Connector
 
 Veslo provides Microsoft SharePoint as a separate platform MCP connector, not

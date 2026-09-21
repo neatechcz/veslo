@@ -207,6 +207,16 @@ Render worker configuration may remain present only while rollback support is re
 
 ## Verification
 
+For a staging change to the platform Gmail connector, verify the normal staging
+deployment and public Den health first. Then use an authenticated staging Gmail
+runtime token to call MCP `tools/list` and confirm that the Veslo-owned
+`download_attachment` tool is present alongside Google's hosted tools. When a
+connected staging Gmail account and fixture message are available, call the
+tool, save the returned short-lived URL to a file, and compare the downloaded
+byte hash with the fixture. Never print or retain the runtime token, signed URL,
+Google grant, or attachment content in workflow logs. An unauthenticated health
+check alone does not prove attachment download behavior.
+
 For changes to production deployment behavior:
 
 1. Confirm `Deploy Owned Server` has no `push` trigger.
