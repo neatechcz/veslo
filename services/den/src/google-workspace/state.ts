@@ -25,6 +25,21 @@ export type GoogleWorkspaceRuntimeTokenPayload = {
   expiresAt: number
 }
 
+export type GoogleWorkspaceAttachmentTokenPayload = {
+  v: 1
+  kind: "google-gmail-attachment"
+  nonce: string
+  orgId: string
+  userId: string
+  connectorId: "google-gmail"
+  messageId: string
+  attachmentId: string
+  filename: string
+  mimeType: string
+  issuedAt: number
+  expiresAt: number
+}
+
 export type CreateGoogleWorkspaceOAuthStateInput = {
   orgId: string
   userId: string
@@ -179,6 +194,105 @@ export function verifySignedGoogleWorkspaceRuntimeToken(
   } catch {
     return null
   }
+}
+
+export function createSignedGoogleWorkspaceAttachmentToken(input: {
+  orgId: string
+  userId: string
+  messageId: string
+  attachmentId: string
+  filename: string
+  mimeType: string
+  secret: string
+  ttlMs?: number
+  now?: () => number
+  randomUUID?: () => string
+}) {
+  const now = input.now?.() ?? Date.now()
+  const payload: GoogleWorkspaceAttachmentTokenPayload = {
+    v: 1,
+    kind: "google-gmail-attachment",
+    nonce: input.randomUUID?.() ?? crypto.randomUUID(),
+    orgId: input.orgId,
+    userId: input.userId,
+    connectorId: "google-gmail",
+    messageId: input.messageId,
+    attachmentId: input.attachmentId,
+    filename: input.filename,
+    mimeType: input.mimeType,
+    issuedAt: now,
+    expiresAt: now + (input.ttlMs ?? 5 * 60 * 1000),
+  }
+  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")
+  const signature = signState(encoded, input.secret)
+  return `${encoded}.${signature}`
+}
+
+export function verifySignedGoogleWorkspaceAttachmentToken(
+  token: string,
+  input: {
+    secret: string
+    now?: () => number
+  },
+): GoogleWorkspaceAttachmentTokenPayload | null {
+  const segments = token.split(".")
+  if (segments.length !== 2) {
+    return null
+  }
+  const [encoded, signature] = segments
+  if (!encoded || !signature) {
+    return null
+  }
+
+  const expected = signState(encoded, input.secret)
+  const signatureBuffer = new Uint8Array(Buffer.from(signature))
+  const expectedBuffer = new Uint8Array(Buffer.from(expected))
+  if (signatureBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as Record<string, unknown>
+    const now = input.now?.() ?? Date.now()
+    if (
+      parsed.v !== 1 ||
+      parsed.kind !== "google-gmail-attachment" ||
+      !isNonBlankString(parsed.nonce) ||
+      !isNonBlankString(parsed.orgId) ||
+      !isNonBlankString(parsed.userId) ||
+      parsed.connectorId !== "google-gmail" ||
+      !isNonBlankString(parsed.messageId) ||
+      !isNonBlankString(parsed.attachmentId) ||
+      !isNonBlankString(parsed.filename) ||
+      !isNonBlankString(parsed.mimeType) ||
+      typeof parsed.issuedAt !== "number" ||
+      typeof parsed.expiresAt !== "number" ||
+      parsed.expiresAt <= now
+    ) {
+      return null
+    }
+
+    return {
+      v: 1,
+      kind: "google-gmail-attachment",
+      nonce: parsed.nonce,
+      orgId: parsed.orgId,
+      userId: parsed.userId,
+      connectorId: "google-gmail",
+      messageId: parsed.messageId,
+      attachmentId: parsed.attachmentId,
+      filename: parsed.filename,
+      mimeType: parsed.mimeType,
+      issuedAt: parsed.issuedAt,
+      expiresAt: parsed.expiresAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0
 }
 
 function signState(encodedPayload: string, secret: string) {
