@@ -198,6 +198,11 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
   }))
 
   router.get("/integrations/google/gmail/attachment-download", asyncRoute(async (req, res) => {
+    res.setHeader("cache-control", "private, no-store")
+    res.setHeader("content-security-policy", "sandbox; default-src 'none'; base-uri 'none'")
+    res.setHeader("referrer-policy", "no-referrer")
+    res.setHeader("x-content-type-options", "nosniff")
+
     const token = firstQueryValue(req.query.token)?.trim() || ""
     const verified = verifySignedGoogleWorkspaceAttachmentToken(token, {
       secret: options.stateSecret,
@@ -234,7 +239,6 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
         attachmentId: verified.attachmentId,
         fetchImpl: options.fetchImpl,
       })
-      res.setHeader("cache-control", "private, no-store")
       res.setHeader("content-type", safeAttachmentContentType(verified.mimeType))
       res.setHeader("content-disposition", contentDispositionAttachment(verified.filename))
       res.setHeader("content-length", String(attachment.size))
@@ -412,17 +416,20 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       body: shouldForwardBody(req.method) ? serializeProxyBody(req.body) : undefined,
     })
 
+    const upstreamBody = Buffer.from(await upstreamResponse.arrayBuffer())
+    const toolListResponse = upstreamResponse.ok && connector.id === "google-gmail" && mcpRequest?.method === "tools/list"
+      ? augmentGmailToolsList(upstreamBody)
+      : { body: upstreamBody, augmented: false }
     res.status(upstreamResponse.status)
     upstreamResponse.headers.forEach((value, key) => {
-      if (!isHopByHopHeader(key)) {
+      if (
+        !isHopByHopHeader(key) &&
+        !(toolListResponse.augmented && isRepresentationMetadataHeader(key))
+      ) {
         res.setHeader(key, value)
       }
     })
-    const upstreamBody = Buffer.from(await upstreamResponse.arrayBuffer())
-    const body = connector.id === "google-gmail" && mcpRequest?.method === "tools/list"
-      ? augmentGmailToolsList(upstreamBody)
-      : upstreamBody
-    res.send(body)
+    res.send(toolListResponse.body)
   }))
 
   return router
@@ -497,16 +504,32 @@ function augmentGmailToolsList(body: Buffer) {
     const payload = JSON.parse(body.toString("utf8")) as Record<string, unknown>
     const result = asRecord(payload.result)
     if (!result || !Array.isArray(result.tools)) {
-      return body
+      return { body, augmented: false }
     }
     const hasDownloadTool = result.tools.some((tool) => asRecord(tool)?.name === GMAIL_ATTACHMENT_TOOL_NAME)
-    if (!hasDownloadTool) {
-      result.tools = [...result.tools, GMAIL_ATTACHMENT_TOOL]
+    if (hasDownloadTool) {
+      return { body, augmented: false }
     }
-    return Buffer.from(JSON.stringify(payload), "utf8")
+    result.tools = [...result.tools, GMAIL_ATTACHMENT_TOOL]
+    return {
+      body: Buffer.from(JSON.stringify(payload), "utf8"),
+      augmented: true,
+    }
   } catch {
-    return body
+    return { body, augmented: false }
   }
+}
+
+function isRepresentationMetadataHeader(name: string) {
+  return [
+    "content-digest",
+    "content-encoding",
+    "content-length",
+    "content-md5",
+    "digest",
+    "etag",
+    "repr-digest",
+  ].includes(name.toLowerCase())
 }
 
 function jsonRpcResult(id: JsonRpcId, result: unknown) {
@@ -566,9 +589,9 @@ function safeAttachmentFilename(value: string) {
     .replace(/[\x00-\x1f\x7f]/g, "")
     .replace(/"/g, "_")
     .trim()
-    .slice(0, 255)
-  return normalized && normalized !== "." && normalized !== ".."
-    ? normalized
+  const truncated = Array.from(normalized).slice(0, 255).join("")
+  return truncated && truncated !== "." && truncated !== ".."
+    ? truncated
     : "gmail-attachment.bin"
 }
 

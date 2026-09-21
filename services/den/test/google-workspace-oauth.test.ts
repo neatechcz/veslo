@@ -125,7 +125,9 @@ async function connectGoogleConnector(
           "https://www.googleapis.com/auth/gmail.readonly",
           "https://www.googleapis.com/auth/gmail.compose",
         ]
-      : ["https://www.googleapis.com/auth/calendar.events.readonly"],
+      : connectorId === "google-calendar"
+        ? ["https://www.googleapis.com/auth/calendar.events.readonly"]
+        : ["https://www.googleapis.com/auth/drive.readonly"],
     grant: {
       accessToken: `stored_${connectorId}_access`,
       refreshToken: `stored_${connectorId}_refresh`,
@@ -282,6 +284,11 @@ test("google Gmail MCP tools/list adds the Veslo attachment download tool", asyn
           tools: [{ name: "get_message", description: "Get a Gmail message" }],
         },
         id: "list-1",
+      }, {
+        headers: {
+          "content-encoding": "identity",
+          etag: "\"upstream-representation\"",
+        },
       })
     },
   })
@@ -311,38 +318,42 @@ test("google Gmail MCP tools/list adds the Veslo attachment download tool", asyn
       "filename",
       "mimeType",
     ])
+    assert.equal(response.headers.get("content-encoding"), null)
+    assert.notEqual(response.headers.get("etag"), "\"upstream-representation\"")
     assert.equal(upstreamCalls.length, 1)
   } finally {
     await server.close()
   }
 })
 
-test("google Calendar MCP tools/list remains an unmodified pass-through", async () => {
+test("google Calendar and Drive MCP tools/list remain unmodified pass-throughs", async () => {
   const upstreamPayload = {
     jsonrpc: "2.0",
     result: { tools: [{ name: "list_events" }] },
-    id: "list-calendar",
+    id: "list-non-gmail",
   }
   const server = await startServer({
     fetchImpl: async () => Response.json(upstreamPayload),
   })
 
   try {
-    const tokenPayload = await connectGoogleConnector(server, "google-calendar")
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/v1/orgs/org_1/integrations/google/google-calendar/mcp`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veslo-connector-token": tokenPayload.token,
+    for (const connectorId of ["google-calendar", "google-drive"] as const) {
+      const tokenPayload = await connectGoogleConnector(server, connectorId)
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/v1/orgs/org_1/integrations/google/${connectorId}/mcp`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veslo-connector-token": tokenPayload.token,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: "list-non-gmail" }),
         },
-        body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: "list-calendar" }),
-      },
-    )
+      )
 
-    assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), upstreamPayload)
+      assert.equal(response.status, 200)
+      assert.deepEqual(await response.json(), upstreamPayload)
+    }
   } finally {
     await server.close()
   }
@@ -513,10 +524,60 @@ test("google Gmail attachment URL returns exact ZIP bytes with safe download hea
     assert.equal(downloadResponse.headers.get("content-type"), "application/zip")
     assert.equal(downloadResponse.headers.get("content-disposition"), "attachment; filename=\"unsafearchive.zip\"")
     assert.equal(downloadResponse.headers.get("cache-control"), "private, no-store")
+    assert.equal(downloadResponse.headers.get("x-content-type-options"), "nosniff")
     assert.deepEqual(gmailCalls, [{
       url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/message%2F1/attachments/attachment%2B1",
       authorization: "Bearer stored_google-gmail_access",
     }])
+  } finally {
+    await server.close()
+  }
+})
+
+test("google Gmail attachment URL safely truncates a long Unicode filename", async () => {
+  const bytes = Buffer.from([0x50, 0x4b])
+  const filename = `${"a".repeat(254)}😀.zip`
+  const server = await startServer({
+    fetchImpl: async () => Response.json({
+      size: bytes.byteLength,
+      data: bytes.toString("base64url"),
+    }),
+  })
+
+  try {
+    const tokenPayload = await connectGoogleConnector(server)
+    const toolResponse = await fetch(
+      `http://127.0.0.1:${server.port}/v1/orgs/org_1/integrations/google/google-gmail/mcp`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veslo-connector-token": tokenPayload.token,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          id: 1,
+          params: {
+            name: "download_attachment",
+            arguments: {
+              messageId: "message_1",
+              attachmentId: "attachment_1",
+              filename,
+              mimeType: "application/zip",
+            },
+          },
+        }),
+      },
+    )
+    const toolPayload = await toolResponse.json() as {
+      result: { structuredContent: { downloadUrl: string } }
+    }
+
+    const downloadResponse = await fetch(toolPayload.result.structuredContent.downloadUrl)
+    assert.equal(downloadResponse.status, 200)
+    assert.deepEqual(Buffer.from(await downloadResponse.arrayBuffer()), bytes)
+    assert.match(downloadResponse.headers.get("content-disposition") ?? "", /filename\*=UTF-8''/)
   } finally {
     await server.close()
   }
