@@ -2,26 +2,61 @@ name: Mobile TestFlight bridge
 
 on:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Exact mobile commit to publish
+        required: true
+        default: da7c0912f3a9aed894477955ca4cf21fe6ca2ae9
+        type: string
+      build_number:
+        description: New, unused TestFlight build number
+        required: true
+        default: '10'
+        type: string
+      publish:
+        description: Sign and upload after the API access check
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: mobile-testflight-bridge
+  cancel-in-progress: false
+
 jobs:
-  probe:
+  release:
     runs-on: macos-26
-    timeout-minutes: 10
+    timeout-minutes: 90
     environment: release-signing
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+      VESLO_SERVER_URL: https://staging.veslo.work
+      VESLO_ALLOW_LOOPBACK_HTTP: '0'
+      SOURCE_REF: ${{ inputs.source_ref }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      ASC_APP_ID: '6812971109'
     steps:
       - name: Check access to mobile source
         uses: actions/checkout@v4
         with:
           repository: neatechcz/Veslo-mobile
-          ref: da7c0912f3a9aed894477955ca4cf21fe6ca2ae9
+          ref: ${{ inputs.source_ref }}
           token: ${{ secrets.RELEASE_UPDATES_GH_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Verify source and build number
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_REF" ]]
+          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] && (( BUILD_NUMBER > 9 ))
+          xcodebuild -version
 
       - name: Check Apple API access without exposing credentials
         env:
@@ -45,3 +80,80 @@ jobs:
           }
           console.log('Apple API key can access Veslo mobile app.');
           JS
+
+      - name: Prepare Apple API key for Xcode command-line signing
+        if: inputs.publish
+        shell: bash
+        env:
+          APPLE_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_KEY_ID}.p8"
+          printf '%s' "$APPLE_KEY_BASE64" | base64 --decode > "$key_path"
+          openssl pkey -in "$key_path" -noout
+          printf 'ASC_PRIVATE_KEY_PATH=%s\n' "$key_path" >> "$GITHUB_ENV"
+          printf 'ASC_KEY_ID=%s\nASC_ISSUER_ID=%s\n' "$APPLE_KEY_ID" "$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
+
+      - name: Generate staging Capacitor assets
+        if: inputs.publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm sync
+          node -e "const c=require('./ios/App/App/capacitor.config.json'); if(c.server.url!=='https://staging.veslo.work') process.exit(1)"
+
+      - name: Archive and sign current mobile commit
+        if: inputs.publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Veslo.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_PRIVATE_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            archive
+
+      - name: Verify signed archive identity
+        if: inputs.publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/Veslo.xcarchive/Products/Applications/App.app"
+          test -d "$app"
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist")
+          [[ "$bundle_id" == cz.neatech.veslo && "$version" == 0.1.0 && "$build" == "$BUILD_NUMBER" ]]
+          codesign --verify --deep --strict "$app"
+          echo "Signed archive verified: $bundle_id $version ($build), mobile commit $SOURCE_REF"
+
+      - name: Upload signed archive to App Store Connect
+        if: inputs.publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Veslo.xcarchive" \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_PRIVATE_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Confirm processed TestFlight build and internal group
+        if: inputs.publish
+        run: node scripts/confirm-testflight.mjs
