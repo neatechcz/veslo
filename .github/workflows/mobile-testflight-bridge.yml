@@ -90,6 +90,22 @@ jobs:
             });
             console.log(`${label} API access: HTTP ${result.status}`);
           }
+          const headers = { Authorization: `Bearer ${token}` };
+          const certificates = await fetch('https://api.appstoreconnect.apple.com/v1/certificates?limit=200', { headers });
+          if (certificates.ok) {
+            const payload = await certificates.json();
+            const types = payload.data.reduce((counts, item) => {
+              const type = item.attributes.certificateType;
+              counts[type] = (counts[type] ?? 0) + 1;
+              return counts;
+            }, {});
+            console.log(`Certificate type counts: ${JSON.stringify(types)}`);
+          }
+          const products = await fetch('https://api.appstoreconnect.apple.com/v1/ciProducts?filter%5Bapp%5D=6812971109&limit=200', { headers });
+          if (products.ok) {
+            const payload = await products.json();
+            console.log(`Mobile Xcode Cloud products: ${payload.data.length}`);
+          }
           JS
 
       - name: Prepare Apple API key for Xcode command-line signing
