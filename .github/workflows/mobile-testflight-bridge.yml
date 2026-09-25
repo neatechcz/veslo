@@ -18,6 +18,11 @@ on:
         required: true
         default: false
         type: boolean
+      provision:
+        description: Create a reusable iOS distribution certificate and App Store profile through Apple API
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -109,7 +114,7 @@ jobs:
           JS
 
       - name: Prepare Apple API key for Xcode command-line signing
-        if: inputs.publish
+        if: inputs.publish || inputs.provision
         shell: bash
         env:
           APPLE_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
@@ -123,6 +128,58 @@ jobs:
           openssl pkey -in "$key_path" -noout
           printf 'ASC_PRIVATE_KEY_PATH=%s\n' "$key_path" >> "$GITHUB_ENV"
           printf 'ASC_KEY_ID=%s\nASC_ISSUER_ID=%s\n' "$APPLE_KEY_ID" "$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
+
+      - name: Provision distribution certificate and App Store profile
+        if: inputs.provision
+        shell: bash
+        env:
+          DISTRIBUTION_KEY_BASE64: ${{ secrets.VESLO_MOBILE_DISTRIBUTION_KEY_PEM_BASE64 }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DISTRIBUTION_KEY_BASE64" ]]
+          umask 077
+          printf '%s' "$DISTRIBUTION_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/VesloDistribution.key"
+          openssl req -new -key "$RUNNER_TEMP/VesloDistribution.key" -subj '/CN=Neatech Veslo iOS Distribution' -out "$RUNNER_TEMP/VesloDistribution.csr"
+          node --input-type=module - <<'JS'
+          import { readFileSync } from 'node:fs';
+          import { createToken } from './scripts/confirm-testflight.mjs';
+          const privateKey = readFileSync(process.env.ASC_PRIVATE_KEY_PATH, 'utf8');
+          const token = createToken({ privateKey, keyId: process.env.ASC_KEY_ID, issuerId: process.env.ASC_ISSUER_ID });
+          const base = 'https://api.appstoreconnect.apple.com';
+          async function request(method, path, body) {
+            const response = await fetch(base + path, {
+              method,
+              headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+              ...(body ? { body: JSON.stringify(body) } : {}),
+            });
+            const json = await response.json();
+            if (!response.ok) {
+              const summary = json.errors?.map(({ code, title }) => `${code}: ${title}`).join('; ') ?? 'Unknown error';
+              throw new Error(`${method} ${path}: HTTP ${response.status}: ${summary}`);
+            }
+            return json;
+          }
+          const csrContent = readFileSync(process.env.RUNNER_TEMP + '/VesloDistribution.csr', 'utf8');
+          const cert = await request('POST', '/v1/certificates', {
+            data: { type: 'certificates', attributes: { certificateType: 'DISTRIBUTION', csrContent } },
+          });
+          console.log(`Created Apple Distribution certificate ID: ${cert.data.id}`);
+          const query = new URLSearchParams({ 'filter[identifier]': 'cz.neatech.veslo', limit: '200' });
+          const bundles = await request('GET', `/v1/bundleIds?${query}`);
+          const bundle = bundles.data.find((item) => item.attributes.identifier === 'cz.neatech.veslo');
+          if (!bundle) throw new Error('Veslo mobile bundle ID was not found');
+          const profile = await request('POST', '/v1/profiles', {
+            data: {
+              type: 'profiles',
+              attributes: { name: `Veslo TestFlight ${process.env.GITHUB_RUN_ID}`, profileType: 'IOS_APP_STORE' },
+              relationships: {
+                bundleId: { data: { type: 'bundleIds', id: bundle.id } },
+                certificates: { data: [{ type: 'certificates', id: cert.data.id }] },
+              },
+            },
+          });
+          console.log(`Created App Store profile ID: ${profile.data.id}`);
+          JS
 
       - name: Generate staging Capacitor assets
         if: inputs.publish
