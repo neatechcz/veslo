@@ -1,0 +1,47 @@
+name: Mobile TestFlight bridge
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 10
+    environment: release-signing
+    steps:
+      - name: Check access to mobile source
+        uses: actions/checkout@v4
+        with:
+          repository: neatechcz/Veslo-mobile
+          ref: da7c0912f3a9aed894477955ca4cf21fe6ca2ae9
+          token: ${{ secrets.RELEASE_UPDATES_GH_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check Apple API access without exposing credentials
+        env:
+          APPLE_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+        run: |
+          node --input-type=module - <<'JS'
+          import { createToken } from './scripts/confirm-testflight.mjs';
+          const { APPLE_KEY_ID: keyId, APPLE_ISSUER_ID: issuerId, APPLE_KEY_BASE64: encoded } = process.env;
+          if (![keyId, issuerId, encoded].every(Boolean)) throw new Error('Apple API secrets are missing');
+          const privateKey = Buffer.from(encoded, 'base64').toString('utf8');
+          const token = createToken({ privateKey, keyId, issuerId });
+          const response = await fetch('https://api.appstoreconnect.apple.com/v1/apps/6812971109', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok) throw new Error(`Apple API access failed: HTTP ${response.status}`);
+          const body = await response.json();
+          if (body.data?.id !== '6812971109' || body.data?.attributes?.bundleId !== 'cz.neatech.veslo') {
+            throw new Error('Apple API key cannot see the Veslo mobile app');
+          }
+          console.log('Apple API key can access Veslo mobile app.');
+          JS
